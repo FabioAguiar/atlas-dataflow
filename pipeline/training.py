@@ -2314,13 +2314,34 @@ def train_from_paths(
                 dataset_slug=dataset_slug,
                 run_id=run_id,
             )
+        if (
+            dispatch_schema_version == NATIVE_BINARY_FIXED_RESULT_SEMANTICS_SCHEMA_VERSION
+            and dispatch_problem_type == "binary_classification"
+        ):
+            # Project Spec S0258: fixed_configuration dispatch for binary is
+            # resolved strictly from the governed, materialized
+            # result_semantics.schema_version/problem_type, mirroring the
+            # multiclass/continuous-regression dispatch above. This is a
+            # fully isolated pipeline -- it never touches the historical
+            # evaluate_allowed_families binary path below, which remains
+            # unchanged for a binary result_semantics under the default
+            # (absent, or explicit evaluate_allowed_families) selection_mode.
+            return _train_native_binary_fixed_configuration(
+                contract=contract,
+                full_contract=full_contract,
+                contract_path=contract_path,
+                prepared_dataset_path=prepared_dataset_path,
+                dataset_slug=dataset_slug,
+                run_id=run_id,
+            )
         raise TrainingInputError(
             "unsupported_fixed_configuration_result_semantics",
             (
                 "fixed_configuration training requires a governed "
-                f"{NATIVE_MULTICLASS_RESULT_SEMANTICS_SCHEMA_VERSION!r} (multiclass_classification) "
-                f"or {NATIVE_CONTINUOUS_REGRESSION_RESULT_SEMANTICS_SCHEMA_VERSION!r} "
-                "(continuous_regression) result_semantics; no other or absent result_semantics is "
+                f"{NATIVE_MULTICLASS_RESULT_SEMANTICS_SCHEMA_VERSION!r} (multiclass_classification), "
+                f"{NATIVE_CONTINUOUS_REGRESSION_RESULT_SEMANTICS_SCHEMA_VERSION!r} "
+                f"(continuous_regression), or {NATIVE_BINARY_FIXED_RESULT_SEMANTICS_SCHEMA_VERSION!r} "
+                "(binary_classification) result_semantics; no other or absent result_semantics is "
                 "supported for fixed_configuration dispatch."
             ),
             field="result_semantics",
@@ -4970,6 +4991,708 @@ def _train_native_continuous_regression_fixed_configuration(
         model=final_pipeline,
         model_family=model_family,
         task_type="continuous_regression",
+        train_indices=train_indices,
+        evaluation_indices=test_indices,
+        dataset_id=str(contract["dataset_id"]),
+        target_column=target_column,
+        feature_columns=feature_columns,
+        primary_metric=str(contract["primary_metric"]),
+        output_directory=f"{_repo_relative_path(output_directory)}/",
+        serialized_model_path=_repo_relative_path(model_artifact_path),
+        training_parameter_record_path=_repo_relative_path(parameter_record_path),
+        metrics_path=_repo_relative_path(metrics_path),
+        model_selection_evidence_path=None,
+        model_card_input_path=_repo_relative_path(model_card_input_path),
+        model_card_path=_repo_relative_path(model_card_path),
+        analytical_visualizations_path=_repo_relative_path(analytical_visualizations_path),
+        serializer_name=SERIALIZER_NAME,
+        serializer_version=serializer_version,
+        serialization_format_version=f"{SERIALIZER_NAME}-{serializer_version}",
+        training_timestamp=training_timestamp,
+        hashes={
+            "execution_contract_sha256": training_parameter_record["hashes"]["execution_contract_sha256"],
+            "prepared_dataset_sha256": training_parameter_record["hashes"]["prepared_dataset_sha256"],
+            "model_artifact_sha256": model_artifact_sha256,
+            "metrics_sha256": metrics_sha256,
+            "training_parameter_record_sha256": parameter_record_sha256,
+            "model_card_input_sha256": model_card_input_sha256,
+            "model_card_sha256": model_card_sha256,
+            "model_selection_evidence_sha256": None,
+            "analytical_visualizations_sha256": analytical_visualizations_sha256,
+        },
+        metrics=final_test_metric_values,
+        model_selection_evidence_produced=False,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Native binary fixed-configuration training (Project Spec S0258, corrective
+# supersession of the blocked Project Spec S0257 implementation intent).
+#
+# Mirrors _train_native_multiclass_fixed_configuration's/
+# _train_native_continuous_regression_fixed_configuration's fixed-
+# finalization protocol (initial fit on train only, descriptive validation,
+# fresh final fit on train+validation, sealed single test evaluation) for
+# Atlas-native binary classification. Reuses the already-generic
+# _validate_fixed_model_configuration/_build_hgb_estimator/
+# _build_native_hgb_pipeline (Project Spec S0216) and
+# _stratified_three_way_split_indices/_permutation_feature_importance
+# (Project Spec S0216/S0231) helpers above unchanged -- their logic already
+# recognizes only hist_gradient_boosting and never branches on problem type.
+# Never touches the historical evaluate_allowed_families binary path in
+# train_from_paths below, which remains completely unchanged. Emits
+# analytical-visualizations.v5 (never legacy v1) because legacy v1's closed
+# feature_importance_method.model_family enum structurally excludes
+# hist_gradient_boosting and carries no truthful permutation-importance
+# method discriminator.
+# ---------------------------------------------------------------------------
+
+NATIVE_BINARY_FIXED_RESULT_SEMANTICS_SCHEMA_VERSION = "binary-result-semantics.v1"
+NATIVE_BINARY_FIXED_TRAINING_PARAMETER_RECORD_VERSION = "training-parameter-record.v5"
+NATIVE_BINARY_FIXED_TRAINING_METRICS_VERSION = "training-metrics.v5"
+NATIVE_BINARY_FIXED_ANALYTICAL_VISUALIZATIONS_VERSION = "analytical-visualizations.v5"
+NATIVE_BINARY_FIXED_METRIC_NAMES = ("roc_auc", "f1", "accuracy", "log_loss", "pr_auc")
+NATIVE_BINARY_FIXED_HGB_PERMUTATION_IMPORTANCE_N_REPEATS = 5
+NATIVE_BINARY_FIXED_HGB_PERMUTATION_IMPORTANCE_SCORING = "roc_auc"
+NATIVE_BINARY_FIXED_PERMUTATION_IMPORTANCE_POPULATION_KIND = "finalized_fit_population"
+
+
+def _require_binary_result_semantics(full_contract: dict[str, Any]) -> dict[str, Any]:
+    """Independently re-validate the governed binary result_semantics block
+    before any split or fit -- defense in depth, never trusted from the
+    dispatch check in train_from_paths alone. Returns the validated
+    result_semantics dict (never mutated)."""
+    result_semantics = full_contract.get("result_semantics")
+    if not isinstance(result_semantics, dict):
+        raise TrainingInputError(
+            "invalid_result_semantics",
+            "native binary fixed-configuration training requires a materialized "
+            "result_semantics block.",
+            field="result_semantics",
+        )
+    if result_semantics.get("schema_version") != NATIVE_BINARY_FIXED_RESULT_SEMANTICS_SCHEMA_VERSION:
+        raise TrainingInputError(
+            "invalid_result_semantics",
+            "execution contract result_semantics.schema_version must be "
+            f"{NATIVE_BINARY_FIXED_RESULT_SEMANTICS_SCHEMA_VERSION!r} for native binary "
+            "fixed-configuration training.",
+            field="result_semantics.schema_version",
+        )
+    if result_semantics.get("problem_type") != "binary_classification":
+        raise TrainingInputError(
+            "invalid_result_semantics",
+            "execution contract result_semantics.problem_type must be 'binary_classification' for "
+            "native binary fixed-configuration training.",
+            field="result_semantics.problem_type",
+        )
+    positive_class_id = (result_semantics.get("positive_class") or {}).get("class_id")
+    if not isinstance(positive_class_id, str) or not positive_class_id:
+        raise TrainingInputError(
+            "invalid_result_semantics",
+            "execution contract result_semantics.positive_class.class_id must be a non-empty "
+            "string for native binary fixed-configuration training.",
+            field="result_semantics.positive_class.class_id",
+        )
+    threshold = (result_semantics.get("decision") or {}).get("threshold")
+    if (
+        isinstance(threshold, bool)
+        or not isinstance(threshold, (int, float))
+        or not (0 <= threshold <= 1)
+    ):
+        raise TrainingInputError(
+            "invalid_result_semantics",
+            "execution contract result_semantics.decision.threshold must be a number within "
+            "[0, 1] for native binary fixed-configuration training.",
+            field="result_semantics.decision.threshold",
+        )
+    return result_semantics
+
+
+def _native_binary_fixed_requested_metric_names(contract: dict[str, Any]) -> list[str]:
+    names = _metric_names(contract)
+    unsupported = [name for name in names if name not in NATIVE_BINARY_FIXED_METRIC_NAMES]
+    if unsupported:
+        raise TrainingInputError(
+            "unsupported_metric",
+            f"unsupported native binary fixed-configuration metric(s): {unsupported}",
+            field="primary_metric",
+        )
+    return names
+
+
+def _native_binary_fixed_metric_values(
+    *,
+    y_true: Any,
+    probabilities: Any,
+    positive_scores: Any,
+    positive_class: Any,
+    threshold: float,
+    classes: list[Any],
+    metric_names: list[str],
+) -> dict[str, float]:
+    """Compute the governed binary metric vocabulary using the resolved
+    governed positive-class probability throughout (Desired Change E item
+    16). accuracy/f1 are threshold-sensitive and use the governed
+    result_semantics.decision.threshold rather than the estimator's own
+    implicit predict() decision boundary (Desired Change item 41);
+    roc_auc/pr_auc/log_loss are threshold-independent and use raw
+    probabilities only."""
+    try:
+        from sklearn.metrics import accuracy_score, average_precision_score, f1_score, log_loss, roc_auc_score
+    except ImportError as exc:
+        raise TrainingInputError(
+            "missing_training_dependency",
+            "scikit-learn metrics are required for governed training metrics.",
+            field="primary_metric",
+        ) from exc
+
+    binary_target = [value == positive_class for value in y_true]
+    threshold_predictions = [score >= threshold for score in positive_scores]
+
+    values: dict[str, float] = {}
+    for metric_name in metric_names:
+        try:
+            if metric_name == "roc_auc":
+                value = roc_auc_score(binary_target, positive_scores)
+            elif metric_name == "pr_auc":
+                value = average_precision_score(binary_target, positive_scores)
+            elif metric_name == "log_loss":
+                value = log_loss(y_true, probabilities, labels=list(classes))
+            elif metric_name == "accuracy":
+                value = accuracy_score(binary_target, threshold_predictions)
+            elif metric_name == "f1":
+                value = f1_score(binary_target, threshold_predictions, zero_division=0)
+            else:
+                raise TrainingInputError(
+                    "unsupported_metric",
+                    f"unsupported native binary fixed-configuration metric: {metric_name}",
+                    field=metric_name,
+                )
+        except ValueError as exc:
+            raise TrainingInputError(
+                "metric_computation_failed",
+                f"{metric_name} could not be computed on the controlled evaluation split: {exc}",
+                field=metric_name,
+            ) from exc
+        values[metric_name] = _finite_metric_value(metric_name, value)
+    return values
+
+
+def _build_native_binary_fixed_analytical_visualizations_artifact(
+    *,
+    rows: list[dict[str, Any]],
+    target_column: str,
+    feature_columns: list[str],
+    positive_class_id: str,
+    final_pipeline: Any,
+    final_fit_features: Any,
+    final_fit_target: Any,
+    output_directory: Path,
+    training_timestamp: str,
+    random_seed: int | None,
+) -> dict[str, Any]:
+    target_data, population_row_count = _target_distribution_chart_data(rows, target_column)
+    feature_data, total_source_feature_count, omitted_count = _permutation_feature_importance(
+        pipeline=final_pipeline,
+        features=final_fit_features,
+        target=final_fit_target,
+        feature_columns=feature_columns,
+        scoring=NATIVE_BINARY_FIXED_HGB_PERMUTATION_IMPORTANCE_SCORING,
+        n_repeats=NATIVE_BINARY_FIXED_HGB_PERMUTATION_IMPORTANCE_N_REPEATS,
+        random_seed=random_seed,
+    )
+    return {
+        "schema_version": NATIVE_BINARY_FIXED_ANALYTICAL_VISUALIZATIONS_VERSION,
+        "artifact_kind": "analytical_visualizations",
+        "created_at": training_timestamp,
+        "training_run_identity": {
+            "dataset_slug": output_directory.parent.name,
+            "run_id": output_directory.name,
+            "output_directory": f"{_repo_relative_path(output_directory)}/",
+        },
+        "classification_evidence": {
+            "problem_type": "binary_classification",
+            "result_semantics_schema_version": NATIVE_BINARY_FIXED_RESULT_SEMANTICS_SCHEMA_VERSION,
+            "positive_class_id": positive_class_id,
+        },
+        "charts": [
+            {
+                "id": "target_distribution",
+                "title": "Target Distribution",
+                "type": "bar",
+                "x_label": target_column,
+                "y_label": "Rows",
+                "data": target_data,
+            },
+            {
+                "id": "feature_importance",
+                "title": "Feature Importance",
+                "type": "bar",
+                "x_label": "Feature",
+                "y_label": "Importance",
+                "data": feature_data,
+            },
+        ],
+        "target_distribution_method": {
+            "population_kind": "prepared_dataset",
+            "row_count": population_row_count,
+            "target_column": target_column,
+        },
+        "feature_importance_method": {
+            "model_family": "hist_gradient_boosting",
+            "source": "sklearn.inspection.permutation_importance",
+            "method": "permutation_importance",
+            "population_kind": NATIVE_BINARY_FIXED_PERMUTATION_IMPORTANCE_POPULATION_KIND,
+            "scoring": NATIVE_BINARY_FIXED_HGB_PERMUTATION_IMPORTANCE_SCORING,
+            "n_repeats": NATIVE_BINARY_FIXED_HGB_PERMUTATION_IMPORTANCE_N_REPEATS,
+            "random_seed_source": "execution_contract.random_seed",
+            "total_source_feature_count": total_source_feature_count,
+            "omitted_source_feature_count": omitted_count,
+            "public_row_limit": FEATURE_IMPORTANCE_TOP_N,
+        },
+        "evidence_policy": {
+            "raw_logs_prohibited": True,
+            "raw_runtime_prohibited": True,
+            "raw_api_payloads_prohibited": True,
+            "secrets_prohibited": True,
+            "raw_dataset_embedded": False,
+            "model_bytes_embedded": False,
+            "serialized_estimator_state_embedded": False,
+            "raw_transformed_matrices_embedded": False,
+            "notebook_state_embedded": False,
+            "reduced_and_sanitized": True,
+        },
+    }
+
+
+def _build_native_binary_fixed_model_card_input_artifact(
+    *,
+    contract: dict[str, Any],
+    rows: list[dict[str, Any]],
+    output_directory: Path,
+    model_card_input_path: Path,
+    parameter_record_path: Path,
+    metrics_path: Path,
+    training_timestamp: str,
+) -> dict[str, Any]:
+    """Mirrors _build_native_multiclass_model_card_input_artifact's shape,
+    with a binary_classification task_type."""
+    parameter_record = _load_json_file(parameter_record_path, "training_parameter_record_path")
+    _require_valid_controlled_entrypoint_provenance(parameter_record)
+    metrics_artifact = _load_json_file(metrics_path, "metrics_path")
+    training_parameters = parameter_record["training_parameters"]
+    final_test = metrics_artifact["final_test_evaluation"]
+    primary_metric_name = str(training_parameters["primary_metric"])
+    primary_metric_entry = next(
+        item for item in final_test["metrics"] if item["name"] == primary_metric_name
+    )
+    secondary_metrics = [item for item in final_test["metrics"] if item["name"] != primary_metric_name]
+    feature_columns = [str(column) for column in training_parameters["feature_columns"]]
+    target_column = str(training_parameters["target_column"])
+
+    return {
+        "schema_version": "model-card-input.v2",
+        "artifact_kind": "model_card_input",
+        "created_at": training_timestamp,
+        "training_run_identity": {
+            "dataset_slug": output_directory.parent.name,
+            "run_id": output_directory.name,
+            "output_directory": f"{_repo_relative_path(output_directory)}/",
+        },
+        "model": {
+            "model_family": str(training_parameters["model_family"]),
+            "task_type": "binary_classification",
+            "hyperparameters": _json_safe(training_parameters["hyperparameters"]),
+        },
+        "training": {
+            "training_timestamp": training_timestamp,
+            "seed": training_parameters.get("random_seed"),
+            "split_policy": _json_safe(training_parameters["split_policy"]),
+            "training_data_row_count": int(training_parameters["split_sizes"]["training_rows"]),
+            "evaluation_split_size": int(final_test["row_count"]),
+        },
+        "evaluation": {
+            "primary_metric_name": primary_metric_name,
+            "primary_metric_value": primary_metric_entry["value"],
+            "secondary_metrics": _json_safe(secondary_metrics),
+        },
+        "dataset": {
+            "dataset_id": str(contract["dataset_id"]),
+            "target_column": target_column,
+            "target_description": _explicit_absence(
+                "execution contract does not declare target_description"
+            ),
+            "feature_count": len(feature_columns),
+            "feature_columns": feature_columns,
+            "feature_definitions": _json_safe(contract.get("feature_definitions") or {}),
+            "class_distribution": _class_distribution(rows, target_column),
+        },
+        "intended_use_context": _explicit_absence(
+            "execution contract does not declare intended_use_context"
+        ),
+        "path_references": {
+            "model_card_input_path": _repo_relative_path(model_card_input_path),
+            "training_parameter_record_path": _repo_relative_path(parameter_record_path),
+            "metrics_path": _repo_relative_path(metrics_path),
+            "execution_contract_path": parameter_record["consumed_inputs"]["execution_contract_path"],
+            "dataset_path": parameter_record["consumed_inputs"]["dataset_path"],
+        },
+        "hashes": {
+            "algorithm": "sha256",
+            "execution_contract_sha256": parameter_record["hashes"]["execution_contract_sha256"],
+            "prepared_dataset_sha256": parameter_record["hashes"]["prepared_dataset_sha256"],
+            "training_parameter_record_sha256": _sha256_file(parameter_record_path),
+            "metrics_sha256": parameter_record["hashes"]["metrics_sha256"],
+        },
+        "evidence_policy": {
+            "raw_logs_prohibited": True,
+            "raw_runtime_prohibited": True,
+            "raw_api_payloads_prohibited": True,
+            "secrets_prohibited": True,
+            "raw_dataset_embedded": False,
+            "model_bytes_embedded": False,
+            "full_training_parameter_record_embedded": False,
+            "full_metrics_artifact_embedded": False,
+            "notebook_state_embedded": False,
+            "reduced_and_sanitized": True,
+        },
+    }
+
+
+def _train_native_binary_fixed_configuration(
+    *,
+    contract: dict[str, Any],
+    full_contract: dict[str, Any],
+    contract_path: Path,
+    prepared_dataset_path: Path,
+    dataset_slug: str | None,
+    run_id: str | None,
+) -> TrainingResult:
+    result_semantics = _require_binary_result_semantics(full_contract)
+    threshold = float(result_semantics["decision"]["threshold"])
+    modeling_constraints = contract["modeling_constraints"]
+    model_family, hyperparameters = _validate_fixed_model_configuration(modeling_constraints)
+
+    rows, prepared_dataset_id = _load_prepared_dataset(prepared_dataset_path)
+    _validate_dataset(rows, prepared_dataset_id, contract)
+
+    target_column = str(contract["target_column"])
+    feature_columns = [str(column) for column in contract["feature_columns"]]
+    split_policy = contract["split_policy"]
+    if split_policy.get("strategy") != "stratified":
+        raise TrainingInputError(
+            "invalid_split_policy",
+            "native binary fixed-configuration training requires split_policy.strategy = stratified.",
+            field="split_policy.strategy",
+        )
+    train_ratio = float(split_policy.get("train_ratio"))
+    val_ratio = float(split_policy.get("val_ratio", 0))
+    test_ratio = float(split_policy.get("test_ratio"))
+    if val_ratio <= 0:
+        raise TrainingInputError(
+            "invalid_split_policy",
+            "native binary fixed-configuration training requires a real, non-empty validation "
+            "partition: split_policy.val_ratio must be greater than 0.",
+            field="split_policy.val_ratio",
+        )
+    random_seed = contract.get("random_seed")
+
+    try:
+        train_indices, val_indices, test_indices = _stratified_three_way_split_indices(
+            rows, target_column, train_ratio, val_ratio, test_ratio, random_seed
+        )
+    except ValueError as exc:
+        raise TrainingInputError(
+            "invalid_prepared_dataset",
+            f"native binary three-way stratified split failed: {exc}",
+            field="dataset_path",
+        ) from exc
+
+    features, target = _rows_to_training_frame(rows, feature_columns, target_column)
+    final_fit_indices = sorted(train_indices + val_indices)
+    numeric_handling = str(contract.get("numeric_handling", "standardize"))
+    requested_metric_names = _native_binary_fixed_requested_metric_names(contract)
+
+    # Step 1: initial fixed-configuration fit on train only. Validation is
+    # descriptive only -- it never alters the frozen configuration or the
+    # governed result_semantics threshold.
+    initial_pipeline = _build_native_hgb_pipeline(hyperparameters, random_seed, features, numeric_handling)
+    initial_pipeline.fit(features.iloc[train_indices], target.iloc[train_indices])
+    initial_model = initial_pipeline.named_steps["model"]
+    initial_positive_class = _positive_class_label(initial_model, full_contract)
+    initial_classes = list(initial_model.classes_)
+    validation_probabilities = initial_pipeline.predict_proba(features.iloc[val_indices])
+    validation_positive_scores = validation_probabilities[:, initial_classes.index(initial_positive_class)]
+    validation_metric_values = _native_binary_fixed_metric_values(
+        y_true=target.iloc[val_indices],
+        probabilities=validation_probabilities,
+        positive_scores=validation_positive_scores,
+        positive_class=initial_positive_class,
+        threshold=threshold,
+        classes=initial_classes,
+        metric_names=requested_metric_names,
+    )
+
+    # Step 2: a fresh configured pipeline is fit on train + validation
+    # ("final fit"). No hyperparameter/family/feature/threshold change from
+    # the frozen configuration -- the validation result above never alters
+    # this fit.
+    final_pipeline = _build_native_hgb_pipeline(hyperparameters, random_seed, features, numeric_handling)
+    final_pipeline.fit(features.iloc[final_fit_indices], target.iloc[final_fit_indices])
+    final_model = final_pipeline.named_steps["model"]
+    # _positive_class_label/_classification_evidence_for_model independently
+    # cross-check the governed result_semantics.positive_class.class_id
+    # against this final fitted model's real classes_ (Desired Change item
+    # 39) -- a mismatch fails closed here, defense in depth beyond the
+    # initial-fit check above.
+    final_classification_evidence = _classification_evidence_for_model(final_model, full_contract)
+    final_positive_class = _positive_class_label(final_model, full_contract)
+    final_classes = list(final_model.classes_)
+
+    # Step 3: test is evaluated exactly once, sealed, never used for
+    # fitting, model selection, hyperparameter selection, or threshold
+    # selection.
+    final_test_probabilities = final_pipeline.predict_proba(features.iloc[test_indices])
+    final_test_positive_scores = final_test_probabilities[:, final_classes.index(final_positive_class)]
+    final_test_metric_values = _native_binary_fixed_metric_values(
+        y_true=target.iloc[test_indices],
+        probabilities=final_test_probabilities,
+        positive_scores=final_test_positive_scores,
+        positive_class=final_positive_class,
+        threshold=threshold,
+        classes=final_classes,
+        metric_names=requested_metric_names,
+    )
+
+    selected_dataset_slug = dataset_slug or _dataset_slug_from_dataset_id(str(contract["dataset_id"]))
+    selected_run_id = run_id or _new_run_id()
+    output_directory = _training_output_directory(selected_dataset_slug, selected_run_id)
+    model_artifact_path = output_directory / MODEL_ARTIFACT_FILENAME
+    parameter_record_path = output_directory / TRAINING_PARAMETER_RECORD_FILENAME
+    metrics_path = output_directory / METRICS_ARTIFACT_FILENAME
+    model_card_input_path = output_directory / MODEL_CARD_INPUT_FILENAME
+    analytical_visualizations_path = output_directory / ANALYTICAL_VISUALIZATIONS_FILENAME
+    serializer_version = _serializer_version()
+    training_timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+    model_artifact_sha256 = _serialize_model(final_pipeline, model_artifact_path)
+    controlled_entrypoint_provenance = _controlled_entrypoint_provenance_marker(
+        contract_path=contract_path,
+        dataset_path=prepared_dataset_path,
+        output_directory=output_directory,
+        training_timestamp=training_timestamp,
+    )
+
+    # Step 4: deterministic permutation Feature Importance on the
+    # finalized-fit (train+validation) population only -- descriptive model
+    # interpretation, never computed against final-test rows/labels.
+    analytical_visualizations_artifact = _build_native_binary_fixed_analytical_visualizations_artifact(
+        rows=rows,
+        target_column=target_column,
+        feature_columns=feature_columns,
+        positive_class_id=final_classification_evidence["positive_class_id"],
+        final_pipeline=final_pipeline,
+        final_fit_features=features.iloc[final_fit_indices],
+        final_fit_target=target.iloc[final_fit_indices],
+        output_directory=output_directory,
+        training_timestamp=training_timestamp,
+        random_seed=random_seed,
+    )
+    analytical_visualizations_sha256 = _write_reduced_json_artifact(
+        analytical_visualizations_path, analytical_visualizations_artifact,
+    )
+
+    metrics_classification_evidence = {
+        "problem_type": "binary_classification",
+        "result_semantics_schema_version": NATIVE_BINARY_FIXED_RESULT_SEMANTICS_SCHEMA_VERSION,
+        "positive_class_id": final_classification_evidence["positive_class_id"],
+    }
+    metrics_artifact = {
+        "schema_version": NATIVE_BINARY_FIXED_TRAINING_METRICS_VERSION,
+        "artifact_kind": "training_metrics",
+        "created_at": training_timestamp,
+        "training_run_identity": {
+            "dataset_slug": output_directory.parent.name,
+            "run_id": output_directory.name,
+            "output_directory": f"{_repo_relative_path(output_directory)}/",
+        },
+        "classification_evidence": metrics_classification_evidence,
+        "validation_evaluation": {
+            "partition_role": "validation",
+            "row_count": len(val_indices),
+            "used_for_fitting": False,
+            "used_for_model_selection": False,
+            "used_for_hyperparameter_selection": False,
+            "used_for_threshold_selection": False,
+            "sealed_before_finalization": False,
+            "evaluation_count": 1,
+            "metrics": [
+                {"name": name, "value": value} for name, value in validation_metric_values.items()
+            ],
+        },
+        "final_test_evaluation": {
+            "partition_role": "test",
+            "row_count": len(test_indices),
+            "used_for_fitting": False,
+            "used_for_model_selection": False,
+            "used_for_hyperparameter_selection": False,
+            "used_for_threshold_selection": False,
+            "sealed_before_finalization": True,
+            "completed": True,
+            "evaluation_count": 1,
+            "metrics": [
+                {"name": name, "value": value} for name, value in final_test_metric_values.items()
+            ],
+        },
+        "path_references": {
+            "metrics_path": _repo_relative_path(metrics_path),
+            "training_parameter_record_path": _repo_relative_path(parameter_record_path),
+            "execution_contract_path": _reduced_path_reference(contract_path),
+            "dataset_path": _reduced_path_reference(prepared_dataset_path),
+        },
+        "hashes": {
+            "algorithm": "sha256",
+            "execution_contract_sha256": _sha256_file(contract_path),
+        },
+        "evidence_policy": {
+            "raw_logs_prohibited": True,
+            "raw_runtime_prohibited": True,
+            "raw_api_payloads_prohibited": True,
+            "secrets_prohibited": True,
+            "raw_dataset_embedded": False,
+            "model_bytes_embedded": False,
+            "notebook_state_embedded": False,
+            "reduced_and_sanitized": True,
+        },
+    }
+    metrics_sha256 = _write_reduced_json_artifact(metrics_path, metrics_artifact)
+
+    classification_evidence_full = {
+        "problem_type": "binary_classification",
+        "result_semantics_schema_version": NATIVE_BINARY_FIXED_RESULT_SEMANTICS_SCHEMA_VERSION,
+        "ordered_class_labels": final_classification_evidence["ordered_class_labels"],
+        "positive_class_id": final_classification_evidence["positive_class_id"],
+        "positive_class_probability_index": final_classification_evidence["positive_class_probability_index"],
+        "threshold": threshold,
+    }
+
+    training_parameter_record = {
+        "schema_version": NATIVE_BINARY_FIXED_TRAINING_PARAMETER_RECORD_VERSION,
+        "record_kind": "training_parameter_record",
+        "problem_type": "binary_classification",
+        "training_timestamp": training_timestamp,
+        "training_run_identity": {
+            "dataset_slug": output_directory.parent.name,
+            "run_id": output_directory.name,
+            "output_directory": f"{_repo_relative_path(output_directory)}/",
+        },
+        "consumed_inputs": {
+            "execution_contract_path": _reduced_path_reference(contract_path),
+            "dataset_path": _reduced_path_reference(prepared_dataset_path),
+            "execution_contract_dataset_id": str(contract["dataset_id"]),
+            "prepared_dataset_dataset_id": str(prepared_dataset_id or contract["dataset_id"]),
+        },
+        "produced_outputs": {
+            "serialized_model_path": _repo_relative_path(model_artifact_path),
+            "training_parameter_record_path": _repo_relative_path(parameter_record_path),
+            "metrics_path": _repo_relative_path(metrics_path),
+            "model_selection_evidence_path": None,
+            "model_card_input_path": _repo_relative_path(model_card_input_path),
+        },
+        "serializer": {
+            "name": SERIALIZER_NAME,
+            "installed_version": serializer_version,
+            "serialization_format_version": f"{SERIALIZER_NAME}-{serializer_version}",
+        },
+        "controlled_entrypoint_provenance": controlled_entrypoint_provenance,
+        "permitted_execution_contract_fields": sorted(PERMITTED_EXECUTION_CONTRACT_FIELDS),
+        "training_parameters": {
+            "model_family": model_family,
+            "hyperparameters": _json_safe(hyperparameters),
+            "target_column": target_column,
+            "feature_columns": feature_columns,
+            "split_policy": dict(split_policy),
+            "split_sizes": {
+                "training_rows": len(train_indices),
+                "validation_rows": len(val_indices),
+                "test_rows": len(test_indices),
+                "final_fit_rows": len(final_fit_indices),
+            },
+            "random_seed": random_seed,
+            "primary_metric": str(contract["primary_metric"]),
+            "secondary_metrics": list(contract.get("secondary_metrics") or []),
+            "modeling_constraints": _json_safe(modeling_constraints),
+            "selection_mode": "fixed_configuration",
+            "model_selection_performed": False,
+            "initial_fit": {"fit_partition": "train"},
+            "validation_evaluation": {
+                "partition": "validation",
+                "used_for_model_selection": False,
+                "used_for_hyperparameter_selection": False,
+                "used_for_threshold_selection": False,
+            },
+            "final_fit": {"fit_partitions": ["train", "validation"]},
+            "final_test": {
+                "partition": "test",
+                "used_for_fitting": False,
+                "used_for_model_selection": False,
+                "used_for_threshold_selection": False,
+                "evaluation_count": 1,
+            },
+        },
+        "classification_evidence": classification_evidence_full,
+        "hashes": {
+            "algorithm": "sha256",
+            "execution_contract_sha256": _sha256_file(contract_path),
+            "prepared_dataset_sha256": _sha256_file(prepared_dataset_path),
+            "model_artifact_sha256": model_artifact_sha256,
+            "metrics_sha256": metrics_sha256,
+        },
+        "record_boundary_confirmations": {
+            "is_metrics_artifact": False,
+            "raw_dataset_embedded": False,
+            "model_bytes_embedded": False,
+            "notebook_state_embedded": False,
+            "unauthorized_contract_fields_consumed": False,
+            "controlled_entrypoint_provenance_marker_present": True,
+        },
+        "evidence_policy": {
+            "raw_logs_prohibited": True,
+            "raw_runtime_prohibited": True,
+            "raw_api_payloads_prohibited": True,
+            "secrets_prohibited": True,
+            "private_source_paths_prohibited": True,
+            "raw_artifact_contents_prohibited": True,
+            "reduced_and_sanitized": True,
+        },
+    }
+    parameter_record_sha256 = _write_parameter_record(parameter_record_path, training_parameter_record)
+
+    model_card_input_artifact = _build_native_binary_fixed_model_card_input_artifact(
+        contract=contract,
+        rows=rows,
+        output_directory=output_directory,
+        model_card_input_path=model_card_input_path,
+        parameter_record_path=parameter_record_path,
+        metrics_path=metrics_path,
+        training_timestamp=training_timestamp,
+    )
+    model_card_input_sha256 = _write_reduced_json_artifact(model_card_input_path, model_card_input_artifact)
+    model_card_path = output_directory / MODEL_CARD_FILENAME
+    model_card_artifact = _model_card_artifact_from_input(
+        model_card_input_artifact,
+        model_card_input_path_ref=_repo_relative_path(model_card_input_path),
+        model_card_path_ref=_repo_relative_path(model_card_path),
+        model_card_input_sha256=model_card_input_sha256,
+        created_at=training_timestamp,
+    )
+    model_card_sha256 = _write_reduced_json_artifact(model_card_path, model_card_artifact)
+
+    return TrainingResult(
+        status="trained",
+        model=final_pipeline,
+        model_family=model_family,
+        task_type="classification",
         train_indices=train_indices,
         evaluation_indices=test_indices,
         dataset_id=str(contract["dataset_id"]),

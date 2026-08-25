@@ -657,6 +657,17 @@ _CONTINUOUS_REGRESSION_METRIC_VOCABULARY = frozenset({"r2", "mae", "rmse"})
 _CONTINUOUS_REGRESSION_FIXED_FAMILY_VOCABULARY = frozenset({
     "gradient_boosting", "random_forest", "hist_gradient_boosting",
 })
+# Project Spec S0258: the bounded binary-classification metric vocabulary
+# actually computed by pipeline/training.py's governed native binary
+# fixed-configuration trainer (roc_auc/f1/accuracy/log_loss/pr_auc) -- never
+# the wider merged _TRAINING_POLICY_METRIC_VOCABULARY, which also carries
+# multiclass-only aggregates (f1_macro, f1_weighted, precision_macro,
+# recall_macro) and continuous-regression-only metrics (r2, mae, rmse) that
+# a binary fixed-configuration training_policy_intent must never accept as
+# its primary/secondary metric selection.
+_BINARY_CLASSIFICATION_METRIC_VOCABULARY = frozenset({
+    "roc_auc", "f1", "accuracy", "log_loss", "pr_auc",
+})
 
 TRAINING_POLICY_REQUIRED_FIELDS = (
     "review_status",
@@ -958,9 +969,13 @@ def _validate_training_policy_intent(
 
     `problem_type_hint` is `"continuous_regression"` only when the caller has
     independently confirmed a `continuous_regression_result_semantics_intent`
-    is present on the modeling intent (Project Spec S0224); it is `None` for
-    every binary/multiclass caller, which retains the historical validation
-    behavior below completely unchanged.
+    is present on the modeling intent (Project Spec S0224), and
+    `"binary_classification"` only when a `binary_result_semantics_intent` is
+    present (Project Spec S0258, restricting only the accepted metric
+    vocabulary -- never forcing fixed_configuration or altering split-policy
+    strategy validation). It is `None` for every multiclass caller and for a
+    binary caller with no `binary_result_semantics_intent`, which retain the
+    historical validation behavior below completely unchanged.
     """
     reasons: list[str] = []
     missing_fields = [
@@ -1000,11 +1015,12 @@ def _validate_training_policy_intent(
             )
         )
 
-    metric_vocabulary = (
-        _CONTINUOUS_REGRESSION_METRIC_VOCABULARY
-        if problem_type_hint == "continuous_regression"
-        else _TRAINING_POLICY_METRIC_VOCABULARY
-    )
+    if problem_type_hint == "continuous_regression":
+        metric_vocabulary = _CONTINUOUS_REGRESSION_METRIC_VOCABULARY
+    elif problem_type_hint == "binary_classification":
+        metric_vocabulary = _BINARY_CLASSIFICATION_METRIC_VOCABULARY
+    else:
+        metric_vocabulary = _TRAINING_POLICY_METRIC_VOCABULARY
 
     if "primary_metric" in training_policy_intent:
         primary_metric = training_policy_intent["primary_metric"]
@@ -1047,12 +1063,18 @@ def _materialize_training_policy_fields(modeling_intent: dict[str, Any]) -> dict
     # Project Spec S0224: presence alone of continuous_regression_result_semantics_intent
     # (regardless of its own approval/materialization outcome) is enough to
     # apply the continuous-regression-specific strictness above -- never
-    # inferred from training_policy_intent's own contents.
-    problem_type_hint = (
-        "continuous_regression"
-        if isinstance(modeling_intent.get("continuous_regression_result_semantics_intent"), dict)
-        else None
-    )
+    # inferred from training_policy_intent's own contents. Project Spec
+    # S0258 adds the same presence-only convention for
+    # binary_result_semantics_intent, scoped to the binary-specific metric
+    # vocabulary restriction below only -- it never forces fixed_configuration
+    # the way continuous_regression does, so the historical binary
+    # evaluate_allowed_families selection_mode remains fully unchanged.
+    if isinstance(modeling_intent.get("continuous_regression_result_semantics_intent"), dict):
+        problem_type_hint = "continuous_regression"
+    elif isinstance(modeling_intent.get("binary_result_semantics_intent"), dict):
+        problem_type_hint = "binary_classification"
+    else:
+        problem_type_hint = None
     reasons = _validate_training_policy_intent(training_policy_intent, problem_type_hint=problem_type_hint)
     if reasons:
         raise TrainingPolicyValidationError(reasons)

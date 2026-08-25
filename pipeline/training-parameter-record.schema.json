@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://atlas-dataflow.local/schemas/pipeline/training-parameter-record.schema.json",
   "title": "Atlas DataFlow Training Parameter Record",
-  "description": "Six schema-version-discriminated profiles are supported: training-parameter-record.v1 (unchanged -- the reduced provenance artifact emitted by a governed M24 training run under pipeline/training-runs/{dataset_slug}/{run_id}/training-parameter-record.json, linking the consumed execution contract and prepared dataset to the produced model and metrics artifacts using SHA-256 hashes), training-parameter-record.v2 (Project Spec S0216, Atlas-native fixed-configuration multiclass training provenance, carrying explicit fixed-finalization protocol evidence and a governed multiclass classification_evidence claim), training-parameter-record.v3 (Project Spec S0224, Atlas-native fixed-configuration continuous-regression training provenance, mirroring v2's fixed-finalization protocol evidence with a governed continuous-regression regression_evidence claim in place of classification_evidence), training-parameter-record.v4 (Project Spec S0244, Atlas-native univariate forecasting training provenance, linking execution contract, preparation recipe, prepared dataset, model artifact, and metrics artifact by SHA-256 and recording the frozen backtesting/finalization protocol), training-parameter-record.external-fitted-model.v1 (Project Spec S0157, describing an already-fitted external model's parameters/provenance from a validated handoff/projection flow, binary-classification-oriented), and training-parameter-record.external-fitted-model.v2 (Project Spec S0208, the same external-handoff profile generalized to a multiclass classification_evidence claim in place of v1's binary positive-class ownership). None of the six profiles embed raw dataset contents, model bytes, raw logs, raw runtime data, raw API payloads, secrets, or notebook state.",
+  "description": "Seven schema-version-discriminated profiles are supported: training-parameter-record.v1 (unchanged -- the reduced provenance artifact emitted by a governed M24 training run under pipeline/training-runs/{dataset_slug}/{run_id}/training-parameter-record.json, linking the consumed execution contract and prepared dataset to the produced model and metrics artifacts using SHA-256 hashes), training-parameter-record.v2 (Project Spec S0216, Atlas-native fixed-configuration multiclass training provenance, carrying explicit fixed-finalization protocol evidence and a governed multiclass classification_evidence claim), training-parameter-record.v3 (Project Spec S0224, Atlas-native fixed-configuration continuous-regression training provenance, mirroring v2's fixed-finalization protocol evidence with a governed continuous-regression regression_evidence claim in place of classification_evidence), training-parameter-record.v4 (Project Spec S0244, Atlas-native univariate forecasting training provenance, linking execution contract, preparation recipe, prepared dataset, model artifact, and metrics artifact by SHA-256 and recording the frozen backtesting/finalization protocol), training-parameter-record.v5 (Project Spec S0258, Atlas-native fixed-configuration binary classification training provenance -- corrective supersession of the blocked Project Spec S0257 implementation intent -- mirroring v2/v3's fixed-finalization protocol evidence, additionally recording threshold-selection boundary confirmations and a governed binary classification_evidence claim with the resolved positive class/threshold), training-parameter-record.external-fitted-model.v1 (Project Spec S0157, describing an already-fitted external model's parameters/provenance from a validated handoff/projection flow, binary-classification-oriented), and training-parameter-record.external-fitted-model.v2 (Project Spec S0208, the same external-handoff profile generalized to a multiclass classification_evidence claim in place of v1's binary positive-class ownership). None of the seven profiles embed raw dataset contents, model bytes, raw logs, raw runtime data, raw API payloads, secrets, or notebook state.",
   "type": "object",
   "required": ["schema_version"],
   "oneOf": [
@@ -10,6 +10,7 @@
     { "$ref": "#/$defs/internal_run_record_v2" },
     { "$ref": "#/$defs/internal_run_record_v3" },
     { "$ref": "#/$defs/internal_run_record_v4" },
+    { "$ref": "#/$defs/internal_run_record_v5" },
     { "$ref": "#/$defs/external_fitted_model_record_v1" },
     { "$ref": "#/$defs/external_fitted_model_record_v2" }
   ],
@@ -1459,6 +1460,360 @@
     "forecasting_metric_name_v4": {
       "type": "string",
       "enum": ["mae", "rmse", "seasonal_mase"]
+    },
+    "internal_run_record_v5": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Project Spec S0258: Atlas-native fixed-configuration binary classification training provenance, emitted alongside training-metrics.v5 at pipeline/training-runs/{dataset_slug}/{run_id}/training-parameter-record.json. Corrective supersession of the blocked Project Spec S0257 implementation intent. Carries explicit fixed-finalization protocol evidence (no model selection, no threshold selection, ever occurred) and a governed binary classification_evidence claim sourced from the real fitted final model's own classes_ attribute and the governed result_semantics positive class/threshold.",
+      "required": [
+        "schema_version",
+        "record_kind",
+        "problem_type",
+        "training_timestamp",
+        "training_run_identity",
+        "consumed_inputs",
+        "produced_outputs",
+        "serializer",
+        "controlled_entrypoint_provenance",
+        "permitted_execution_contract_fields",
+        "training_parameters",
+        "classification_evidence",
+        "hashes",
+        "record_boundary_confirmations",
+        "evidence_policy"
+      ],
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "training-parameter-record.v5"
+        },
+        "record_kind": {
+          "type": "string",
+          "const": "training_parameter_record"
+        },
+        "problem_type": {
+          "type": "string",
+          "const": "binary_classification"
+        },
+        "training_run_identity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["dataset_slug", "run_id", "output_directory"],
+          "properties": {
+            "dataset_slug": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+            },
+            "run_id": {
+              "type": "string",
+              "pattern": "^train-[0-9]{8}T[0-9]{6}Z$"
+            },
+            "output_directory": {
+              "type": "string",
+              "pattern": "^pipeline/training-runs/[a-z0-9]+(?:-[a-z0-9]+)*/train-[0-9]{8}T[0-9]{6}Z/$"
+            }
+          }
+        },
+        "consumed_inputs": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "execution_contract_path",
+            "dataset_path",
+            "execution_contract_dataset_id",
+            "prepared_dataset_dataset_id"
+          ],
+          "properties": {
+            "execution_contract_path": { "type": "string", "minLength": 1 },
+            "dataset_path": { "type": "string", "minLength": 1 },
+            "execution_contract_dataset_id": { "type": "string", "minLength": 1 },
+            "prepared_dataset_dataset_id": { "type": "string", "minLength": 1 }
+          }
+        },
+        "produced_outputs": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["serialized_model_path", "training_parameter_record_path"],
+          "properties": {
+            "serialized_model_path": {
+              "type": "string",
+              "pattern": "^pipeline/training-runs/[a-z0-9]+(?:-[a-z0-9]+)*/train-[0-9]{8}T[0-9]{6}Z/model\\.[A-Za-z0-9._-]+$"
+            },
+            "training_parameter_record_path": {
+              "type": "string",
+              "pattern": "^pipeline/training-runs/[a-z0-9]+(?:-[a-z0-9]+)*/train-[0-9]{8}T[0-9]{6}Z/training-parameter-record\\.json$"
+            },
+            "metrics_path": {
+              "type": ["string", "null"],
+              "pattern": "^pipeline/training-runs/[a-z0-9]+(?:-[a-z0-9]+)*/train-[0-9]{8}T[0-9]{6}Z/metrics\\.json$"
+            },
+            "model_selection_evidence_path": {
+              "type": "null",
+              "description": "Project Spec S0258: fixed-configuration binary training performs no model selection, so this is always null -- never a path."
+            },
+            "model_card_input_path": {
+              "type": ["string", "null"],
+              "pattern": "^pipeline/training-runs/[a-z0-9]+(?:-[a-z0-9]+)*/train-[0-9]{8}T[0-9]{6}Z/model-card-input\\.json$"
+            }
+          }
+        },
+        "training_timestamp": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "serializer": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "installed_version", "serialization_format_version"],
+          "properties": {
+            "name": { "type": "string", "const": "joblib" },
+            "installed_version": { "type": "string", "minLength": 1 },
+            "serialization_format_version": { "type": "string", "minLength": 1 }
+          }
+        },
+        "controlled_entrypoint_provenance": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "marker_version", "marker_kind", "entrypoint", "generated_at", "run_id",
+            "output_directory", "execution_contract_sha256", "prepared_dataset_sha256", "marker_id"
+          ],
+          "properties": {
+            "marker_version": { "type": "string", "const": "controlled-entrypoint-provenance.v1" },
+            "marker_kind": { "type": "string", "const": "controlled_training_entrypoint" },
+            "entrypoint": { "type": "string", "const": "pipeline.training.train_from_paths" },
+            "generated_at": { "type": "string", "format": "date-time" },
+            "run_id": { "type": "string", "pattern": "^train-[0-9]{8}T[0-9]{6}Z$" },
+            "output_directory": {
+              "type": "string",
+              "pattern": "^pipeline/training-runs/[a-z0-9]+(?:-[a-z0-9]+)*/train-[0-9]{8}T[0-9]{6}Z/$"
+            },
+            "execution_contract_sha256": { "$ref": "#/$defs/sha256_hex" },
+            "prepared_dataset_sha256": { "$ref": "#/$defs/sha256_hex" },
+            "marker_id": { "$ref": "#/$defs/sha256_hex" }
+          }
+        },
+        "permitted_execution_contract_fields": {
+          "type": "array",
+          "minItems": 15,
+          "maxItems": 15,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "contract_version", "dataset_id", "target_column", "feature_columns",
+              "feature_definitions", "missing_value_policy", "categorical_encoding_policy",
+              "numeric_handling", "allowed_transformations", "split_policy", "random_seed",
+              "primary_metric", "secondary_metrics", "modeling_constraints", "result_semantics"
+            ]
+          }
+        },
+        "training_parameters": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "model_family", "hyperparameters", "target_column", "feature_columns",
+            "split_policy", "split_sizes", "random_seed", "primary_metric",
+            "secondary_metrics", "modeling_constraints", "selection_mode",
+            "model_selection_performed", "initial_fit", "validation_evaluation",
+            "final_fit", "final_test"
+          ],
+          "properties": {
+            "model_family": { "type": "string", "const": "hist_gradient_boosting" },
+            "hyperparameters": { "type": "object" },
+            "target_column": { "type": "string", "minLength": 1 },
+            "feature_columns": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "type": "string", "minLength": 1 }
+            },
+            "split_policy": { "$ref": "#/$defs/split_policy_v5" },
+            "split_sizes": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["training_rows", "validation_rows", "test_rows", "final_fit_rows"],
+              "properties": {
+                "training_rows": { "type": "integer", "minimum": 1 },
+                "validation_rows": { "type": "integer", "minimum": 1 },
+                "test_rows": { "type": "integer", "minimum": 1 },
+                "final_fit_rows": { "type": "integer", "minimum": 1 }
+              }
+            },
+            "random_seed": { "type": ["integer", "null"] },
+            "primary_metric": { "$ref": "#/$defs/binary_metric_name_v5" },
+            "secondary_metrics": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/binary_metric_name_v5" }
+            },
+            "modeling_constraints": { "$ref": "#/$defs/modeling_constraints_v5" },
+            "selection_mode": { "type": "string", "const": "fixed_configuration" },
+            "model_selection_performed": { "type": "boolean", "const": false },
+            "initial_fit": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["fit_partition"],
+              "properties": { "fit_partition": { "type": "string", "const": "train" } }
+            },
+            "validation_evaluation": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "partition", "used_for_model_selection", "used_for_hyperparameter_selection",
+                "used_for_threshold_selection"
+              ],
+              "properties": {
+                "partition": { "type": "string", "const": "validation" },
+                "used_for_model_selection": { "type": "boolean", "const": false },
+                "used_for_hyperparameter_selection": { "type": "boolean", "const": false },
+                "used_for_threshold_selection": { "type": "boolean", "const": false }
+              }
+            },
+            "final_fit": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["fit_partitions"],
+              "properties": {
+                "fit_partitions": {
+                  "type": "array",
+                  "minItems": 2,
+                  "maxItems": 2,
+                  "items": { "type": "string", "enum": ["train", "validation"] }
+                }
+              }
+            },
+            "final_test": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "partition", "used_for_fitting", "used_for_model_selection",
+                "used_for_threshold_selection", "evaluation_count"
+              ],
+              "properties": {
+                "partition": { "type": "string", "const": "test" },
+                "used_for_fitting": { "type": "boolean", "const": false },
+                "used_for_model_selection": { "type": "boolean", "const": false },
+                "used_for_threshold_selection": { "type": "boolean", "const": false },
+                "evaluation_count": { "type": "integer", "const": 1 }
+              }
+            }
+          }
+        },
+        "classification_evidence": { "$ref": "#/$defs/binary_classification_evidence_v5" },
+        "hashes": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["algorithm", "execution_contract_sha256", "prepared_dataset_sha256", "model_artifact_sha256"],
+          "properties": {
+            "algorithm": { "type": "string", "const": "sha256" },
+            "execution_contract_sha256": { "$ref": "#/$defs/sha256_hex" },
+            "prepared_dataset_sha256": { "$ref": "#/$defs/sha256_hex" },
+            "model_artifact_sha256": { "$ref": "#/$defs/sha256_hex" },
+            "metrics_sha256": {
+              "anyOf": [{ "$ref": "#/$defs/sha256_hex" }, { "type": "null" }]
+            }
+          }
+        },
+        "record_boundary_confirmations": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "is_metrics_artifact", "raw_dataset_embedded", "model_bytes_embedded",
+            "notebook_state_embedded", "unauthorized_contract_fields_consumed",
+            "controlled_entrypoint_provenance_marker_present"
+          ],
+          "properties": {
+            "is_metrics_artifact": { "type": "boolean", "const": false },
+            "raw_dataset_embedded": { "type": "boolean", "const": false },
+            "model_bytes_embedded": { "type": "boolean", "const": false },
+            "notebook_state_embedded": { "type": "boolean", "const": false },
+            "unauthorized_contract_fields_consumed": { "type": "boolean", "const": false },
+            "controlled_entrypoint_provenance_marker_present": { "type": "boolean", "const": true }
+          }
+        },
+        "evidence_policy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "raw_logs_prohibited", "raw_runtime_prohibited", "raw_api_payloads_prohibited",
+            "secrets_prohibited", "private_source_paths_prohibited",
+            "raw_artifact_contents_prohibited", "reduced_and_sanitized"
+          ],
+          "properties": {
+            "raw_logs_prohibited": { "type": "boolean", "const": true },
+            "raw_runtime_prohibited": { "type": "boolean", "const": true },
+            "raw_api_payloads_prohibited": { "type": "boolean", "const": true },
+            "secrets_prohibited": { "type": "boolean", "const": true },
+            "private_source_paths_prohibited": { "type": "boolean", "const": true },
+            "raw_artifact_contents_prohibited": { "type": "boolean", "const": true },
+            "reduced_and_sanitized": { "type": "boolean", "const": true }
+          }
+        }
+      }
+    },
+    "split_policy_v5": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["strategy", "train_ratio", "val_ratio", "test_ratio"],
+      "description": "Project Spec S0258: a real three-way native binary split. Unlike split_policy (shared with v1, whose val_ratio may be 0 and strategy may be random), strategy must be stratified and val_ratio must be strictly positive here -- a governed binary fixed-configuration run always produces a real, non-empty, class-stratified validation partition.",
+      "properties": {
+        "strategy": { "type": "string", "const": "stratified" },
+        "train_ratio": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
+        "val_ratio": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
+        "test_ratio": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 }
+      }
+    },
+    "binary_metric_name_v5": {
+      "type": "string",
+      "enum": ["roc_auc", "f1", "accuracy", "log_loss", "pr_auc"]
+    },
+    "modeling_constraints_v5": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["allowed_model_families", "selection_mode", "fixed_model_configuration"],
+      "properties": {
+        "allowed_model_families": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "items": { "type": "string", "const": "hist_gradient_boosting" }
+        },
+        "no_automl": { "type": "boolean", "const": true },
+        "max_training_time_seconds": { "type": ["integer", "null"], "minimum": 1 },
+        "selection_mode": { "type": "string", "const": "fixed_configuration" },
+        "fixed_model_configuration": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["model_family", "hyperparameters"],
+          "properties": {
+            "model_family": { "type": "string", "const": "hist_gradient_boosting" },
+            "hyperparameters": { "type": "object" }
+          }
+        }
+      }
+    },
+    "binary_classification_evidence_v5": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Project Spec S0258: governed binary-classification evidence for the finalized fitted model, sourced from its real fitted classes_ attribute and the governed result_semantics positive class/threshold. Never embeds raw predictions or evaluation rows.",
+      "required": [
+        "problem_type", "result_semantics_schema_version", "ordered_class_labels",
+        "positive_class_id", "positive_class_probability_index", "threshold"
+      ],
+      "properties": {
+        "problem_type": { "type": "string", "const": "binary_classification" },
+        "result_semantics_schema_version": { "type": "string", "const": "binary-result-semantics.v1" },
+        "ordered_class_labels": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": { "type": "string" },
+          "description": "The fitted model's actual classes_ ordering, so a reversed class order is recorded as evidence rather than hidden."
+        },
+        "positive_class_id": { "type": "string", "minLength": 1 },
+        "positive_class_probability_index": { "type": "integer", "minimum": 0, "maximum": 1 },
+        "threshold": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
     },
     "external_fitted_model_record_v1": {
       "type": "object",

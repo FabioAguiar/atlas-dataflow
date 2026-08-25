@@ -2,12 +2,13 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://atlas-dataflow.local/schemas/pipeline/analytical-visualizations.schema.json",
   "title": "Atlas DataFlow Analytical Visual Evidence",
-  "description": "Versioned analytical visual evidence contract. The legacy v1 predictive-classification artifact remains accepted unchanged; internal_v2 (Project Spec S0216) is the Atlas-native multiclass fixed-configuration training profile; continuous_regression_v3 (Project Spec S0228) is the Atlas-native continuous-regression fixed-configuration training profile; native_univariate_forecasting_v4 (Project Spec S0248) is the Atlas-native univariate-forecasting fixed-configuration training profile; governed_v2 governs capability-aware, integrity-bound visual collections without authorizing publication or release activation; external_fitted_model_v1/v2 are the validated-external-fitted-model profiles.",
+  "description": "Versioned analytical visual evidence contract. The legacy v1 predictive-classification artifact remains accepted unchanged; internal_v2 (Project Spec S0216) is the Atlas-native multiclass fixed-configuration training profile; continuous_regression_v3 (Project Spec S0228) is the Atlas-native continuous-regression fixed-configuration training profile; native_univariate_forecasting_v4 (Project Spec S0248) is the Atlas-native univariate-forecasting fixed-configuration training profile; native_binary_fixed_v5 (Project Spec S0258) is the Atlas-native binary fixed-configuration hist_gradient_boosting training profile, introduced because legacy_v1's closed feature_importance_method.model_family enum structurally excludes hist_gradient_boosting and carries no truthful permutation-importance method discriminator -- v5 is a strict independent branch that never widens or otherwise changes legacy_v1; governed_v2 governs capability-aware, integrity-bound visual collections without authorizing publication or release activation; external_fitted_model_v1/v2 are the validated-external-fitted-model profiles.",
   "oneOf": [
     { "$ref": "#/$defs/legacy_v1" },
     { "$ref": "#/$defs/internal_v2" },
     { "$ref": "#/$defs/continuous_regression_v3" },
     { "$ref": "#/$defs/native_univariate_forecasting_v4" },
+    { "$ref": "#/$defs/native_binary_fixed_v5" },
     { "$ref": "#/$defs/governed_v2" },
     { "$ref": "#/$defs/external_fitted_model_v1" },
     { "$ref": "#/$defs/external_fitted_model_v2" }
@@ -486,6 +487,76 @@
         "horizon_step": { "type": "integer", "minimum": 1 },
         "mae": { "type": "number", "minimum": 0 },
         "observation_count": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "native_binary_fixed_v5": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "artifact_kind", "created_at", "training_run_identity", "classification_evidence", "charts", "target_distribution_method", "feature_importance_method", "evidence_policy"],
+      "description": "Project Spec S0258: Atlas-native binary fixed-configuration hist_gradient_boosting visual evidence, emitted alongside training-parameter-record.v5/training-metrics.v5. Corrective supersession of the blocked Project Spec S0257's implementation intent -- introduced because legacy_v1's closed feature_importance_method.model_family enum has no truthful hist_gradient_boosting value and no method discriminator. Preserves the same bounded Target Distribution/Feature Importance chart shape as legacy_v1/internal_v2/continuous_regression_v3, and additionally requires a governed binary classification_evidence claim and a strict, truthful permutation-importance feature_importance_method -- never gradient_boosting, never a fabricated method.",
+      "properties": {
+        "schema_version": { "const": "analytical-visualizations.v5" },
+        "artifact_kind": { "const": "analytical_visualizations" },
+        "created_at": { "type": "string", "format": "date-time" },
+        "training_run_identity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["dataset_slug", "run_id", "output_directory"],
+          "properties": {
+            "dataset_slug": { "type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$" },
+            "run_id": { "type": "string", "pattern": "^train-[0-9]{8}T[0-9]{6}Z$" },
+            "output_directory": { "type": "string", "pattern": "^pipeline/training-runs/[a-z0-9]+(?:-[a-z0-9]+)*/train-[0-9]{8}T[0-9]{6}Z/$" }
+          }
+        },
+        "classification_evidence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["problem_type", "result_semantics_schema_version", "positive_class_id"],
+          "properties": {
+            "problem_type": { "const": "binary_classification" },
+            "result_semantics_schema_version": { "const": "binary-result-semantics.v1" },
+            "positive_class_id": { "type": "string", "minLength": 1 }
+          }
+        },
+        "charts": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": { "$ref": "#/$defs/legacy_chart" },
+          "allOf": [
+            { "contains": { "properties": { "id": { "const": "target_distribution" } }, "required": ["id"] }, "minContains": 1, "maxContains": 1 },
+            { "contains": { "properties": { "id": { "const": "feature_importance" } }, "required": ["id"] }, "minContains": 1, "maxContains": 1 }
+          ]
+        },
+        "target_distribution_method": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["population_kind", "row_count", "target_column"],
+          "properties": {
+            "population_kind": { "const": "prepared_dataset" },
+            "row_count": { "type": "integer", "minimum": 1 },
+            "target_column": { "type": "string", "minLength": 1 }
+          }
+        },
+        "feature_importance_method": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["model_family", "source", "method", "population_kind", "scoring", "n_repeats", "random_seed_source", "total_source_feature_count", "omitted_source_feature_count", "public_row_limit"],
+          "description": "Project Spec S0258: HGB Feature Importance is deterministic permutation importance computed only on the finalized-fit (train+validation) population, never the final-test partition, and never used for model selection, hyperparameter tuning, or threshold selection. random_seed_source names the governed provenance of the seed (execution_contract.random_seed) rather than re-embedding the numeric seed value, which is already recorded in training-parameter-record.v5.",
+          "properties": {
+            "model_family": { "const": "hist_gradient_boosting" },
+            "source": { "const": "sklearn.inspection.permutation_importance" },
+            "method": { "const": "permutation_importance" },
+            "population_kind": { "const": "finalized_fit_population" },
+            "scoring": { "const": "roc_auc" },
+            "n_repeats": { "const": 5 },
+            "random_seed_source": { "const": "execution_contract.random_seed" },
+            "total_source_feature_count": { "type": "integer", "minimum": 1 },
+            "omitted_source_feature_count": { "type": "integer", "minimum": 0 },
+            "public_row_limit": { "const": 10 }
+          }
+        },
+        "evidence_policy": { "$ref": "#/$defs/legacy_evidence_policy" }
       }
     },
     "external_fitted_model_v1": {

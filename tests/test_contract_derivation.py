@@ -1863,6 +1863,182 @@ def test_execution_contract_materialization_evidence_reports_training_policy_pre
 
 
 # ---------------------------------------------------------------------------
+# Project Spec S0258: binary-specific training-policy strictness, corrective
+# supersession of the blocked Project Spec S0257 implementation intent.
+# Reuses the same S0216 fixed_configuration/hist_gradient_boosting validation
+# path as multiclass (problem_type_hint only narrows the accepted metric
+# vocabulary -- it never forces fixed_configuration the way
+# continuous_regression does), so the historical binary
+# evaluate_allowed_families selection_mode remains completely unchanged and
+# is proven still reachable below. No dataset-slug branch is introduced --
+# every fixture below reuses the same generic synthetic "campaign-response"
+# dataset identity already established for the binary result-semantics tests
+# above.
+# ---------------------------------------------------------------------------
+
+
+def _approved_fixed_binary_training_policy_intent(**overrides) -> dict:
+    policy = {
+        "review_status": "approved",
+        "numeric_handling": "standardize",
+        "categorical_encoding_policy": "onehot",
+        "allowed_transformations": [],
+        "split_policy": {"strategy": "stratified", "train_ratio": 0.70, "val_ratio": 0.15, "test_ratio": 0.15},
+        "primary_metric": "roc_auc",
+        "secondary_metrics": ["f1", "accuracy", "log_loss", "pr_auc"],
+        "modeling_constraints": {
+            "allowed_model_families": ["hist_gradient_boosting"],
+            "no_automl": True,
+            "selection_mode": "fixed_configuration",
+            "fixed_model_configuration": {
+                "model_family": "hist_gradient_boosting",
+                "hyperparameters": {
+                    "class_weight": None,
+                    "l2_regularization": 0.0,
+                    "learning_rate": 0.05,
+                    "max_iter": 250,
+                    "max_leaf_nodes": 15,
+                    "min_samples_leaf": 40,
+                },
+            },
+        },
+    }
+    policy.update(overrides)
+    return policy
+
+
+def _modeling_intent_with_binary_training_policy(
+    training_policy_intent=_MISSING, binary_result_semantics_intent=_MISSING,
+) -> dict:
+    intent = _modeling_intent_for_result_semantics(
+        binary_result_semantics_intent=(
+            _approved_binary_result_semantics_intent()
+            if binary_result_semantics_intent is _MISSING
+            else binary_result_semantics_intent
+        )
+    )
+    intent["training_policy_intent"] = (
+        _approved_fixed_binary_training_policy_intent()
+        if training_policy_intent is _MISSING
+        else training_policy_intent
+    )
+    return intent
+
+
+def test_validate_training_policy_intent_accepts_complete_approved_binary_policy():
+    reasons = _validate_training_policy_intent(
+        _approved_fixed_binary_training_policy_intent(), problem_type_hint="binary_classification",
+    )
+    assert reasons == []
+
+
+def test_validate_training_policy_intent_binary_rejects_multiclass_only_metric():
+    """Project Spec S0258: the binary-specific metric vocabulary must never
+    accept a multiclass-only aggregate metric id such as f1_macro, even
+    though it is schema-valid vocabulary generically."""
+    policy = _approved_fixed_binary_training_policy_intent(primary_metric="f1_macro")
+    reasons = _validate_training_policy_intent(policy, problem_type_hint="binary_classification")
+    assert any("unknown metric" in reason for reason in reasons)
+
+
+def test_validate_training_policy_intent_binary_rejects_continuous_regression_only_metric():
+    policy = _approved_fixed_binary_training_policy_intent(primary_metric="r2")
+    reasons = _validate_training_policy_intent(policy, problem_type_hint="binary_classification")
+    assert any("unknown metric" in reason for reason in reasons)
+
+
+def test_validate_training_policy_intent_binary_rejects_fixed_family_not_in_allowed_families():
+    policy = _approved_fixed_binary_training_policy_intent()
+    policy["modeling_constraints"]["allowed_model_families"] = ["gradient_boosting"]
+    reasons = _validate_training_policy_intent(policy, problem_type_hint="binary_classification")
+    assert reasons
+
+
+def test_validate_training_policy_intent_binary_rejects_fixed_configuration_with_multiple_allowed_families():
+    policy = _approved_fixed_binary_training_policy_intent()
+    policy["modeling_constraints"]["allowed_model_families"] = ["hist_gradient_boosting", "gradient_boosting"]
+    reasons = _validate_training_policy_intent(policy, problem_type_hint="binary_classification")
+    assert reasons
+
+
+def test_validate_training_policy_intent_binary_rejects_unsupported_hgb_hyperparameter():
+    policy = _approved_fixed_binary_training_policy_intent()
+    policy["modeling_constraints"]["fixed_model_configuration"]["hyperparameters"]["n_estimators"] = 100
+    reasons = _validate_training_policy_intent(policy, problem_type_hint="binary_classification")
+    assert any("unsupported HGB hyperparameter" in reason for reason in reasons)
+
+
+def test_execution_contract_approved_binary_fixed_policy_materializes_exactly_one_hgb_fixed_configuration():
+    modeling_intent = _modeling_intent_with_binary_training_policy()
+    contract = _build_execution_contract(modeling_intent, _discovery_evidence_for_result_semantics(), None)
+
+    assert contract["modeling_constraints"]["selection_mode"] == "fixed_configuration"
+    assert contract["modeling_constraints"]["allowed_model_families"] == ["hist_gradient_boosting"]
+    assert (
+        contract["modeling_constraints"]["fixed_model_configuration"]["model_family"]
+        == "hist_gradient_boosting"
+    )
+    assert contract["primary_metric"] == "roc_auc"
+
+
+def test_execution_contract_binary_fixed_policy_positive_class_and_result_semantics_remain_authoritative():
+    """Desired Change I/tests J: the governed positive-class/result-semantics
+    claim must survive alongside a fixed_configuration training policy on the
+    same execution contract -- neither materializer overwrites the other."""
+    modeling_intent = _modeling_intent_with_binary_training_policy()
+    contract = _build_execution_contract(modeling_intent, _discovery_evidence_for_result_semantics(), None)
+
+    assert contract["result_semantics"]["schema_version"] == "binary-result-semantics.v1"
+    assert contract["result_semantics"]["positive_class"] == {"class_id": "Yes", "event_label": "Responded"}
+    assert contract["result_semantics"]["decision"] == {"threshold": 0.5}
+    assert contract["modeling_constraints"]["selection_mode"] == "fixed_configuration"
+
+
+def test_execution_contract_binary_pending_training_policy_fails_closed_not_silently_falls_back():
+    modeling_intent = _modeling_intent_with_binary_training_policy(
+        training_policy_intent=_approved_fixed_binary_training_policy_intent(review_status="pending_review"),
+    )
+    with pytest.raises(TrainingPolicyValidationError):
+        _build_execution_contract(modeling_intent, _discovery_evidence_for_result_semantics(), None)
+
+
+def test_execution_contract_binary_invalid_fixed_family_fails_closed():
+    policy = _approved_fixed_binary_training_policy_intent()
+    policy["modeling_constraints"]["allowed_model_families"] = ["gradient_boosting"]
+    modeling_intent = _modeling_intent_with_binary_training_policy(training_policy_intent=policy)
+    with pytest.raises(TrainingPolicyValidationError):
+        _build_execution_contract(modeling_intent, _discovery_evidence_for_result_semantics(), None)
+
+
+def test_execution_contract_binary_fixed_policy_still_validates_against_schema():
+    try:
+        import jsonschema
+    except ImportError:
+        pytest.skip("jsonschema not installed")
+    schema_path = Path(__file__).parent.parent / "contracts" / "execution-contract.schema.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+
+    modeling_intent = _modeling_intent_with_binary_training_policy()
+    contract = _build_execution_contract(modeling_intent, _discovery_evidence_for_result_semantics(), None)
+    jsonschema.validate(contract, schema)
+
+
+def test_historical_binary_evaluate_allowed_families_selection_behavior_unchanged():
+    """Acceptance criterion: the historical binary evaluate_allowed_families
+    path (no training_policy_intent supplied at all) remains completely
+    unchanged even though binary_result_semantics_intent is present and
+    approved -- fixed_configuration is never forced onto binary the way it
+    is for continuous_regression."""
+    modeling_intent = _modeling_intent_with_binary_training_policy(training_policy_intent=None)
+    contract = _build_execution_contract(modeling_intent, _discovery_evidence_for_result_semantics(), None)
+
+    assert contract["numeric_handling"] == "standardize"
+    assert contract["primary_metric"] == "roc_auc"
+    assert "selection_mode" not in contract["modeling_constraints"]
+    assert contract["result_semantics"]["schema_version"] == "binary-result-semantics.v1"
+
+
+# ---------------------------------------------------------------------------
 # execution_contract.v2 -- strict univariate-forecasting materialization
 # (Project Spec S0243). Fixtures are synthetic and dataset-neutral, matching
 # the "campaign-response" precedent established above -- no Nottingham-

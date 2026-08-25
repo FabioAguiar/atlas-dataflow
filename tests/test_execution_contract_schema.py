@@ -2424,6 +2424,100 @@ def test_hgb_regression_hyperparameters_never_expose_callable_or_module_strings(
 
 
 # ---------------------------------------------------------------------------
+# Project Spec S0258: binary fixed_configuration hist_gradient_boosting,
+# corrective supersession of the blocked Project Spec S0257 implementation
+# intent. Reuses the same S0216 classification hist_gradient_boosting_hyperparameters
+# shape (never the S0231 continuous-regression shape) since binary_classification
+# is not continuous_regression -- see the allOf discriminator in the schema
+# itself. Also proves the historical binary evaluate_allowed_families path
+# (any selection_mode absent/evaluate_allowed_families, any allowed family
+# composition) remains completely unchanged.
+# ---------------------------------------------------------------------------
+
+
+def _fixed_hgb_binary_contract() -> dict:
+    contract = _valid_contract()
+    contract["primary_metric"] = "roc_auc"
+    contract["secondary_metrics"] = ["f1", "accuracy", "log_loss", "pr_auc"]
+    contract["modeling_constraints"] = {
+        "allowed_model_families": ["hist_gradient_boosting"],
+        "no_automl": True,
+        "selection_mode": "fixed_configuration",
+        "fixed_model_configuration": {
+            "model_family": "hist_gradient_boosting",
+            "hyperparameters": _fixed_hgb_hyperparameters(),
+        },
+    }
+    contract["result_semantics"] = _valid_binary_result_semantics()
+    return contract
+
+
+def test_fixed_configuration_hgb_binary_contract_is_schema_valid():
+    schema = _load_json(SCHEMA_PATH)
+    jsonschema.validate(_fixed_hgb_binary_contract(), schema)
+
+
+def test_binary_fixed_configuration_rejects_gradient_boosting_family():
+    """Acceptance criterion 24: binary fixed configuration accepts exactly
+    one HGB family -- no additional fixed binary family is ever authorized."""
+    schema = _load_json(SCHEMA_PATH)
+    contract = _fixed_hgb_binary_contract()
+    contract["modeling_constraints"]["allowed_model_families"] = ["gradient_boosting"]
+    contract["modeling_constraints"]["fixed_model_configuration"]["model_family"] = "gradient_boosting"
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_binary_fixed_configuration_malformed_hgb_hyperparameters_rejected():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _fixed_hgb_binary_contract()
+    del contract["modeling_constraints"]["fixed_model_configuration"]["hyperparameters"]["max_iter"]
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_binary_fixed_configuration_unsupported_hyperparameter_rejected():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _fixed_hgb_binary_contract()
+    contract["modeling_constraints"]["fixed_model_configuration"]["hyperparameters"]["n_estimators"] = 100
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_binary_fixed_configuration_rejects_continuous_regression_hgb_shape():
+    """Binary must require class_weight (the S0216 classification shape),
+    never the S0231 continuous-regression shape that forbids it."""
+    schema = _load_json(SCHEMA_PATH)
+    contract = _fixed_hgb_binary_contract()
+    del contract["modeling_constraints"]["fixed_model_configuration"]["hyperparameters"]["class_weight"]
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_historical_binary_evaluate_allowed_families_remains_valid():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_contract()
+    contract["result_semantics"] = _valid_binary_result_semantics()
+    contract["modeling_constraints"] = {
+        "allowed_model_families": ["logistic_regression", "gradient_boosting", "random_forest"],
+        "no_automl": True,
+        "max_training_time_seconds": 3600,
+    }
+    jsonschema.validate(contract, schema)
+
+
+def test_multiclass_and_continuous_regression_execution_contracts_remain_valid_alongside_binary_addition():
+    schema = _load_json(SCHEMA_PATH)
+    jsonschema.validate(_fixed_configuration_contract(), schema)
+    jsonschema.validate(_fixed_hgb_regression_contract(), schema)
+    jsonschema.validate(_valid_execution_contract_v2(), schema)
+
+
+# ---------------------------------------------------------------------------
 # execution_contract.v2 -- strict univariate-forecasting branch
 # (Project Spec S0243). Fixtures are synthetic and dataset-neutral, matching
 # the "campaign-response"/"bank-marketing" precedent established above -- no

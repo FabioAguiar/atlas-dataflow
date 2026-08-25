@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://atlas-dataflow.local/schemas/pipeline/training-metrics.schema.json",
   "title": "Atlas DataFlow Training Metrics Artifact",
-  "description": "Reduced metrics artifact. Six schema-version-discriminated profiles are supported: training-metrics.v1 (unchanged, emitted by a governed M24 training run at pipeline/training-runs/{dataset_slug}/{run_id}/metrics.json, computed from the controlled evaluation split only), training-metrics.v2 (Project Spec S0216, Atlas-native fixed-configuration multiclass training, distinguishing a descriptive validation evaluation from a sealed final-test evaluation), training-metrics.v3 (Project Spec S0224, Atlas-native fixed-configuration continuous-regression training, mirroring v2's descriptive-validation/sealed-final-test discipline with r2/mae/rmse regression evidence in place of classification evidence), training-metrics.v4 (Project Spec S0244, Atlas-native univariate forecasting training, separating expanding-window backtesting evidence from a sealed final-holdout evaluation opened exactly once), training-metrics.external-fitted-model.v1 (Project Spec S0157, produced by a validated external handoff/projection flow, distinguishing cross-validation, validation, and final-test partition roles), and training-metrics.external-fitted-model.v2 (Project Spec S0215, the multiclass external variant).",
+  "description": "Reduced metrics artifact. Seven schema-version-discriminated profiles are supported: training-metrics.v1 (unchanged, emitted by a governed M24 training run at pipeline/training-runs/{dataset_slug}/{run_id}/metrics.json, computed from the controlled evaluation split only), training-metrics.v2 (Project Spec S0216, Atlas-native fixed-configuration multiclass training, distinguishing a descriptive validation evaluation from a sealed final-test evaluation), training-metrics.v3 (Project Spec S0224, Atlas-native fixed-configuration continuous-regression training, mirroring v2's descriptive-validation/sealed-final-test discipline with r2/mae/rmse regression evidence in place of classification evidence), training-metrics.v4 (Project Spec S0244, Atlas-native univariate forecasting training, separating expanding-window backtesting evidence from a sealed final-holdout evaluation opened exactly once), training-metrics.v5 (Project Spec S0258, Atlas-native fixed-configuration binary classification training -- corrective supersession of the blocked Project Spec S0257 implementation intent -- mirroring v2/v3's descriptive-validation/sealed-final-test discipline, additionally recording an explicit used_for_threshold_selection boundary confirmation on both partitions since binary training carries a governed decision threshold that multiclass/regression do not), training-metrics.external-fitted-model.v1 (Project Spec S0157, produced by a validated external handoff/projection flow, distinguishing cross-validation, validation, and final-test partition roles), and training-metrics.external-fitted-model.v2 (Project Spec S0215, the multiclass external variant).",
   "type": "object",
   "required": ["schema_version"],
   "oneOf": [
@@ -10,6 +10,7 @@
     { "$ref": "#/$defs/internal_run_metrics_v2" },
     { "$ref": "#/$defs/internal_run_metrics_v3" },
     { "$ref": "#/$defs/internal_run_metrics_v4" },
+    { "$ref": "#/$defs/internal_run_metrics_v5" },
     { "$ref": "#/$defs/external_metrics_v1" },
     { "$ref": "#/$defs/external_metrics_v2" }
   ],
@@ -581,6 +582,184 @@
           "$ref": "#/$defs/evidence_policy"
         }
       }
+    },
+    "internal_run_metrics_v5": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Project Spec S0258: Atlas-native fixed-configuration binary classification training metrics, emitted alongside training-parameter-record.v5 at pipeline/training-runs/{dataset_slug}/{run_id}/metrics.json. Corrective supersession of the blocked Project Spec S0257 implementation intent. Distinguishes a descriptive validation_evaluation (never used for model, hyperparameter, or threshold selection under fixed_configuration) from a sealed, non-selection, non-fitting, non-threshold-selection final_test_evaluation.",
+      "required": [
+        "schema_version",
+        "artifact_kind",
+        "created_at",
+        "training_run_identity",
+        "classification_evidence",
+        "validation_evaluation",
+        "final_test_evaluation",
+        "path_references",
+        "hashes",
+        "evidence_policy"
+      ],
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "training-metrics.v5"
+        },
+        "artifact_kind": {
+          "type": "string",
+          "const": "training_metrics"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "training_run_identity": {
+          "$ref": "#/$defs/training_run_identity"
+        },
+        "classification_evidence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["problem_type", "result_semantics_schema_version", "positive_class_id"],
+          "properties": {
+            "problem_type": {
+              "type": "string",
+              "const": "binary_classification"
+            },
+            "result_semantics_schema_version": {
+              "type": "string",
+              "const": "binary-result-semantics.v1"
+            },
+            "positive_class_id": { "type": "string", "minLength": 1 }
+          }
+        },
+        "validation_evaluation": {
+          "$ref": "#/$defs/binary_validation_partition_v5"
+        },
+        "final_test_evaluation": {
+          "$ref": "#/$defs/binary_final_test_partition_v5"
+        },
+        "path_references": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "metrics_path",
+            "training_parameter_record_path",
+            "execution_contract_path",
+            "dataset_path"
+          ],
+          "properties": {
+            "metrics_path": {
+              "$ref": "#/$defs/metrics_path"
+            },
+            "training_parameter_record_path": {
+              "$ref": "#/$defs/training_parameter_record_path"
+            },
+            "execution_contract_path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "dataset_path": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "hashes": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "algorithm",
+            "execution_contract_sha256"
+          ],
+          "properties": {
+            "algorithm": {
+              "type": "string",
+              "const": "sha256"
+            },
+            "execution_contract_sha256": {
+              "$ref": "#/$defs/sha256_hex"
+            }
+          }
+        },
+        "evidence_policy": {
+          "$ref": "#/$defs/evidence_policy"
+        }
+      }
+    },
+    "binary_validation_partition_v5": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Project Spec S0258: validation is descriptive only -- it can never be used for model selection, hyperparameter selection, or threshold selection under fixed_configuration, and never changes the frozen configuration or the governed result_semantics threshold.",
+      "required": [
+        "partition_role",
+        "used_for_fitting",
+        "used_for_model_selection",
+        "used_for_hyperparameter_selection",
+        "used_for_threshold_selection",
+        "sealed_before_finalization",
+        "evaluation_count",
+        "metrics"
+      ],
+      "properties": {
+        "partition_role": { "type": "string", "const": "validation" },
+        "row_count": { "type": "integer", "minimum": 1 },
+        "used_for_fitting": { "type": "boolean", "const": false },
+        "used_for_model_selection": { "type": "boolean", "const": false },
+        "used_for_hyperparameter_selection": { "type": "boolean", "const": false },
+        "used_for_threshold_selection": { "type": "boolean", "const": false },
+        "sealed_before_finalization": { "type": "boolean", "const": false },
+        "evaluation_count": { "type": "integer", "const": 1 },
+        "metrics": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/metric_value" }
+        }
+      }
+    },
+    "binary_final_test_partition_v5": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Project Spec S0258: final test can never be used for fitting, model selection, hyperparameter selection, or threshold selection, and must be sealed before finalization. evaluation_count is bounded to [0, 1] so more than one final-test evaluation is structurally rejected; a completed evaluation (completed: true) additionally requires evaluation_count to equal exactly 1.",
+      "required": [
+        "partition_role",
+        "used_for_fitting",
+        "used_for_model_selection",
+        "used_for_hyperparameter_selection",
+        "used_for_threshold_selection",
+        "sealed_before_finalization",
+        "completed",
+        "evaluation_count",
+        "metrics"
+      ],
+      "properties": {
+        "partition_role": { "type": "string", "const": "test" },
+        "row_count": { "type": "integer", "minimum": 1 },
+        "used_for_fitting": { "type": "boolean", "const": false },
+        "used_for_model_selection": { "type": "boolean", "const": false },
+        "used_for_hyperparameter_selection": { "type": "boolean", "const": false },
+        "used_for_threshold_selection": { "type": "boolean", "const": false },
+        "sealed_before_finalization": { "type": "boolean", "const": true },
+        "completed": { "type": "boolean" },
+        "evaluation_count": { "type": "integer", "minimum": 0, "maximum": 1 },
+        "metrics": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/metric_value" }
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "completed": { "const": true } }, "required": ["completed"] },
+          "then": {
+            "properties": {
+              "evaluation_count": { "const": 1 },
+              "metrics": { "minItems": 1 }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "completed": { "const": false } }, "required": ["completed"] },
+          "then": { "properties": { "evaluation_count": { "const": 0 } } }
+        }
+      ]
     },
     "forecasting_metric_name_v4": {
       "type": "string",

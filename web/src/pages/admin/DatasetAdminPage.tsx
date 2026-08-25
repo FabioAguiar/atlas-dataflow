@@ -2510,6 +2510,23 @@ function PublicContentTab({
   );
 }
 
+// Project Spec S0264: the private Admin proxy boundary can return a
+// non-JSON or malformed-JSON transport response (e.g. an HTML error page)
+// ahead of the Atlas API ever handling the upload. Reading Content-Type
+// before parsing -- and catching a still-malformed JSON body -- keeps a raw
+// parser SyntaxError/HTML from ever reaching the uploader's error message.
+async function readHomeCardUploadResponseBody(
+  response: Response,
+): Promise<{ media_ref?: string; errors?: DraftError[] } | null> {
+  const contentType = response.headers.get("content-type") || "";
+  if (!contentType.toLowerCase().includes("application/json")) return null;
+  try {
+    return (await response.json()) as { media_ref?: string; errors?: DraftError[] };
+  } catch {
+    return null;
+  }
+}
+
 function MetadataCardTab({
   form,
   setField,
@@ -2561,7 +2578,8 @@ function MetadataCardTab({
       body: file,
     })
       .then(async (response) => {
-        const body = await response.json() as { media_ref?: string; errors?: DraftError[] };
+        const body = await readHomeCardUploadResponseBody(response);
+        if (!body) throw new Error("The image could not be uploaded. Try again.");
         if (!response.ok || !body.media_ref) throw new Error(body.errors?.[0]?.message || "The image could not be uploaded. Try again.");
         setField("background_image_ref", body.media_ref);
       })

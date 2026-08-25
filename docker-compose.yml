@@ -86,6 +86,7 @@ services:
             }
 
             location ^~ /api/admin/ {
+                client_max_body_size 11m;
                 proxy_pass http://api:8000/admin/;
                 proxy_http_version 1.1;
                 proxy_set_header Host $$host;

@@ -31,13 +31,43 @@ type MockResponse = {
   ok: boolean;
   status: number;
   json: () => Promise<unknown>;
+  headers: { get: (name: string) => string | null };
 };
 
 function jsonResponse(body: unknown, status = 200): MockResponse {
   return {
     ok: status >= 200 && status < 300,
     status,
+    headers: { get: (name: string) => (name.toLowerCase() === "content-type" ? "application/json" : null) },
     json: async () => body,
+  };
+}
+
+// Project Spec S0264: simulates a transport-layer failure ahead of the
+// Atlas API (e.g. an Nginx/proxy error page) -- non-JSON Content-Type, and
+// .json() throws exactly like a real Response would on an HTML/text body.
+function htmlErrorResponse(status = 502): MockResponse {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    headers: { get: (name: string) => (name.toLowerCase() === "content-type" ? "text/html; charset=utf-8" : null) },
+    json: async () => {
+      throw new SyntaxError("Unexpected token '<', \"<html><body>502 Bad Gateway</body></html>\" is not valid JSON");
+    },
+  };
+}
+
+// Project Spec S0264: simulates a response advertised as JSON whose body is
+// nonetheless malformed, so .json() throws even though Content-Type is
+// application/json.
+function malformedJsonResponse(status = 200): MockResponse {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    headers: { get: (name: string) => (name.toLowerCase() === "content-type" ? "application/json" : null) },
+    json: async () => {
+      throw new SyntaxError("Unexpected end of JSON input");
+    },
   };
 }
 
@@ -746,8 +776,15 @@ function installFetchMock(
     }
     if (url.endsWith(`/admin/datasets/${datasetSlug}/home-card-image`) && init?.method === "POST") {
       const headers = init.headers as Record<string, string>;
-      if (decodeURIComponent(headers["X-File-Name"]).includes("fail") || headers["Content-Type"] === "image/svg+xml") {
+      const fileName = decodeURIComponent(headers["X-File-Name"]);
+      if (fileName.includes("fail") || headers["Content-Type"] === "image/svg+xml") {
         return jsonResponse({ errors: [{ message: "Choose a PNG, JPEG, WebP, or AVIF image." }] }, 422);
+      }
+      if (fileName.includes("htmlerror")) {
+        return htmlErrorResponse();
+      }
+      if (fileName.includes("malformedjson")) {
+        return malformedJsonResponse();
       }
       return jsonResponse({ uploaded: true, media_ref: "/media/home-cards/0123456789abcdef0123456789abcdef.png" });
     }
@@ -3154,6 +3191,80 @@ describe("DatasetAdminPage", () => {
         name: "Publish changes",
       }),
     ).toBeEnabled();
+  });
+
+  it("keeps a successful structured JSON upload response working (Project Spec S0264)", async () => {
+    const fetchMock = installFetchMock();
+    const { container } = renderAdminPage();
+    await loadDraftOnly();
+    fireEvent.click(screen.getByRole("tab", { name: "Metadata & Card" }));
+
+    const upload = container.querySelector('input[type="file"]')!;
+    fireEvent.change(upload, { target: { files: [new File(["png"], "clean upload.png", { type: "image/png" })] } });
+
+    await waitFor(() => expect(container.querySelector(".dataset-admin-preview-card .dataset-card__media")).toBeInTheDocument());
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    const uploadCall = fetchMock.mock.calls.find(([url]) => String(url).endsWith(`/admin/datasets/${datasetSlug}/home-card-image`));
+    expect(uploadCall).toBeDefined();
+  });
+
+  it("still shows the bounded Atlas server error for a structured JSON upload failure (Project Spec S0264)", async () => {
+    installFetchMock();
+    const { container } = renderAdminPage();
+    await loadDraftOnly();
+    fireEvent.click(screen.getByRole("tab", { name: "Metadata & Card" }));
+
+    const upload = container.querySelector('input[type="file"]')!;
+    fireEvent.change(upload, { target: { files: [new File(["bad"], "fail image.png", { type: "image/png" })] } });
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Choose a PNG, JPEG, WebP, or AVIF image.");
+  });
+
+  it("falls back to a bounded generic message for an HTML/text proxy error response without leaking it (Project Spec S0264)", async () => {
+    installFetchMock();
+    const { container } = renderAdminPage();
+    await loadDraftOnly();
+    fireEvent.click(screen.getByRole("tab", { name: "Metadata & Card" }));
+
+    const upload = container.querySelector('input[type="file"]')!;
+    fireEvent.change(upload, { target: { files: [new File(["png"], "htmlerror image.png", { type: "image/png" })] } });
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("The image could not be uploaded. Try again.");
+    expect(alert.textContent ?? "").not.toMatch(/unexpected token/i);
+    expect(alert.textContent ?? "").not.toMatch(/<html/i);
+  });
+
+  it("falls back to a bounded generic message for malformed JSON under an advertised JSON Content-Type (Project Spec S0264)", async () => {
+    installFetchMock();
+    const { container } = renderAdminPage();
+    await loadDraftOnly();
+    fireEvent.click(screen.getByRole("tab", { name: "Metadata & Card" }));
+
+    const upload = container.querySelector('input[type="file"]')!;
+    fireEvent.change(upload, { target: { files: [new File(["png"], "malformedjson image.png", { type: "image/png" })] } });
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("The image could not be uploaded. Try again.");
+    expect(alert.textContent ?? "").not.toMatch(/unexpected/i);
+  });
+
+  it("preserves unrelated unsaved Admin draft edits when a non-JSON upload response fails (Project Spec S0264)", async () => {
+    installFetchMock();
+    const { container } = renderAdminPage();
+    await loadDraftOnly();
+
+    const originalSubtitle = (screen.getByLabelText("Subtitle") as HTMLInputElement).value;
+    fireEvent.change(screen.getByLabelText("Subtitle"), { target: { value: "Unsaved subtitle edit" } });
+
+    fireEvent.click(screen.getByRole("tab", { name: "Metadata & Card" }));
+    const upload = container.querySelector('input[type="file"]')!;
+    fireEvent.change(upload, { target: { files: [new File(["png"], "htmlerror image.png", { type: "image/png" })] } });
+    expect(await screen.findByRole("alert")).toHaveTextContent("The image could not be uploaded. Try again.");
+
+    fireEvent.click(screen.getByRole("tab", { name: "Public Content" }));
+    expect(screen.getByLabelText("Subtitle")).toHaveValue("Unsaved subtitle edit");
+    expect(originalSubtitle).not.toBe("Unsaved subtitle edit");
   });
 
   it("binds controlled icon and short-description textarea to the local preview", async () => {

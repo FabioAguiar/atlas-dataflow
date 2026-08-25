@@ -641,6 +641,26 @@ def test_home_card_image_store_rejects_traversal_svg_oversize_and_invalid_conten
     assert not (tmp_path / "media").exists()
 
 
+def test_home_card_image_store_accepts_above_1_mib_within_10_mib_and_rejects_above_10_mib(tmp_path):
+    # Project Spec S0264: proves the API-side 10 MiB application contract is
+    # unaffected by the private proxy transport-limit change -- a payload
+    # comfortably above 1 MiB but within the limit is stored, and a payload
+    # over the limit is still rejected.
+    within_limit = b"\x89PNG\r\n\x1a\n" + b"x" * (2 * 1024 * 1024)
+    assert 1 * 1024 * 1024 < len(within_limit) <= admin_profile_publish.HOME_CARD_IMAGE_MAX_BYTES
+
+    accepted = admin_profile_publish.store_home_card_image("card.png", "image/png", within_limit, tmp_path)
+    assert accepted["uploaded"] is True
+    assert accepted["media_ref"].endswith(".png")
+
+    above_limit = b"\x89PNG\r\n\x1a\n" + b"x" * (admin_profile_publish.HOME_CARD_IMAGE_MAX_BYTES + 1)
+    assert len(above_limit) > admin_profile_publish.HOME_CARD_IMAGE_MAX_BYTES
+
+    rejected = admin_profile_publish.store_home_card_image("card2.png", "image/png", above_limit, tmp_path)
+    assert rejected["uploaded"] is False
+    assert rejected["media_ref"] is None
+
+
 def test_home_card_media_resolver_serves_only_generated_safe_filenames(tmp_path, monkeypatch):
     png = b"\x89PNG\r\n\x1a\n" + b"safe image payload"
     stored = admin_profile_publish.store_home_card_image(

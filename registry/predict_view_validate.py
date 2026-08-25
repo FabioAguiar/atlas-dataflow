@@ -124,7 +124,7 @@ def validate_predict_views(
         ))
         return {"valid": len(errors) == 0, "errors": errors}
 
-    seen_view_ids: set[str] = set()
+    seen_dataset_view_ids: set[tuple[str, str]] = set()
 
     for i, record in enumerate(predict_views):
         prefix = f"predict_views[{i}]"
@@ -157,17 +157,24 @@ def validate_predict_views(
                 ))
 
         view_id = record.get("view_id")
-        if isinstance(view_id, str) and view_id:
-            if view_id in seen_view_ids:
+        dataset_slug = record.get("dataset_slug")
+        if (
+            isinstance(view_id, str) and view_id
+            and isinstance(dataset_slug, str) and dataset_slug
+        ):
+            dataset_view_key = (dataset_slug, view_id)
+            if dataset_view_key in seen_dataset_view_ids:
                 errors.append(_err(
                     "DUPLICATE_VIEW_ID",
                     f"{prefix}.view_id",
-                    f"Predict view record at index {i} contains a duplicate 'view_id' value.",
+                    (
+                        f"Predict view record at index {i} contains a 'view_id' value "
+                        "that duplicates another record for the same dataset."
+                    ),
                 ))
             else:
-                seen_view_ids.add(view_id)
+                seen_dataset_view_ids.add(dataset_view_key)
 
-        dataset_slug = record.get("dataset_slug")
         if isinstance(dataset_slug, str) and dataset_slug:
             if known_dataset_slugs is not None and dataset_slug not in known_dataset_slugs:
                 errors.append(_err(

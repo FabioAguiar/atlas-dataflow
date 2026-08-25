@@ -357,25 +357,30 @@ def validate_profile_references(
                 predict_views = []
 
             matched_view = None
+            view_id_exists_for_other_dataset = False
             for view in predict_views:
                 if not isinstance(view, dict):
                     continue
-                if view.get("view_id") == bound_predict_view_id:
+                if view.get("view_id") != bound_predict_view_id:
+                    continue
+                if view.get("dataset_slug") == dataset_slug:
                     matched_view = view
                     break
+                view_id_exists_for_other_dataset = True
 
             if matched_view is None:
-                errors.append(_err(
-                    "BOUND_PREDICT_VIEW_NOT_FOUND",
-                    "inference_presentation.bound_predict_view_id",
-                    "inference_presentation.bound_predict_view_id does not reference an existing predict view.",
-                ))
-            elif matched_view.get("dataset_slug") != dataset_slug:
-                errors.append(_err(
-                    "BOUND_PREDICT_VIEW_DATASET_MISMATCH",
-                    "inference_presentation.bound_predict_view_id",
-                    "inference_presentation.bound_predict_view_id references a predict view bound to a different dataset.",
-                ))
+                if view_id_exists_for_other_dataset:
+                    errors.append(_err(
+                        "BOUND_PREDICT_VIEW_DATASET_MISMATCH",
+                        "inference_presentation.bound_predict_view_id",
+                        "inference_presentation.bound_predict_view_id references a predict view bound to a different dataset.",
+                    ))
+                else:
+                    errors.append(_err(
+                        "BOUND_PREDICT_VIEW_NOT_FOUND",
+                        "inference_presentation.bound_predict_view_id",
+                        "inference_presentation.bound_predict_view_id does not reference an existing predict view.",
+                    ))
 
     home_card = profile.get("home_card")
     if isinstance(home_card, dict):

@@ -115,32 +115,59 @@ def test_profile_with_valid_bound_predict_view_id_passes():
     assert result["valid"] is True, f"Expected valid, got errors: {result['errors']}"
 
 
-def test_duplicate_predict_view_id_uses_first_match_deterministically():
-    duplicate_registry = {
-        "schema_version": "atlas.dataflow.predict-views.v1",
-        "predict_views": [
-            {"view_id": "churn-risk-overview", "dataset_slug": "telco-customer-churn"},
-            {"view_id": "churn-risk-overview", "dataset_slug": "bank-marketing"},
-        ],
-    }
+def test_composite_bound_predict_view_resolution_is_order_independent():
+    """S0261: resolution is the exact composite pair
+    (profile.dataset_slug, bound_predict_view_id) -- valid regardless of
+    where in the registry array the matching dataset-scoped record sits
+    relative to same-view_id records for other datasets."""
     profile = _profile(
         inference_presentation={"bound_predict_view_id": "churn-risk-overview"},
     )
+    own_record = {"view_id": "churn-risk-overview", "dataset_slug": "telco-customer-churn"}
+    other_record = {"view_id": "churn-risk-overview", "dataset_slug": "bank-marketing"}
 
-    first_result = validate_profile_references(
-        profile,
-        duplicate_registry,
+    for registry_order in ([own_record, other_record], [other_record, own_record]):
+        registry = {
+            "schema_version": "atlas.dataflow.predict-views.v1",
+            "predict_views": registry_order,
+        }
+        result = validate_profile_references(profile, registry, _MOCK_RELEASE_METRICS)
+        assert result["valid"] is True, f"Expected valid, got errors: {result['errors']}"
+        assert result["errors"] == []
+
+
+def test_bound_predict_view_id_present_only_for_another_dataset_is_mismatch():
+    registry = {
+        "schema_version": "atlas.dataflow.predict-views.v1",
+        "predict_views": [
+            {"view_id": "churn-risk-overview", "dataset_slug": "bank-marketing"},
+        ],
+    }
+    result = validate_profile_references(
+        _profile(inference_presentation={"bound_predict_view_id": "churn-risk-overview"}),
+        registry,
         _MOCK_RELEASE_METRICS,
     )
-    second_result = validate_profile_references(
-        profile,
-        duplicate_registry,
+    assert result["valid"] is False
+    assert "BOUND_PREDICT_VIEW_DATASET_MISMATCH" in _codes(result)
+    assert "BOUND_PREDICT_VIEW_NOT_FOUND" not in _codes(result)
+
+
+def test_bound_predict_view_id_absent_everywhere_is_not_found():
+    registry = {
+        "schema_version": "atlas.dataflow.predict-views.v1",
+        "predict_views": [
+            {"view_id": "some-other-view", "dataset_slug": "telco-customer-churn"},
+        ],
+    }
+    result = validate_profile_references(
+        _profile(inference_presentation={"bound_predict_view_id": "churn-risk-overview"}),
+        registry,
         _MOCK_RELEASE_METRICS,
     )
-
-    assert first_result == second_result
-    assert first_result["valid"] is True, f"Expected valid, got errors: {first_result['errors']}"
-    assert first_result["errors"] == []
+    assert result["valid"] is False
+    assert "BOUND_PREDICT_VIEW_NOT_FOUND" in _codes(result)
+    assert "BOUND_PREDICT_VIEW_DATASET_MISMATCH" not in _codes(result)
 
 
 def test_profile_with_valid_primary_metric_key_passes():
@@ -809,7 +836,9 @@ if __name__ == "__main__":
         test_profile_with_no_references_passes,
         test_profile_with_null_references_passes,
         test_profile_with_valid_bound_predict_view_id_passes,
-        test_duplicate_predict_view_id_uses_first_match_deterministically,
+        test_composite_bound_predict_view_resolution_is_order_independent,
+        test_bound_predict_view_id_present_only_for_another_dataset_is_mismatch,
+        test_bound_predict_view_id_absent_everywhere_is_not_found,
         test_profile_with_valid_primary_metric_key_passes,
         test_bound_predict_view_not_found_rejected,
         test_bound_predict_view_dataset_mismatch_rejected,

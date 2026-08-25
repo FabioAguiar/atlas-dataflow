@@ -206,7 +206,9 @@ def test_contract_precedence_violation_rejected():
     assert "CONTRACT_PRECEDENCE_VIOLATION" in _codes(result)
 
 
-def test_duplicate_view_id_rejected():
+def test_duplicate_view_id_rejected_within_same_dataset():
+    """S0261: uniqueness is (dataset_slug, view_id) -- two records for the
+    same dataset declaring the same view_id remain a deterministic rejection."""
     view = {
         "schema_version": "1.0.0",
         "view_id": "duplicate-id",
@@ -232,6 +234,37 @@ def test_duplicate_view_id_rejected():
     )
     assert result["valid"] is False
     assert "DUPLICATE_VIEW_ID" in _codes(result)
+
+
+def test_same_view_id_across_two_different_datasets_is_valid():
+    """S0261: Predict View uniqueness is scoped to (dataset_slug, view_id),
+    so the same view_id may legitimately appear under distinct datasets."""
+    def _view(dataset_slug: str) -> dict:
+        return {
+            "schema_version": "1.0.0",
+            "view_id": "shared-view",
+            "dataset_slug": dataset_slug,
+            "display": {"title": "T", "summary": "S"},
+            "intent": {"prediction_goal": "G", "audience": "A", "usage_notes": "N"},
+            "binding": {
+                "dataset_slug": dataset_slug,
+                "release": {"mode": "active"},
+            },
+            "contract_precedence": {
+                "canonical_contracts_are_source_of_truth": True,
+                "view_metadata_defines_runtime_validation": False,
+                "view_metadata_duplicates_contract": False,
+            },
+        }
+
+    result = validate_predict_views(
+        {
+            "schema_version": "atlas.dataflow.predict-views.v1",
+            "predict_views": [_view("telco-customer-churn"), _view("telco-customer-churn1")],
+        },
+        known_dataset_slugs={"telco-customer-churn", "telco-customer-churn1"},
+    )
+    assert result["valid"] is True, f"Expected valid, got errors: {result['errors']}"
 
 
 def test_registry_discovery_returns_only_valid_views():
@@ -468,9 +501,14 @@ def test_materialize_delete_then_repromote_restores_declared_view(tmp_path):
 
 
 def test_materialize_create_new_dataset_detail_mode_rebinds_to_allocated_slug(tmp_path):
+    """S0261: the base dataset already owns the declared view_id, and
+    MODE_CREATE_NEW_DATASET_DETAIL still allocates base1 and materializes the
+    same stable view_id under it -- both records coexist, each binding its
+    own dataset_slug, and the merged registry validates."""
     _write_materialization_repo(
         tmp_path,
         dataset_entries=[_dataset_entry("telco-customer-churn", "release-20260101-999")],
+        existing_predict_views=[_VIEW_DECLARATION_TEMPLATE],
     )
     _write_release(
         tmp_path, "release-20260102-007", "telco-customer-churn", predict_views=[_VIEW_DECLARATION_TEMPLATE]
@@ -481,9 +519,50 @@ def test_materialize_create_new_dataset_detail_mode_rebinds_to_allocated_slug(tm
 
     assert result["allocated_dataset_slug"] == "telco-customer-churn1"
     views = _predict_views_of(tmp_path)["predict_views"]
-    churn_view = next(v for v in views if v["view_id"] == "churn-risk-overview")
-    assert churn_view["dataset_slug"] == "telco-customer-churn1"
-    assert churn_view["binding"]["dataset_slug"] == "telco-customer-churn1"
+    matching = [v for v in views if v["view_id"] == "churn-risk-overview"]
+    assert {v["dataset_slug"] for v in matching} == {"telco-customer-churn", "telco-customer-churn1"}
+    for v in matching:
+        assert v["binding"]["dataset_slug"] == v["dataset_slug"]
+
+    validation = validate_predict_views(
+        _predict_views_of(tmp_path),
+        known_dataset_slugs={"telco-customer-churn", "telco-customer-churn1"},
+    )
+    assert validation["valid"] is True, f"Expected valid, got errors: {validation['errors']}"
+
+
+def test_materialize_create_new_dataset_detail_base2_allocation_preserves_same_view_id(tmp_path):
+    """S0261: with base and base1 already occupied, a further
+    MODE_CREATE_NEW_DATASET_DETAIL promotion allocates base2 and the same
+    stable view_id remains legal there too, alongside base/base1."""
+    _write_materialization_repo(
+        tmp_path,
+        dataset_entries=[
+            _dataset_entry("telco-customer-churn", "release-20260101-999"),
+            _dataset_entry("telco-customer-churn1", "release-20260101-998"),
+        ],
+        existing_predict_views=[
+            _VIEW_DECLARATION_TEMPLATE,
+            {
+                **_VIEW_DECLARATION_TEMPLATE,
+                "dataset_slug": "telco-customer-churn1",
+                "binding": {"dataset_slug": "telco-customer-churn1", "release": {"mode": "active"}},
+            },
+        ],
+    )
+    _write_release(
+        tmp_path, "release-20260102-011", "telco-customer-churn", predict_views=[_VIEW_DECLARATION_TEMPLATE]
+    )
+    run_dir = _write_promotion_run(tmp_path, "run-newdetail2", "telco-customer-churn", "release-20260102-011")
+
+    result = registry_update_run(str(run_dir), repo_root=tmp_path, mode=MODE_CREATE_NEW_DATASET_DETAIL)
+
+    assert result["allocated_dataset_slug"] == "telco-customer-churn2"
+    views = _predict_views_of(tmp_path)["predict_views"]
+    matching = [v for v in views if v["view_id"] == "churn-risk-overview"]
+    assert {v["dataset_slug"] for v in matching} == {
+        "telco-customer-churn", "telco-customer-churn1", "telco-customer-churn2",
+    }
 
 
 def test_materialize_rejects_malformed_declaration_without_any_write(tmp_path):
@@ -504,7 +583,10 @@ def test_materialize_rejects_malformed_declaration_without_any_write(tmp_path):
     assert not (tmp_path / "registry" / "datasets.json.previous").exists()
 
 
-def test_materialize_rejects_duplicate_view_id_across_datasets_without_any_write(tmp_path):
+def test_materialize_allows_same_view_id_reused_across_different_datasets(tmp_path):
+    """S0261: this case is no longer a global-duplicate rejection -- the same
+    view_id declared for a different, already-registered dataset is a valid
+    cross-dataset reuse, and both dataset-scoped records persist."""
     other_view = {**_VIEW_DECLARATION_TEMPLATE, "dataset_slug": "other-dataset"}
     other_view["binding"] = {"dataset_slug": "other-dataset", "release": {"mode": "active"}}
     _write_materialization_repo(
@@ -512,17 +594,40 @@ def test_materialize_rejects_duplicate_view_id_across_datasets_without_any_write
         dataset_entries=[_dataset_entry("other-dataset", "release-20260101-001")],
         existing_predict_views=[other_view],
     )
-    colliding = {**_VIEW_DECLARATION_TEMPLATE, "view_id": "churn-risk-overview"}
-    _write_release(tmp_path, "release-20260102-009", "telco-customer-churn", predict_views=[colliding])
-    run_dir = _write_promotion_run(tmp_path, "run-collision", "telco-customer-churn", "release-20260102-009")
+    reused = {**_VIEW_DECLARATION_TEMPLATE, "view_id": "churn-risk-overview"}
+    _write_release(tmp_path, "release-20260102-009", "telco-customer-churn", predict_views=[reused])
+    run_dir = _write_promotion_run(tmp_path, "run-reuse", "telco-customer-churn", "release-20260102-009")
+
+    result = registry_update_run(str(run_dir), repo_root=tmp_path)
+
+    assert result["predict_view_materialization"]["action"] == "created"
+    views = _predict_views_of(tmp_path)["predict_views"]
+    matching = [v for v in views if v["view_id"] == "churn-risk-overview"]
+    assert {v["dataset_slug"] for v in matching} == {"other-dataset", "telco-customer-churn"}
+
+
+def test_materialize_rejects_two_same_view_id_declarations_in_one_promotion_without_any_write(tmp_path):
+    """S0261: two identical view_id declarations for the same final Dataset
+    Detail must still abort before any registry write -- composite-key
+    scoping never permits duplicates within a single dataset's own declared
+    predict_views."""
+    _write_materialization_repo(tmp_path)
+    duplicated = {**_VIEW_DECLARATION_TEMPLATE, "view_id": "churn-risk-overview"}
+    _write_release(
+        tmp_path, "release-20260102-012", "telco-customer-churn",
+        predict_views=[duplicated, {**duplicated}],
+    )
+    run_dir = _write_promotion_run(tmp_path, "run-samedataset-duplicate", "telco-customer-churn", "release-20260102-012")
+    datasets_before = (tmp_path / "registry" / "datasets.json").read_bytes()
     predict_views_before = (tmp_path / "registry" / "predict-views.json").read_bytes()
 
     try:
         registry_update_run(str(run_dir), repo_root=tmp_path)
-        raise AssertionError("expected RuntimeError for duplicate view_id")
+        raise AssertionError("expected RuntimeError for same-dataset duplicate view_id")
     except RuntimeError:
         pass
 
+    assert (tmp_path / "registry" / "datasets.json").read_bytes() == datasets_before
     assert (tmp_path / "registry" / "predict-views.json").read_bytes() == predict_views_before
 
 

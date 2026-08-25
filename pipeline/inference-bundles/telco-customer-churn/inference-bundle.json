@@ -11,8 +11,8 @@
   },
   "bundle_identity": {
     "artifact_kind": "inference_bundle",
-    "bundle_id": "telco-customer-churn-inference-bundle-20260825T130841Z",
-    "created_at": "2026-08-25T13:08:41+00:00"
+    "bundle_id": "telco-customer-churn-inference-bundle-20260825T151105Z",
+    "created_at": "2026-08-25T15:11:05+00:00"
   },
   "compatibility_constraints": {
     "requires_contract_versions": {
@@ -79,7 +79,7 @@
   "model_artifact": {
     "path": "models/model.pkl",
     "sha256": "1ce4554194c42ddfb4f08ccb8fb94f91fb91fe94e6b4c53143d7fdb34f86b0d7",
-    "source_training_parameter_record_path": "pipeline/training-runs/telco-customer-churn/train-20260825T130831Z/training-parameter-record.json"
+    "source_training_parameter_record_path": "pipeline/training-runs/telco-customer-churn/train-20260825T151054Z/training-parameter-record.json"
   },
   "output_schema": {
     "class_labels": [
@@ -157,17 +157,17 @@
     "model_selection_evidence": null,
     "training_metrics": {
       "contract_version": "training-metrics.v5",
-      "path": "pipeline/training-runs/telco-customer-churn/train-20260825T130831Z/metrics.json",
-      "sha256": "3c7b128f7323fc39c76622e56a49dd4654beaf239983de74225c9a4ea312fe79"
+      "path": "pipeline/training-runs/telco-customer-churn/train-20260825T151054Z/metrics.json",
+      "sha256": "2b45251b68e15833e35db40c5acff595bb24726e2537d046ccc336ced59dfa26"
     },
     "training_parameter_record": {
       "contract_version": "training-parameter-record.v5",
-      "path": "pipeline/training-runs/telco-customer-churn/train-20260825T130831Z/training-parameter-record.json",
-      "sha256": "73e1b20e5bece4ba1dee2f41b2ad01fb1203e9e09e240390e77d7c9c8501037a"
+      "path": "pipeline/training-runs/telco-customer-churn/train-20260825T151054Z/training-parameter-record.json",
+      "sha256": "5feb360a9348fbdab8faa7f95bf82bcf60139ef19b585dc3f11782a4c2007837"
     },
     "training_run_identity": {
       "dataset_slug": "telco-customer-churn",
-      "run_id": "train-20260825T130831Z"
+      "run_id": "train-20260825T151054Z"
     }
   }
 }

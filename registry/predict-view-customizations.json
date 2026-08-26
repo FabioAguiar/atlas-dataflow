@@ -322,6 +322,34 @@
         "customization_defines_runtime_validation": false,
         "customization_duplicates_contract": false
       }
+    },
+    {
+      "schema_version": "1.0.0",
+      "view_id": "nottem-temperature-forecast",
+      "dataset_slug": "nottem",
+      "field_hints": [
+        {
+          "field_name": "period",
+          "display_order_hint": 1,
+          "display_label": "Historical month",
+          "explanatory_copy": "Month associated with each historical observation in the temperature series."
+        },
+        {
+          "field_name": "temperature",
+          "display_order_hint": 2,
+          "display_label": "Historical temperature",
+          "explanatory_copy": "Average air temperature observed at Nottingham Castle for the corresponding month, in degrees Fahrenheit."
+        }
+      ],
+      "groups": [],
+      "view_copy": {
+        "submit_button_label": "Generate 12-month forecast"
+      },
+      "contract_precedence": {
+        "canonical_contracts_are_source_of_truth": true,
+        "customization_defines_runtime_validation": false,
+        "customization_duplicates_contract": false
+      }
     }
   ]
 }

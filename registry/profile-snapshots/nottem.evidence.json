@@ -2,8 +2,8 @@
   "schema_version": "dataset-public-profile-snapshot-evidence.v1",
   "evidence_kind": "profile_publication_evidence",
   "dataset_slug": "nottem",
-  "snapshot_identifier": "nottem@2026-08-25T20:49:34Z",
-  "published_at": "2026-08-25T20:49:34Z",
+  "snapshot_identifier": "nottem@2026-08-26T09:15:33Z",
+  "published_at": "2026-08-26T09:15:33Z",
   "active_release_at_publish_time": "release-20260824t163251z",
   "draft_source_reference": {
     "path": "registry/profile-drafts/nottem.json",
@@ -12,13 +12,13 @@
   "candidate_validation": {
     "validation_outcome": "accepted",
     "errors": [],
-    "validated_at": "2026-08-25T20:49:34Z"
+    "validated_at": "2026-08-26T09:15:33Z"
   },
   "visibility_at_publish_time": {
     "value": "public",
     "source_field": "registry/datasets.json:public_metadata.visibility",
     "read_only_snapshot": true,
-    "captured_at": "2026-08-25T20:49:34Z"
+    "captured_at": "2026-08-26T09:15:33Z"
   },
   "evidence_safety": {
     "reduced_evidence_only": true,

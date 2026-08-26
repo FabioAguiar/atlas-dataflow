@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -83,6 +84,10 @@ _FORECASTING_LEAKAGE_CONTROL_KEYS = (
     "validation_targets_fed_back_within_fold",
     "preprocessing_fit_on_validation_or_future",
 )
+
+# Project Spec S0267: strict canonical YYYY-MM calendar-month anchor form
+# required for the machine-actionable temporal_interaction projection.
+_CALENDAR_MONTH_ANCHOR_PATTERN = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
 
 
 class DerivationFailed(Exception):
@@ -521,6 +526,27 @@ def _derive_forecasting_projection(
             "continuity": "consecutive_by_frequency",
         }
         public_forecast["origin_behavior"] = "starts_after_last_history_observation"
+
+        # Project Spec S0267: derive the optional strict, machine-actionable
+        # temporal_interaction projection only for the current supported
+        # calendar_period + monthly profile. An otherwise-valid but
+        # unsupported temporal kind/frequency combination keeps the S0266
+        # display guidance above and omits temporal_interaction rather than
+        # guessing a stepping profile it cannot resolve.
+        if index_value_kind == "calendar_period" and frequency == "monthly":
+            if not _CALENDAR_MONTH_ANCHOR_PATTERN.match(development_end):
+                raise DerivationFailed(
+                    [
+                        "preparation recipe partitions.development.end_index_value must be a "
+                        "canonical YYYY-MM calendar-month value for the calendar_period/monthly "
+                        "temporal interaction profile"
+                    ]
+                )
+            public_history_series["temporal_interaction"] = {
+                "control_kind": "month",
+                "required_anchor": {"value": development_end, "inclusion": "required"},
+                "sequence": {"step_kind": "calendar_month", "continuity": "required"},
+            }
 
     public_contract: dict[str, Any] = {
         "schema_version": FORECASTING_PUBLIC_CONTRACT_SCHEMA_VERSION,

@@ -431,6 +431,52 @@ def test_notebook_asserts_s0266_public_history_guidance_from_governed_variables(
     assert '"origin_behavior":' not in code
 
 
+def test_notebook_asserts_s0267_public_temporal_interaction_from_governed_variables():
+    """Project Spec S0267: the notebook must assert the newly derived
+    Nottingham public contract's machine-actionable temporal_interaction
+    guidance, with the anchor sourced from the already-governed
+    preparation_recipe.partitions.development.end_index_value -- never a
+    hardcoded '1938-12' literal in the assertion itself -- and with the
+    generic bounded profile values asserted directly, never a
+    nottem-specific UI branch."""
+    code = _source("code")
+    assert (
+        'assert public_contract["history_series"]["temporal_interaction"]["required_anchor"]["value"] == ('
+        in code
+    )
+    assert 'preparation_recipe["partitions"]["development"]["end_index_value"]' in code
+    assert (
+        'assert public_contract["history_series"]["temporal_interaction"]["control_kind"] == "month"'
+        in code
+    )
+    assert (
+        'assert public_contract["history_series"]["temporal_interaction"]["required_anchor"]["inclusion"] == "required"'
+        in code
+    )
+    assert (
+        'assert public_contract["history_series"]["temporal_interaction"]["sequence"]["step_kind"] == "calendar_month"'
+        in code
+    )
+    assert (
+        'assert public_contract["history_series"]["temporal_interaction"]["sequence"]["continuity"] == "required"'
+        in code
+    )
+    # The notebook must not author temporal_interaction itself as a dict
+    # literal, and must never hardcode the concrete Nottingham anchor value
+    # or a fabricated min/max date into the assertion.
+    assert '"temporal_interaction":' not in code
+    temporal_interaction_start = code.index(
+        'assert public_contract["history_series"]["temporal_interaction"]'
+    )
+    temporal_interaction_end = code.index(
+        '# Project Spec S0252', temporal_interaction_start
+    )
+    temporal_interaction_source = code[temporal_interaction_start:temporal_interaction_end]
+    for forbidden in ("1938-12", "min_date", "max_date", "minimum_date", "maximum_date"):
+        assert forbidden not in temporal_interaction_source
+    assert 'if dataset_slug ==' not in temporal_interaction_source
+
+
 def test_notebook_dataset_context_declares_exactly_one_nottingham_predict_view():
     code = _source("code")
     assert '"predict_views": [nottingham_predict_view],' in code

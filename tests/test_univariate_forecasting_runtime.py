@@ -545,6 +545,79 @@ def test_public_contract_v2_forecast_rejects_non_governed_origin_behavior(public
     assert list(public_validator.iter_errors(doc))
 
 
+# ---------------------------------------------------------------------------
+# Project Spec S0267: public-contract temporal_interaction machine-actionable
+# projection
+# ---------------------------------------------------------------------------
+
+
+def _valid_public_v2_document_with_temporal_interaction() -> dict:
+    doc = _valid_public_v2_document_with_guidance()
+    doc["history_series"] = dict(doc["history_series"])
+    doc["history_series"]["temporal_interaction"] = {
+        "control_kind": "month",
+        "required_anchor": {"value": "2020-06", "inclusion": "required"},
+        "sequence": {"step_kind": "calendar_month", "continuity": "required"},
+    }
+    return doc
+
+
+def test_public_contract_v2_historical_without_temporal_interaction_remains_valid(public_validator):
+    """Acceptance criterion 6: historical public-contract v2 without
+    temporal_interaction remains valid, whether or not S0266 input_guidance
+    is present."""
+    assert not list(public_validator.iter_errors(_valid_public_v2_document()))
+    assert not list(public_validator.iter_errors(_valid_public_v2_document_with_guidance()))
+
+
+def test_public_contract_v2_with_valid_temporal_interaction_is_schema_valid(public_validator):
+    assert not list(public_validator.iter_errors(_valid_public_v2_document_with_temporal_interaction()))
+
+
+def test_public_contract_v2_temporal_interaction_rejects_unknown_property(public_validator):
+    doc = _valid_public_v2_document_with_temporal_interaction()
+    doc["history_series"]["temporal_interaction"]["extra_property"] = "x"
+    assert list(public_validator.iter_errors(doc))
+
+
+def test_public_contract_v2_temporal_interaction_rejects_non_month_control_kind(public_validator):
+    doc = _valid_public_v2_document_with_temporal_interaction()
+    doc["history_series"]["temporal_interaction"]["control_kind"] = "day"
+    assert list(public_validator.iter_errors(doc))
+
+
+def test_public_contract_v2_temporal_interaction_anchor_rejects_non_canonical_value(public_validator):
+    for bad_value in ("1938-13", "38-12", "1938/12", "1938-1"):
+        doc = _valid_public_v2_document_with_temporal_interaction()
+        doc["history_series"]["temporal_interaction"]["required_anchor"]["value"] = bad_value
+        assert list(public_validator.iter_errors(doc)), bad_value
+
+
+def test_public_contract_v2_temporal_interaction_rejects_non_required_inclusion(public_validator):
+    doc = _valid_public_v2_document_with_temporal_interaction()
+    doc["history_series"]["temporal_interaction"]["required_anchor"]["inclusion"] = "minimum"
+    assert list(public_validator.iter_errors(doc))
+
+
+def test_public_contract_v2_temporal_interaction_rejects_non_calendar_month_step_kind(public_validator):
+    doc = _valid_public_v2_document_with_temporal_interaction()
+    doc["history_series"]["temporal_interaction"]["sequence"]["step_kind"] = "calendar_day"
+    assert list(public_validator.iter_errors(doc))
+
+
+def test_public_contract_v2_temporal_interaction_rejects_non_required_continuity(public_validator):
+    doc = _valid_public_v2_document_with_temporal_interaction()
+    doc["history_series"]["temporal_interaction"]["sequence"]["continuity"] = "best_effort"
+    assert list(public_validator.iter_errors(doc))
+
+
+def test_public_contract_v2_temporal_interaction_rejects_min_max_style_properties(public_validator):
+    for forbidden_key in ("min", "max", "minimum_date", "maximum_date", "development_end", "training_scope"):
+        doc = _valid_public_v2_document_with_temporal_interaction()
+        doc["history_series"]["temporal_interaction"][forbidden_key] = "x"
+        assert list(public_validator.iter_errors(doc)), forbidden_key
+
+
 def test_v2_projection_without_history_input_policy_emits_no_public_guidance(tmp_path):
     """Historical execution_contract.v2 without history_input_policy must
     preserve the existing public-contract v2 output shape -- no
@@ -604,6 +677,118 @@ def test_v2_projection_public_guidance_never_copies_execution_policy_verbatim(tm
         "ordering",
     ):
         assert forbidden not in serialized
+
+
+def _execution_contract_v2_calendar_monthly(**overrides) -> dict:
+    contract = _execution_contract_v2(index_value_kind="calendar_period", frequency="monthly")
+    contract.update(overrides)
+    return contract
+
+
+def _preparation_recipe_v2_calendar_monthly(end_index_value: str = "2020-06", **overrides) -> dict:
+    recipe = _preparation_recipe_v2()
+    recipe["semantic_identity_mirror"] = dict(recipe["semantic_identity_mirror"])
+    recipe["semantic_identity_mirror"]["index_value_kind"] = "calendar_period"
+    recipe["semantic_identity_mirror"]["frequency"] = "monthly"
+    recipe["partitions"] = {
+        "development": dict(recipe["partitions"]["development"]),
+        "sealed_final_holdout": dict(recipe["partitions"]["sealed_final_holdout"]),
+    }
+    recipe["partitions"]["development"]["end_index_value"] = end_index_value
+    recipe.update(overrides)
+    return recipe
+
+
+def test_v2_projection_calendar_period_monthly_emits_temporal_interaction(tmp_path):
+    """Current governed calendar_period/monthly policy emits the exact
+    bounded machine interaction profile, with the emitted anchor equal to
+    the governed resolved anchor."""
+    contract = _execution_contract_v2_calendar_monthly(history_input_policy=_history_input_policy())
+    contract_path = _write_json(tmp_path / "execution-contract.json", contract)
+    recipe_path = _write_json(tmp_path / "preparation-recipe.json", _preparation_recipe_v2_calendar_monthly())
+    out_dir = tmp_path / "out"
+
+    derive(contract_path, out_dir, repo_root=REPO_ROOT, preparation_recipe_path=recipe_path)
+
+    runtime_contract = json.loads((out_dir / "runtime-contract.json").read_text())
+    public_contract = json.loads((out_dir / "public-contract.json").read_text())
+    temporal_interaction = public_contract["history_series"]["temporal_interaction"]
+    assert temporal_interaction == {
+        "control_kind": "month",
+        "required_anchor": {"value": "2020-06", "inclusion": "required"},
+        "sequence": {"step_kind": "calendar_month", "continuity": "required"},
+    }
+    assert temporal_interaction["required_anchor"]["value"] == runtime_contract["history_series"][
+        "minimum_history_required_through"
+    ]
+
+
+def test_v2_projection_temporal_interaction_anchor_distinct_from_display_value(tmp_path):
+    """The machine anchor lives at a distinct path from S0266's
+    input_guidance.required_anchor.display_value even when the current
+    canonical string is identical."""
+    contract = _execution_contract_v2_calendar_monthly(history_input_policy=_history_input_policy())
+    contract_path = _write_json(tmp_path / "execution-contract.json", contract)
+    recipe_path = _write_json(tmp_path / "preparation-recipe.json", _preparation_recipe_v2_calendar_monthly())
+    out_dir = tmp_path / "out"
+
+    derive(contract_path, out_dir, repo_root=REPO_ROOT, preparation_recipe_path=recipe_path)
+
+    public_contract = json.loads((out_dir / "public-contract.json").read_text())
+    history_series = public_contract["history_series"]
+    assert history_series["input_guidance"]["required_anchor"]["display_value"] == "2020-06"
+    assert history_series["temporal_interaction"]["required_anchor"]["value"] == "2020-06"
+    assert "value" not in history_series["input_guidance"]["required_anchor"]
+    assert "display_value" not in history_series["temporal_interaction"]["required_anchor"]
+
+
+def test_v2_projection_temporal_interaction_never_leaks_min_max_or_training_terminology(tmp_path):
+    contract = _execution_contract_v2_calendar_monthly(history_input_policy=_history_input_policy())
+    contract_path = _write_json(tmp_path / "execution-contract.json", contract)
+    recipe_path = _write_json(tmp_path / "preparation-recipe.json", _preparation_recipe_v2_calendar_monthly())
+    out_dir = tmp_path / "out"
+
+    derive(contract_path, out_dir, repo_root=REPO_ROOT, preparation_recipe_path=recipe_path)
+
+    public_contract = json.loads((out_dir / "public-contract.json").read_text())
+    serialized = json.dumps(public_contract["history_series"]["temporal_interaction"])
+    for forbidden in (
+        "min", "max", "minimum_date", "maximum_date",
+        "development_end", "training_scope", "training_end",
+        "minimum_history_required_through", "source",
+    ):
+        assert forbidden not in serialized
+
+
+def test_v2_projection_calendar_period_monthly_malformed_anchor_fails_closed(tmp_path):
+    """For the explicitly supported calendar_period + monthly profile, a
+    non-canonical resolved anchor must fail derivation closed rather than
+    emit ambiguous machine metadata."""
+    contract = _execution_contract_v2_calendar_monthly(history_input_policy=_history_input_policy())
+    contract_path = _write_json(tmp_path / "execution-contract.json", contract)
+    recipe_path = _write_json(
+        tmp_path / "preparation-recipe.json",
+        _preparation_recipe_v2_calendar_monthly(end_index_value="2020-6"),
+    )
+    with pytest.raises(DerivationFailed):
+        derive(contract_path, tmp_path / "out", repo_root=REPO_ROOT, preparation_recipe_path=recipe_path)
+    assert not (tmp_path / "out" / "public-contract.json").exists()
+
+
+def test_v2_projection_unsupported_temporal_profile_omits_temporal_interaction_keeps_guidance(tmp_path):
+    """An otherwise-valid unsupported temporal-kind/frequency combination
+    (ordinal_time/synthetic-step) keeps the S0266 display guidance and
+    omits temporal_interaction rather than guessing a stepping profile."""
+    contract = _execution_contract_v2(history_input_policy=_history_input_policy(minimum_observation_count=3))
+    contract_path = _write_json(tmp_path / "execution-contract.json", contract)
+    recipe_path = _write_json(tmp_path / "preparation-recipe.json", _preparation_recipe_v2())
+    out_dir = tmp_path / "out"
+
+    derive(contract_path, out_dir, repo_root=REPO_ROOT, preparation_recipe_path=recipe_path)
+
+    public_contract = json.loads((out_dir / "public-contract.json").read_text())
+    assert "temporal_interaction" not in public_contract["history_series"]
+    assert public_contract["history_series"]["input_guidance"]["minimum_observation_count"] == 3
 
 
 def test_historical_v1_projection_does_not_require_preparation_recipe(tmp_path):

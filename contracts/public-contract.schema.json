@@ -80,6 +80,9 @@
         },
         "input_guidance": {
           "$ref": "#/definitions/public_history_input_guidance_v2"
+        },
+        "temporal_interaction": {
+          "$ref": "#/definitions/public_temporal_interaction_v2"
         }
       }
     },
@@ -110,6 +113,63 @@
           "type": "string",
           "const": "consecutive_by_frequency",
           "description": "Bounded presentation vocabulary indicating supplied observations must be consecutive by the governed frequency. Never a copy of a runtime field name."
+        }
+      }
+    },
+    "public_temporal_interaction_v2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "control_kind",
+        "required_anchor",
+        "sequence"
+      ],
+      "description": "Project Spec S0267: optional, strict, bounded presentation projection of a machine-actionable temporal interaction profile for the current supported month-oriented UI control. Absent on historical public-contract 2.0.0 documents materialized before S0267, and absent whenever the governed temporal kind/frequency has no supported machine interaction profile. Never carries min/max/minimum_date/maximum_date, development_end/training_scope/training_end terminology, or any runtime-only field name or model metadata.",
+      "properties": {
+        "control_kind": {
+          "type": "string",
+          "const": "month",
+          "description": "Bounded vocabulary identifying the UI control family this interaction profile authorizes. Current supported value is 'month'."
+        },
+        "required_anchor": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "value",
+            "inclusion"
+          ],
+          "properties": {
+            "value": {
+              "type": "string",
+              "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+              "description": "Canonical machine-readable calendar-month anchor value in strict YYYY-MM form, distinct in meaning from input_guidance.required_anchor.display_value even when the current canonical string happens to be identical. Never a copy of a runtime-only field name or a development/training-scope value."
+            },
+            "inclusion": {
+              "type": "string",
+              "const": "required",
+              "description": "Fixed: the sequence/history must include this anchor value. Does not mean the anchor is the earliest or latest allowed history period."
+            }
+          }
+        },
+        "sequence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "step_kind",
+            "continuity"
+          ],
+          "properties": {
+            "step_kind": {
+              "type": "string",
+              "const": "calendar_month",
+              "description": "Bounded vocabulary authorizing one calendar-month stepping arithmetic in a later UI. Current supported value is 'calendar_month'."
+            },
+            "continuity": {
+              "type": "string",
+              "const": "required",
+              "description": "Fixed: adjacent history values are expected to follow the declared step."
+            }
+          }
         }
       }
     },

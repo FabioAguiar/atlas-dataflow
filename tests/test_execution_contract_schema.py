@@ -3017,6 +3017,134 @@ def test_execution_contract_v2_and_v1_are_disjoint_branches():
 
 
 # ---------------------------------------------------------------------------
+# execution-contract.schema.json: forecasting history_input_policy
+# (Project Spec S0265)
+# ---------------------------------------------------------------------------
+
+
+def _valid_forecasting_history_input_policy() -> dict:
+    return {
+        "schema_version": "univariate-forecasting-history-input-policy.v1",
+        "minimum_observation_count": 1,
+        "required_anchor": {"presence": "required", "source": "development_end"},
+        "forecast_origin_source": "last_validated_history_index",
+    }
+
+
+def test_execution_contract_v2_without_history_input_policy_still_validates():
+    """Historical execution_contract.v2 documents materialized before
+    Project Spec S0265 never carry history_input_policy -- it must remain
+    an optional, non-required member so those documents remain structurally
+    valid without rewriting."""
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_execution_contract_v2()
+    assert "history_input_policy" not in contract
+    jsonschema.validate(contract, schema)
+
+
+def test_execution_contract_v2_with_valid_history_input_policy_validates():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_execution_contract_v2()
+    contract["history_input_policy"] = _valid_forecasting_history_input_policy()
+    jsonschema.validate(contract, schema)
+
+
+def test_execution_contract_v2_history_input_policy_wrong_schema_version_rejected():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_execution_contract_v2()
+    contract["history_input_policy"] = _valid_forecasting_history_input_policy()
+    contract["history_input_policy"]["schema_version"] = "univariate-forecasting-history-input-policy.v2"
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_execution_contract_v2_history_input_policy_zero_minimum_observation_count_rejected():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_execution_contract_v2()
+    contract["history_input_policy"] = _valid_forecasting_history_input_policy()
+    contract["history_input_policy"]["minimum_observation_count"] = 0
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_execution_contract_v2_history_input_policy_larger_minimum_observation_count_validates():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_execution_contract_v2()
+    contract["history_input_policy"] = _valid_forecasting_history_input_policy()
+    contract["history_input_policy"]["minimum_observation_count"] = 24
+    jsonschema.validate(contract, schema)
+
+
+def test_execution_contract_v2_history_input_policy_not_required_anchor_presence_rejected():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_execution_contract_v2()
+    contract["history_input_policy"] = _valid_forecasting_history_input_policy()
+    contract["history_input_policy"]["required_anchor"] = {
+        "presence": "not_required", "source": "development_end",
+    }
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_execution_contract_v2_history_input_policy_alternate_anchor_source_rejected():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_execution_contract_v2()
+    contract["history_input_policy"] = _valid_forecasting_history_input_policy()
+    contract["history_input_policy"]["required_anchor"] = {
+        "presence": "required", "source": "rolling_context_window",
+    }
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_execution_contract_v2_history_input_policy_missing_required_anchor_rejected():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_execution_contract_v2()
+    contract["history_input_policy"] = _valid_forecasting_history_input_policy()
+    del contract["history_input_policy"]["required_anchor"]
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_execution_contract_v2_history_input_policy_wrong_forecast_origin_source_rejected():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_execution_contract_v2()
+    contract["history_input_policy"] = _valid_forecasting_history_input_policy()
+    contract["history_input_policy"]["forecast_origin_source"] = "rolling_origin"
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_execution_contract_v2_history_input_policy_review_status_rejected():
+    """The normalized execution policy must never carry authoring-only
+    review_status/review_notes fields -- those remain exclusively on the
+    dataset modeling intent."""
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_execution_contract_v2()
+    contract["history_input_policy"] = _valid_forecasting_history_input_policy()
+    contract["history_input_policy"]["review_status"] = "approved"
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_execution_contract_v2_history_input_policy_unknown_field_rejected():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_execution_contract_v2()
+    contract["history_input_policy"] = _valid_forecasting_history_input_policy()
+    contract["history_input_policy"]["anchor_value"] = "1938-12"
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+# ---------------------------------------------------------------------------
 # execution_contract.v2 -- strict forecasting training_policy branch
 # (Project Spec S0244)
 # ---------------------------------------------------------------------------

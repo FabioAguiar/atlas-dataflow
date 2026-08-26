@@ -348,6 +348,24 @@ def test_public_inference_rejects_insufficient_history(tmp_path, monkeypatch):
     assert response.status_code == 422
 
 
+def test_public_inference_rejects_history_after_boundary_without_boundary_itself(tmp_path, monkeypatch):
+    """Project Spec S0265: a normal caller history that reaches past the
+    governed boundary but never actually contains it must now be rejected
+    during payload validation (422 INVALID_PAYLOAD) instead of reaching
+    runtime execution and failing with a 503 INFERENCE_FAILURE -- contrast
+    with test_public_inference_history_missing_training_end_anchor_fails_closed
+    below, which exercises the runtime's own defense-in-depth anchor check
+    against a deliberately lenient/inconsistent runtime contract, not this
+    normal user-input path."""
+    releases_root = tmp_path / "releases"
+    _write_synthetic_forecasting_release(tmp_path)
+    _install_public_dependencies(monkeypatch, releases_root)
+
+    payload = {"history": [{"period": 20, "value": _series_value(20)}]}
+    response = api_main.validate_dataset_inference_payload(DATASET_SLUG, payload=payload)
+    assert response.status_code == 422
+
+
 def test_public_inference_history_missing_training_end_anchor_fails_closed(tmp_path, monkeypatch):
     releases_root = tmp_path / "releases"
     _write_synthetic_forecasting_release(tmp_path)

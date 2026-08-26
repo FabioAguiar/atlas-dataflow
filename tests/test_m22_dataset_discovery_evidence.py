@@ -18,6 +18,7 @@ from pipeline.discovery_evidence import (
     CONTINUOUS_REGRESSION_RESULT_SEMANTICS_INTENT_CONTRACT_VERSION,
     MULTICLASS_RESULT_SEMANTICS_INTENT_CONTRACT_VERSION,
     UNIVARIATE_FORECASTING_EVALUATION_POLICY_INTENT_CONTRACT_VERSION,
+    UNIVARIATE_FORECASTING_HISTORY_INPUT_POLICY_INTENT_CONTRACT_VERSION,
     UNIVARIATE_FORECASTING_RESULT_SEMANTICS_INTENT_CONTRACT_VERSION,
     UNIVARIATE_FORECASTING_TRAINING_POLICY_INTENT_CONTRACT_VERSION,
     authoring_helper_evidence_policy,
@@ -27,6 +28,7 @@ from pipeline.discovery_evidence import (
     build_dataset_modeling_intent,
     build_multiclass_result_semantics_intent,
     build_univariate_forecasting_evaluation_policy_intent,
+    build_univariate_forecasting_history_input_policy_intent,
     build_univariate_forecasting_result_semantics_intent,
     build_univariate_forecasting_training_policy_intent,
     derive_feature_candidates,
@@ -1533,4 +1535,152 @@ def test_modeling_intent_historical_fields_unchanged_alongside_forecasting_train
     assert intent["target_intent"]["target_column"] == "Churn"
     assert intent["univariate_forecasting_result_semantics_intent"] is None
     assert intent["univariate_forecasting_evaluation_policy_intent"] is None
+    assert intent["training_policy_intent"] is None
+
+
+# ---------------------------------------------------------------------------
+# Project Spec S0265: univariate_forecasting_history_input_policy_intent.v1
+# ---------------------------------------------------------------------------
+
+
+def _forecasting_required_anchor(**overrides):
+    anchor = {"presence": "required", "source": "development_end"}
+    anchor.update(overrides)
+    return anchor
+
+
+def _build_forecasting_history_input_policy_intent(**overrides):
+    kwargs = dict(
+        review_status="approved",
+        minimum_observation_count=1,
+        required_anchor=_forecasting_required_anchor(),
+        forecast_origin_source="last_validated_history_index",
+        review_notes="Reviewed history-input policy.",
+    )
+    kwargs.update(overrides)
+    return build_univariate_forecasting_history_input_policy_intent(**kwargs)
+
+
+def test_forecasting_history_input_policy_intent_approved_shape():
+    intent = _build_forecasting_history_input_policy_intent()
+    assert intent["schema_version"] == UNIVARIATE_FORECASTING_HISTORY_INPUT_POLICY_INTENT_CONTRACT_VERSION
+    assert intent["review_status"] == "approved"
+    assert intent["minimum_observation_count"] == 1
+    assert intent["required_anchor"] == _forecasting_required_anchor()
+    assert intent["forecast_origin_source"] == "last_validated_history_index"
+    assert set(intent.keys()) == {
+        "schema_version",
+        "review_status",
+        "minimum_observation_count",
+        "required_anchor",
+        "forecast_origin_source",
+        "review_notes",
+    }
+
+
+def test_forecasting_history_input_policy_intent_pending_is_representable_but_not_approved():
+    intent = _build_forecasting_history_input_policy_intent(review_status="pending")
+    assert intent["review_status"] == "pending"
+    assert intent["review_status"] != "approved"
+
+
+def test_forecasting_history_input_policy_intent_rejected_is_representable_but_not_approved():
+    intent = _build_forecasting_history_input_policy_intent(review_status="rejected")
+    assert intent["review_status"] == "rejected"
+    assert intent["review_status"] != "approved"
+
+
+def test_forecasting_history_input_policy_intent_rejects_unknown_review_status():
+    with pytest.raises(ValueError):
+        _build_forecasting_history_input_policy_intent(review_status="pending_review")
+
+
+def test_forecasting_history_input_policy_intent_rejects_non_positive_minimum_observation_count():
+    with pytest.raises(ValueError):
+        _build_forecasting_history_input_policy_intent(minimum_observation_count=0)
+
+
+def test_forecasting_history_input_policy_intent_rejects_negative_minimum_observation_count():
+    with pytest.raises(ValueError):
+        _build_forecasting_history_input_policy_intent(minimum_observation_count=-1)
+
+
+def test_forecasting_history_input_policy_intent_rejects_non_integer_minimum_observation_count():
+    with pytest.raises(ValueError):
+        _build_forecasting_history_input_policy_intent(minimum_observation_count=1.5)
+
+
+def test_forecasting_history_input_policy_intent_rejects_bool_minimum_observation_count():
+    with pytest.raises(ValueError):
+        _build_forecasting_history_input_policy_intent(minimum_observation_count=True)
+
+
+def test_forecasting_history_input_policy_intent_accepts_larger_minimum_observation_count():
+    intent = _build_forecasting_history_input_policy_intent(minimum_observation_count=24)
+    assert intent["minimum_observation_count"] == 24
+
+
+def test_forecasting_history_input_policy_intent_rejects_not_required_anchor_presence():
+    with pytest.raises(ValueError):
+        _build_forecasting_history_input_policy_intent(
+            required_anchor=_forecasting_required_anchor(presence="not_required")
+        )
+
+
+def test_forecasting_history_input_policy_intent_rejects_alternate_anchor_source():
+    with pytest.raises(ValueError):
+        _build_forecasting_history_input_policy_intent(
+            required_anchor=_forecasting_required_anchor(source="rolling_context_window")
+        )
+
+
+def test_forecasting_history_input_policy_intent_rejects_missing_anchor_field():
+    incomplete = _forecasting_required_anchor()
+    del incomplete["source"]
+    with pytest.raises(ValueError):
+        _build_forecasting_history_input_policy_intent(required_anchor=incomplete)
+
+
+def test_forecasting_history_input_policy_intent_rejects_unknown_anchor_field():
+    extra = _forecasting_required_anchor()
+    extra["window_size"] = 12
+    with pytest.raises(ValueError):
+        _build_forecasting_history_input_policy_intent(required_anchor=extra)
+
+
+def test_forecasting_history_input_policy_intent_rejects_non_object_anchor():
+    with pytest.raises(ValueError):
+        _build_forecasting_history_input_policy_intent(required_anchor="development_end")
+
+
+def test_forecasting_history_input_policy_intent_rejects_wrong_forecast_origin_source():
+    with pytest.raises(ValueError):
+        _build_forecasting_history_input_policy_intent(forecast_origin_source="rolling_origin")
+
+
+def test_forecasting_history_input_policy_intent_builder_exposes_no_concrete_anchor_value():
+    intent = _build_forecasting_history_input_policy_intent()
+    assert "1938-12" not in json.dumps(intent)
+    assert "anchor_value" not in intent
+    assert "development_end_value" not in intent
+
+
+def test_modeling_intent_forecasting_history_input_policy_intent_defaults_to_none():
+    intent = _build_telco_shaped_modeling_intent()
+    assert intent["univariate_forecasting_history_input_policy_intent"] is None
+
+
+def test_modeling_intent_carries_forecasting_history_input_policy_intent_verbatim():
+    policy_intent = _build_forecasting_history_input_policy_intent()
+    intent = _build_telco_shaped_modeling_intent(
+        univariate_forecasting_history_input_policy_intent=policy_intent
+    )
+    assert intent["univariate_forecasting_history_input_policy_intent"] == policy_intent
+
+
+def test_modeling_intent_historical_fields_unchanged_alongside_forecasting_history_input_policy_default():
+    intent = _build_telco_shaped_modeling_intent()
+    assert intent["contract_version"] == "dataset_modeling_intent.v1"
+    assert intent["target_intent"]["target_column"] == "Churn"
+    assert intent["univariate_forecasting_training_policy_intent"] is None
     assert intent["training_policy_intent"] is None

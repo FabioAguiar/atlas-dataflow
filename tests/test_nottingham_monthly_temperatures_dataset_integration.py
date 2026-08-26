@@ -324,6 +324,31 @@ def test_notebook_authors_reviewed_fixed_forecasting_training_policy_intent():
         assert forbidden not in code
 
 
+def test_notebook_authors_reviewed_forecasting_history_input_policy_intent():
+    code = _source("code")
+    assert "build_univariate_forecasting_history_input_policy_intent" in _called_names()
+    assert "forecasting_history_input_policy_intent = build_univariate_forecasting_history_input_policy_intent(" in code
+    assert 'minimum_observation_count=1' in code
+    assert '{"presence": "required", "source": "development_end"}' in code
+    assert 'forecast_origin_source="last_validated_history_index"' in code
+    assert 'assert forecasting_history_input_policy_intent["review_status"] == "approved"' in code
+    # The concrete Nottingham anchor value must never appear in the generic
+    # policy authoring call itself -- only the governed preparation recipe's
+    # development.end_index_value supplies it, exclusively at
+    # derive_projections.py's later runtime-projection step.
+    policy_call_start = code.index("forecasting_history_input_policy_intent = build_univariate_forecasting_history_input_policy_intent(")
+    policy_call_end = code.index(")\n", policy_call_start)
+    assert "1938-12" not in code[policy_call_start:policy_call_end]
+
+
+def test_notebook_passes_history_input_policy_intent_into_modeling_intent():
+    code = _source("code")
+    assert (
+        "univariate_forecasting_history_input_policy_intent=forecasting_history_input_policy_intent,"
+        in code
+    )
+
+
 def test_notebook_encodes_frozen_nottingham_model_configuration():
     code = _source("code")
     assert (
@@ -354,6 +379,16 @@ def test_notebook_materializes_execution_contract_v2():
     assert 'assert execution_contract["time_index_column"] == time_index_field_name' in code
     assert 'assert execution_contract["forecast_horizon"] == FORECAST_HORIZON' in code
     assert 'assert execution_contract["training_policy"]["model_selection_performed"] is False' in code
+    assert (
+        'assert execution_contract["history_input_policy"]["schema_version"] == ('
+        in code
+    )
+    assert 'assert execution_contract["history_input_policy"]["minimum_observation_count"] == 1' in code
+    assert 'assert execution_contract["history_input_policy"]["required_anchor"] == {' in code
+    assert (
+        'assert execution_contract["history_input_policy"]["forecast_origin_source"] == ('
+        in code
+    )
 
 
 def test_notebook_projects_runtime_public_contracts_through_generic_forecasting_path():

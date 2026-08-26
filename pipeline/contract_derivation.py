@@ -82,6 +82,7 @@ from pipeline.discovery_evidence import (
     build_continuous_regression_result_semantics_intent,
     build_multiclass_result_semantics_intent,
     build_univariate_forecasting_evaluation_policy_intent,
+    build_univariate_forecasting_history_input_policy_intent,
     build_univariate_forecasting_result_semantics_intent,
     build_univariate_forecasting_training_policy_intent,
 )
@@ -2274,6 +2275,53 @@ def _build_execution_contract_v2(
             ]
         ) from exc
 
+    # Project Spec S0265 (Desired Change B): require an approved
+    # univariate_forecasting_history_input_policy_intent whenever a solo
+    # forecasting result intent is materialized into execution_contract.v2.
+    # Independently rebuilt/revalidated exactly like the evaluation-policy
+    # and training-policy intents above -- absent, pending, rejected, or
+    # malformed fails closed before any v1 tabular default is ever applied.
+    # Never derived from model_family, training_policy.finalization_policy,
+    # candidate-preparation-recipe partitions, or the dataset slug -- the
+    # v2 materializer below copies only normalized execution fields, never
+    # review_status/review_notes, and never resolves the concrete
+    # development_end anchor value (that remains exclusively
+    # pipeline/derive_projections.py's job once the policy has explicitly
+    # selected development_end as its anchor source).
+    history_input_policy_intent = modeling_intent.get(
+        "univariate_forecasting_history_input_policy_intent"
+    )
+    if not isinstance(history_input_policy_intent, dict):
+        raise ExecutionContractV2ValidationError(
+            [
+                "univariate_forecasting_history_input_policy_intent is required for "
+                "execution_contract.v2 and is absent from the dataset modeling intent"
+            ]
+        )
+    history_input_policy_review_status = history_input_policy_intent.get("review_status")
+    if history_input_policy_review_status != "approved":
+        raise ExecutionContractV2ValidationError(
+            [
+                "univariate_forecasting_history_input_policy_intent.review_status is "
+                f"{history_input_policy_review_status!r}, not 'approved'"
+            ]
+        )
+    try:
+        rebuilt_history_input_policy = build_univariate_forecasting_history_input_policy_intent(
+            review_status=history_input_policy_review_status,
+            minimum_observation_count=history_input_policy_intent.get("minimum_observation_count"),
+            required_anchor=history_input_policy_intent.get("required_anchor"),
+            forecast_origin_source=history_input_policy_intent.get("forecast_origin_source"),
+            review_notes=history_input_policy_intent.get("review_notes"),
+        )
+    except ValueError as exc:
+        raise ExecutionContractV2ValidationError(
+            [
+                "univariate_forecasting_history_input_policy_intent failed independent "
+                f"re-validation: {exc}"
+            ]
+        ) from exc
+
     if not isinstance(semantic_intent, dict):
         raise ExecutionContractV2ValidationError(
             ["execution_contract.v2 materialization requires a dataset-semantic-intent.v4 semantic_intent"]
@@ -2426,6 +2474,16 @@ def _build_execution_contract_v2(
         "fixed_model_configuration": dict(rebuilt_training_policy["fixed_model_configuration"]),
         "finalization_policy": dict(rebuilt_training_policy["finalization_policy"]),
     }
+    # Project Spec S0265: copy only normalized execution fields from the
+    # independently rebuilt history-input policy intent -- review_status
+    # and review_notes never leak into the execution contract, and the
+    # concrete development_end anchor value is never resolved here.
+    history_input_policy = {
+        "schema_version": "univariate-forecasting-history-input-policy.v1",
+        "minimum_observation_count": rebuilt_history_input_policy["minimum_observation_count"],
+        "required_anchor": dict(rebuilt_history_input_policy["required_anchor"]),
+        "forecast_origin_source": rebuilt_history_input_policy["forecast_origin_source"],
+    }
 
     return {
         "contract_version": EXECUTION_CONTRACT_V2_CONTRACT_VERSION,
@@ -2441,6 +2499,7 @@ def _build_execution_contract_v2(
         "evaluation_policy": evaluation_policy,
         "result_semantics": result_semantics,
         "training_policy": training_policy,
+        "history_input_policy": history_input_policy,
         "random_seed": seed if isinstance(seed, int) else None,
     }
 
@@ -2519,6 +2578,13 @@ def _build_execution_contract_v2_materialization_evidence(
             "model_selection_performed"
         ],
         "training_policy_model_family": execution_contract["training_policy"]["model_family"],
+        "history_input_policy_schema_version": execution_contract["history_input_policy"]["schema_version"],
+        "history_input_policy_minimum_observation_count": execution_contract["history_input_policy"][
+            "minimum_observation_count"
+        ],
+        "history_input_policy_required_anchor_source": execution_contract["history_input_policy"][
+            "required_anchor"
+        ]["source"],
         "no_defaults_inferred": True,
         "readiness": "materialized",
         "blocking_reasons": [],

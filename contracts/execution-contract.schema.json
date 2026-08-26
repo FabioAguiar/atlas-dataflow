@@ -302,6 +302,10 @@
         "random_seed": {
           "type": ["integer", "null"],
           "description": "Random seed for downstream reproducibility. Null is representable and is never interpreted as permission for nondeterministic behavior. Not governed or required by S0243 itself."
+        },
+        "history_input_policy": {
+          "$ref": "#/definitions/univariate_forecasting_history_input_policy",
+          "description": "Project Spec S0265: strict, normalized, governed forecasting history-input policy materialized from a reviewed, approved univariate_forecasting_history_input_policy_intent. Bounded additive field -- deliberately not a member of execution_contract_v2's required[] array so that historical execution_contract.v2 documents materialized before S0265 remain structurally valid without this field. New v2 materialization through pipeline/contract_derivation.py always emits it."
         }
       }
     },
@@ -423,6 +427,37 @@
         "model_family": { "type": "string", "const": "deterministic_seasonal_trend_ols" },
         "fixed_model_configuration": { "$ref": "#/definitions/deterministic_seasonal_trend_ols_fixed_configuration" },
         "finalization_policy": { "$ref": "#/definitions/univariate_forecasting_finalization_policy" }
+      }
+    },
+    "univariate_forecasting_history_input_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "minimum_observation_count",
+        "required_anchor",
+        "forecast_origin_source"
+      ],
+      "description": "Project Spec S0265: strict, normalized, governed forecasting history-input policy materialized from a reviewed, approved univariate_forecasting_history_input_policy_intent. Never carries review_status/review_notes -- those remain authoring-only fields on the dataset modeling intent, not on the execution contract. v1 supports only a required development-end anchor and a last_validated_history_index forecast origin; a model requiring a not_required anchor, a rolling context window, a different anchor source, model state, refit/update behavior, or another forecast-origin policy requires a future, separately governed policy version instead of being silently coerced into this one.",
+      "properties": {
+        "schema_version": { "type": "string", "const": "univariate-forecasting-history-input-policy.v1" },
+        "minimum_observation_count": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "description": "Governed minimum supplied-history observation count. Explicit, dataset-specific, and never hardcoded to a literal 1 by projection code."
+        },
+        "required_anchor": { "$ref": "#/definitions/univariate_forecasting_history_input_required_anchor" },
+        "forecast_origin_source": { "type": "string", "const": "last_validated_history_index" }
+      }
+    },
+    "univariate_forecasting_history_input_required_anchor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["presence", "source"],
+      "description": "Project Spec S0265: the one frozen v1 required-anchor declaration. presence is always 'required' and source is always 'development_end' -- there is no configurable anchor-presence or alternate anchor-source variant under this contract version.",
+      "properties": {
+        "presence": { "type": "string", "const": "required" },
+        "source": { "type": "string", "const": "development_end" }
       }
     },
     "deterministic_seasonal_trend_ols_fixed_configuration": {

@@ -376,6 +376,116 @@ def test_v2_projection_identity_mismatch_fails(tmp_path, mutator):
         derive(contract_path, tmp_path / "out", repo_root=REPO_ROOT, preparation_recipe_path=recipe_path)
 
 
+def _history_input_policy(**overrides) -> dict:
+    policy = {
+        "schema_version": "univariate-forecasting-history-input-policy.v1",
+        "minimum_observation_count": 1,
+        "required_anchor": {"presence": "required", "source": "development_end"},
+        "forecast_origin_source": "last_validated_history_index",
+    }
+    policy.update(overrides)
+    return policy
+
+
+# ---------------------------------------------------------------------------
+# Project Spec S0265: history_input_policy-governed projection
+# ---------------------------------------------------------------------------
+
+
+def test_v2_projection_without_history_input_policy_defaults_unchanged(tmp_path):
+    """Historical execution_contract.v2 documents materialized before
+    Project Spec S0265 never carry history_input_policy -- projection must
+    preserve the exact pre-S0265 minimum_observation_count=1 default."""
+    assert "history_input_policy" not in _execution_contract_v2()
+    contract_path = _write_json(tmp_path / "execution-contract.json", _execution_contract_v2())
+    recipe_path = _write_json(tmp_path / "preparation-recipe.json", _preparation_recipe_v2())
+    out_dir = tmp_path / "out"
+
+    derive(contract_path, out_dir, repo_root=REPO_ROOT, preparation_recipe_path=recipe_path)
+
+    runtime_contract = json.loads((out_dir / "runtime-contract.json").read_text())
+    evidence = json.loads((out_dir / "projection-evidence.json").read_text())
+    assert runtime_contract["history_series"]["minimum_observation_count"] == 1
+    assert evidence["minimum_observation_count"] == 1
+    assert evidence["minimum_observation_count_source"] == "default"
+
+
+def test_v2_projection_sources_minimum_observation_count_from_history_input_policy(tmp_path):
+    contract = _execution_contract_v2(
+        history_input_policy=_history_input_policy(minimum_observation_count=3)
+    )
+    contract_path = _write_json(tmp_path / "execution-contract.json", contract)
+    recipe_path = _write_json(tmp_path / "preparation-recipe.json", _preparation_recipe_v2())
+    out_dir = tmp_path / "out"
+
+    derive(contract_path, out_dir, repo_root=REPO_ROOT, preparation_recipe_path=recipe_path)
+
+    runtime_contract = json.loads((out_dir / "runtime-contract.json").read_text())
+    evidence = json.loads((out_dir / "projection-evidence.json").read_text())
+    assert runtime_contract["history_series"]["minimum_observation_count"] == 3
+    assert evidence["minimum_observation_count"] == 3
+    assert evidence["minimum_observation_count_source"] == "execution_contract.history_input_policy"
+    # The governed development-end boundary resolution is unchanged by the
+    # policy's presence.
+    assert runtime_contract["history_series"]["minimum_history_required_through"] == "19"
+
+
+def test_v2_projection_history_input_policy_wrong_schema_version_fails_closed(tmp_path):
+    contract = _execution_contract_v2(
+        history_input_policy=_history_input_policy(
+            schema_version="univariate-forecasting-history-input-policy.v2"
+        )
+    )
+    contract_path = _write_json(tmp_path / "execution-contract.json", contract)
+    recipe_path = _write_json(tmp_path / "preparation-recipe.json", _preparation_recipe_v2())
+    with pytest.raises(DerivationFailed):
+        derive(contract_path, tmp_path / "out", repo_root=REPO_ROOT, preparation_recipe_path=recipe_path)
+
+
+def test_v2_projection_history_input_policy_non_positive_minimum_observation_count_fails_closed(tmp_path):
+    contract = _execution_contract_v2(
+        history_input_policy=_history_input_policy(minimum_observation_count=0)
+    )
+    contract_path = _write_json(tmp_path / "execution-contract.json", contract)
+    recipe_path = _write_json(tmp_path / "preparation-recipe.json", _preparation_recipe_v2())
+    with pytest.raises(DerivationFailed):
+        derive(contract_path, tmp_path / "out", repo_root=REPO_ROOT, preparation_recipe_path=recipe_path)
+
+
+def test_v2_projection_history_input_policy_not_required_anchor_presence_fails_closed(tmp_path):
+    contract = _execution_contract_v2(
+        history_input_policy=_history_input_policy(
+            required_anchor={"presence": "not_required", "source": "development_end"}
+        )
+    )
+    contract_path = _write_json(tmp_path / "execution-contract.json", contract)
+    recipe_path = _write_json(tmp_path / "preparation-recipe.json", _preparation_recipe_v2())
+    with pytest.raises(DerivationFailed):
+        derive(contract_path, tmp_path / "out", repo_root=REPO_ROOT, preparation_recipe_path=recipe_path)
+
+
+def test_v2_projection_history_input_policy_alternate_anchor_source_fails_closed(tmp_path):
+    contract = _execution_contract_v2(
+        history_input_policy=_history_input_policy(
+            required_anchor={"presence": "required", "source": "rolling_context_window"}
+        )
+    )
+    contract_path = _write_json(tmp_path / "execution-contract.json", contract)
+    recipe_path = _write_json(tmp_path / "preparation-recipe.json", _preparation_recipe_v2())
+    with pytest.raises(DerivationFailed):
+        derive(contract_path, tmp_path / "out", repo_root=REPO_ROOT, preparation_recipe_path=recipe_path)
+
+
+def test_v2_projection_history_input_policy_wrong_forecast_origin_source_fails_closed(tmp_path):
+    contract = _execution_contract_v2(
+        history_input_policy=_history_input_policy(forecast_origin_source="rolling_origin")
+    )
+    contract_path = _write_json(tmp_path / "execution-contract.json", contract)
+    recipe_path = _write_json(tmp_path / "preparation-recipe.json", _preparation_recipe_v2())
+    with pytest.raises(DerivationFailed):
+        derive(contract_path, tmp_path / "out", repo_root=REPO_ROOT, preparation_recipe_path=recipe_path)
+
+
 def test_historical_v1_projection_does_not_require_preparation_recipe(tmp_path):
     execution_contract_v1 = {
         "contract_version": "execution_contract.v1",
@@ -511,6 +621,54 @@ def test_forecasting_payload_rejects_non_numeric_target():
 def test_forecasting_payload_rejects_below_minimum_history_boundary():
     contract = _forecasting_runtime_contract()
     payload = {"history": [{"period": i, "value": _series_value(i)} for i in range(10)]}
+    report = validate_and_normalize_payload(payload, contract)
+    assert report.failures[0].error_code == "FORECASTING_MINIMUM_HISTORY_NOT_MET"
+
+
+# ---------------------------------------------------------------------------
+# Project Spec S0265: minimum_history_required_through boundary membership
+# ---------------------------------------------------------------------------
+
+
+def test_forecasting_payload_boundary_only_row_accepted():
+    contract = _forecasting_runtime_contract()
+    payload = {"history": [{"period": 19, "value": _series_value(19)}]}
+    report = validate_and_normalize_payload(payload, contract)
+    assert not report.failures
+
+
+def test_forecasting_payload_boundary_plus_contiguous_later_period_accepted():
+    contract = _forecasting_runtime_contract()
+    payload = {"history": [{"period": i, "value": _series_value(i)} for i in range(DEV_OBSERVATIONS + 1)]}
+    report = validate_and_normalize_payload(payload, contract)
+    assert not report.failures
+
+
+def test_forecasting_payload_rejects_later_period_without_boundary_itself():
+    """Project Spec S0265: a history whose final index is after the
+    governed boundary but which never actually contains the boundary value
+    itself must be rejected -- the pre-S0265 check only compared the final
+    supplied index against the boundary and missed this case."""
+    contract = _forecasting_runtime_contract()
+    payload = {"history": [{"period": 20, "value": _series_value(20)}]}
+    report = validate_and_normalize_payload(payload, contract)
+    assert report.failures[0].error_code == "FORECASTING_MINIMUM_HISTORY_NOT_MET"
+
+
+def test_forecasting_payload_calendar_period_later_period_without_boundary_rejected():
+    contract = _forecasting_runtime_contract(
+        index_value_kind="calendar_period", frequency="monthly", minimum_history_required_through="2020-03",
+    )
+    payload = {"history": [{"period": "2020-04", "value": 1.0}]}
+    report = validate_and_normalize_payload(payload, contract)
+    assert report.failures[0].error_code == "FORECASTING_MINIMUM_HISTORY_NOT_MET"
+
+
+def test_forecasting_payload_timestamp_later_period_without_boundary_rejected():
+    contract = _forecasting_runtime_contract(
+        index_value_kind="timestamp", frequency="daily", minimum_history_required_through="2020-01-02",
+    )
+    payload = {"history": [{"period": "2020-01-03", "value": 1.0}]}
     report = validate_and_normalize_payload(payload, contract)
     assert report.failures[0].error_code == "FORECASTING_MINIMUM_HISTORY_NOT_MET"
 

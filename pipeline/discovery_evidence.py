@@ -1315,6 +1315,136 @@ def build_univariate_forecasting_training_policy_intent(
     }
 
 
+# Project Spec S0265: a single reviewed forecasting history-input policy
+# declaration -- the currently supported univariate-forecasting history-input
+# generation and validation policy. "approved" is the only status that may
+# later be promoted into execution policy by
+# contract_derivation._build_execution_contract_v2; "pending"/"rejected" keep
+# the declaration visible as an unresolved/declined review item without ever
+# silently materializing into executable policy. This builder deliberately
+# never accepts a dataset slug, concrete anchor value (for example the
+# Nottingham 1938-12 boundary), or any dataset-specific temporal literal --
+# the concrete anchor value remains exclusively owned by
+# candidate-preparation-recipe.v2's governed development.end_index_value,
+# resolved only at materialization time after this policy has explicitly
+# selected development_end as its anchor source.
+UNIVARIATE_FORECASTING_HISTORY_INPUT_POLICY_INTENT_CONTRACT_VERSION = (
+    "univariate_forecasting_history_input_policy_intent.v1"
+)
+UNIVARIATE_FORECASTING_HISTORY_INPUT_POLICY_REVIEW_STATUSES = frozenset(
+    {"approved", "pending", "rejected"}
+)
+# The only required_anchor/forecast_origin_source semantics this v1 policy
+# recognizes. This is intentionally not a claim that all future forecasting
+# models share these semantics -- a model requiring a not_required anchor, a
+# rolling context window, a different anchor source, model state, a
+# refit/update behavior, or another forecast-origin policy must block and
+# require a future, separately governed policy version instead of being
+# silently coerced into v1.
+_UNIVARIATE_FORECASTING_HISTORY_INPUT_POLICY_ANCHOR_PRESENCE = "required"
+_UNIVARIATE_FORECASTING_HISTORY_INPUT_POLICY_ANCHOR_SOURCE = "development_end"
+_UNIVARIATE_FORECASTING_HISTORY_INPUT_POLICY_FORECAST_ORIGIN_SOURCE = "last_validated_history_index"
+_UNIVARIATE_FORECASTING_HISTORY_INPUT_POLICY_REQUIRED_ANCHOR_FIELDS = frozenset(
+    {"presence", "source"}
+)
+
+
+def _validate_univariate_forecasting_history_input_required_anchor(
+    required_anchor: Any,
+) -> dict[str, str]:
+    """Validate and normalize the closed v1 `required_anchor` declaration.
+
+    Raises ValueError for anything other than exactly
+    `{"presence": "required", "source": "development_end"}` -- v1 never
+    accepts a `not_required` presence or an alternate anchor source.
+    """
+    if not isinstance(required_anchor, dict):
+        raise ValueError("required_anchor must be an object")
+    missing = _UNIVARIATE_FORECASTING_HISTORY_INPUT_POLICY_REQUIRED_ANCHOR_FIELDS - set(required_anchor)
+    if missing:
+        raise ValueError(f"required_anchor is missing required fields: {sorted(missing)}")
+    unknown = set(required_anchor) - _UNIVARIATE_FORECASTING_HISTORY_INPUT_POLICY_REQUIRED_ANCHOR_FIELDS
+    if unknown:
+        raise ValueError(f"required_anchor contains unrecognized fields: {sorted(unknown)}")
+
+    presence = required_anchor["presence"]
+    if presence != _UNIVARIATE_FORECASTING_HISTORY_INPUT_POLICY_ANCHOR_PRESENCE:
+        raise ValueError(
+            "required_anchor.presence must be exactly "
+            f"{_UNIVARIATE_FORECASTING_HISTORY_INPUT_POLICY_ANCHOR_PRESENCE!r}, got {presence!r}"
+        )
+    source = required_anchor["source"]
+    if source != _UNIVARIATE_FORECASTING_HISTORY_INPUT_POLICY_ANCHOR_SOURCE:
+        raise ValueError(
+            "required_anchor.source must be exactly "
+            f"{_UNIVARIATE_FORECASTING_HISTORY_INPUT_POLICY_ANCHOR_SOURCE!r}, got {source!r}"
+        )
+    return {"presence": presence, "source": source}
+
+
+def build_univariate_forecasting_history_input_policy_intent(
+    review_status: str,
+    minimum_observation_count: int,
+    required_anchor: dict[str, Any],
+    forecast_origin_source: str,
+    review_notes: str | None = None,
+) -> dict[str, Any]:
+    """Build a `univariate_forecasting_history_input_policy_intent.v1`
+    reviewed declaration (Project Spec S0265).
+
+    Deliberately owns only the generic history-input generation/validation
+    policy -- no dataset slug, target/time-index field name, frequency,
+    forecast horizon, seasonal period, model family, or concrete anchor
+    value (for example a dataset-specific boundary period) is ever accepted
+    here. Only `review_status == "approved"` may later be promoted into
+    executable execution-contract policy by
+    `contract_derivation._build_execution_contract_v2`; `"pending"` and
+    `"rejected"` keep the declaration visible as an unresolved/declined
+    review item and this builder still returns it rather than raising,
+    mirroring `build_univariate_forecasting_training_policy_intent`'s
+    convention -- but every structural/value validation below still applies
+    regardless of review_status, since a pending or rejected declaration
+    must still be well-formed. Raises ValueError on a structurally malformed
+    declaration (unknown review_status, non-positive
+    minimum_observation_count, a required_anchor deviating from v1's one
+    frozen `{"presence": "required", "source": "development_end"}` shape,
+    or a forecast_origin_source other than `"last_validated_history_index"`).
+    """
+    if review_status not in UNIVARIATE_FORECASTING_HISTORY_INPUT_POLICY_REVIEW_STATUSES:
+        raise ValueError(
+            "review_status must be one of "
+            f"{sorted(UNIVARIATE_FORECASTING_HISTORY_INPUT_POLICY_REVIEW_STATUSES)}, "
+            f"got {review_status!r}"
+        )
+    if (
+        isinstance(minimum_observation_count, bool)
+        or not isinstance(minimum_observation_count, int)
+        or minimum_observation_count <= 0
+    ):
+        raise ValueError(
+            "minimum_observation_count must be an explicit positive integer, got "
+            f"{minimum_observation_count!r}"
+        )
+    normalized_required_anchor = _validate_univariate_forecasting_history_input_required_anchor(
+        required_anchor
+    )
+    if forecast_origin_source != _UNIVARIATE_FORECASTING_HISTORY_INPUT_POLICY_FORECAST_ORIGIN_SOURCE:
+        raise ValueError(
+            "forecast_origin_source must be exactly "
+            f"{_UNIVARIATE_FORECASTING_HISTORY_INPUT_POLICY_FORECAST_ORIGIN_SOURCE!r}, "
+            f"got {forecast_origin_source!r}"
+        )
+
+    return {
+        "schema_version": UNIVARIATE_FORECASTING_HISTORY_INPUT_POLICY_INTENT_CONTRACT_VERSION,
+        "review_status": review_status,
+        "minimum_observation_count": minimum_observation_count,
+        "required_anchor": normalized_required_anchor,
+        "forecast_origin_source": forecast_origin_source,
+        "review_notes": review_notes,
+    }
+
+
 MODELING_INTENT_BOUNDARY_CONFIRMATIONS: dict[str, bool] = {
     "is_execution_contract": False,
     "is_runtime_contract": False,
@@ -1353,6 +1483,7 @@ def build_dataset_modeling_intent(
     univariate_forecasting_result_semantics_intent: dict[str, Any] | None = None,
     univariate_forecasting_evaluation_policy_intent: dict[str, Any] | None = None,
     univariate_forecasting_training_policy_intent: dict[str, Any] | None = None,
+    univariate_forecasting_history_input_policy_intent: dict[str, Any] | None = None,
     training_policy_intent: dict[str, Any] | None = None,
     generated_at: str | None = None,
 ) -> dict[str, Any]:
@@ -1403,6 +1534,17 @@ def build_dataset_modeling_intent(
     finalization policy itself. Materialization into execution_contract.v2
     is owned exclusively by
     `contract_derivation._build_execution_contract_v2`.
+
+    `univariate_forecasting_history_input_policy_intent` (Project Spec
+    S0265) is an optional reviewed forecasting history-input policy
+    declaration, built via
+    `build_univariate_forecasting_history_input_policy_intent` above.
+    Defaults to `None`; when supplied, this builder carries it forward
+    verbatim -- it never approves or infers policy values, and never owns
+    the concrete anchor value (that remains exclusively
+    candidate-preparation-recipe.v2's governed development.end_index_value).
+    Materialization into execution_contract.v2's `history_input_policy` is
+    owned exclusively by `contract_derivation._build_execution_contract_v2`.
 
     `training_policy_intent` (Project Spec S0216) is optional reviewed
     native training policy authoring intent -- execution-only fields
@@ -1489,6 +1631,11 @@ def build_dataset_modeling_intent(
         "univariate_forecasting_training_policy_intent": (
             dict(univariate_forecasting_training_policy_intent)
             if univariate_forecasting_training_policy_intent is not None
+            else None
+        ),
+        "univariate_forecasting_history_input_policy_intent": (
+            dict(univariate_forecasting_history_input_policy_intent)
+            if univariate_forecasting_history_input_policy_intent is not None
             else None
         ),
         "training_policy_intent": (

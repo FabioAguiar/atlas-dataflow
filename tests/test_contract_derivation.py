@@ -34,6 +34,7 @@ from pipeline.discovery_evidence import (
     build_continuous_regression_result_semantics_intent,
     build_multiclass_result_semantics_intent,
     build_univariate_forecasting_evaluation_policy_intent,
+    build_univariate_forecasting_history_input_policy_intent,
     build_univariate_forecasting_result_semantics_intent,
     build_univariate_forecasting_training_policy_intent,
 )
@@ -2193,6 +2194,18 @@ def _approved_forecasting_training_policy_intent(**overrides):
     return build_univariate_forecasting_training_policy_intent(**kwargs)
 
 
+def _approved_forecasting_history_input_policy_intent(**overrides):
+    kwargs = dict(
+        review_status="approved",
+        minimum_observation_count=1,
+        required_anchor={"presence": "required", "source": "development_end"},
+        forecast_origin_source="last_validated_history_index",
+        review_notes="Reviewed forecasting history-input policy.",
+    )
+    kwargs.update(overrides)
+    return build_univariate_forecasting_history_input_policy_intent(**kwargs)
+
+
 def _valid_semantic_intent_v4(
     target_field_name="demand",
     time_index_field_name="period",
@@ -2348,6 +2361,7 @@ def _modeling_intent_for_forecasting(
     forecasting_result_semantics_intent=_MISSING,
     forecasting_evaluation_policy_intent=_MISSING,
     forecasting_training_policy_intent=_MISSING,
+    forecasting_history_input_policy_intent=_MISSING,
     binary_result_semantics_intent=None,
     multiclass_result_semantics_intent=None,
     continuous_regression_result_semantics_intent=None,
@@ -2394,6 +2408,11 @@ def _modeling_intent_for_forecasting(
             if forecasting_training_policy_intent is _MISSING
             else forecasting_training_policy_intent
         ),
+        "univariate_forecasting_history_input_policy_intent": (
+            _approved_forecasting_history_input_policy_intent()
+            if forecasting_history_input_policy_intent is _MISSING
+            else forecasting_history_input_policy_intent
+        ),
     }
 
 
@@ -2419,6 +2438,12 @@ def test_execution_contract_v2_materializes_from_approved_fixtures():
         "model_family": "deterministic_seasonal_trend_ols",
         "fixed_model_configuration": _forecasting_fixed_model_configuration(),
         "finalization_policy": _forecasting_finalization_policy(),
+    }
+    assert contract["history_input_policy"] == {
+        "schema_version": "univariate-forecasting-history-input-policy.v1",
+        "minimum_observation_count": 1,
+        "required_anchor": {"presence": "required", "source": "development_end"},
+        "forecast_origin_source": "last_validated_history_index",
     }
 
 
@@ -2776,6 +2801,160 @@ def test_execution_contract_v2_training_policy_projection_evidence_reduced_facts
     assert evidence["training_policy_selection_mode"] == "fixed_configuration"
     assert evidence["training_policy_model_selection_performed"] is False
     assert evidence["training_policy_model_family"] == "deterministic_seasonal_trend_ols"
+
+
+# ---------------------------------------------------------------------------
+# execution_contract.v2 -- forecasting history-input-policy materialization
+# (Project Spec S0265)
+# ---------------------------------------------------------------------------
+
+
+def test_execution_contract_v2_history_input_policy_missing_fails_closed():
+    modeling_intent = _modeling_intent_for_forecasting(forecasting_history_input_policy_intent=None)
+    with pytest.raises(ExecutionContractV2ValidationError):
+        _build_execution_contract(
+            modeling_intent, {}, _valid_preparation_recipe_v2(), semantic_intent=_valid_semantic_intent_v4()
+        )
+
+
+def test_execution_contract_v2_history_input_policy_pending_fails_closed():
+    modeling_intent = _modeling_intent_for_forecasting(
+        forecasting_history_input_policy_intent=_approved_forecasting_history_input_policy_intent(
+            review_status="pending"
+        )
+    )
+    with pytest.raises(ExecutionContractV2ValidationError):
+        _build_execution_contract(
+            modeling_intent, {}, _valid_preparation_recipe_v2(), semantic_intent=_valid_semantic_intent_v4()
+        )
+
+
+def test_execution_contract_v2_history_input_policy_rejected_fails_closed():
+    modeling_intent = _modeling_intent_for_forecasting(
+        forecasting_history_input_policy_intent=_approved_forecasting_history_input_policy_intent(
+            review_status="rejected"
+        )
+    )
+    with pytest.raises(ExecutionContractV2ValidationError):
+        _build_execution_contract(
+            modeling_intent, {}, _valid_preparation_recipe_v2(), semantic_intent=_valid_semantic_intent_v4()
+        )
+
+
+def test_execution_contract_v2_history_input_policy_malformed_anchor_fails_closed():
+    # A hand-built (not builder-validated) modeling intent, mirroring how
+    # test_execution_contract_v2_training_policy_malformed_fixed_configuration_fails_closed
+    # mutates an already-built object to exercise contract_derivation's own
+    # independent re-validation rather than the discovery_evidence builder's.
+    history_input_policy_intent = _approved_forecasting_history_input_policy_intent()
+    history_input_policy_intent["required_anchor"] = {
+        "presence": "not_required",
+        "source": "development_end",
+    }
+    modeling_intent = _modeling_intent_for_forecasting(
+        forecasting_history_input_policy_intent=history_input_policy_intent
+    )
+    with pytest.raises(ExecutionContractV2ValidationError):
+        _build_execution_contract(
+            modeling_intent, {}, _valid_preparation_recipe_v2(), semantic_intent=_valid_semantic_intent_v4()
+        )
+
+
+def test_execution_contract_v2_history_input_policy_non_positive_minimum_observation_count_fails_closed():
+    history_input_policy_intent = _approved_forecasting_history_input_policy_intent()
+    history_input_policy_intent["minimum_observation_count"] = 0
+    modeling_intent = _modeling_intent_for_forecasting(
+        forecasting_history_input_policy_intent=history_input_policy_intent
+    )
+    with pytest.raises(ExecutionContractV2ValidationError):
+        _build_execution_contract(
+            modeling_intent, {}, _valid_preparation_recipe_v2(), semantic_intent=_valid_semantic_intent_v4()
+        )
+
+
+def test_execution_contract_v2_history_input_policy_wrong_forecast_origin_source_fails_closed():
+    history_input_policy_intent = _approved_forecasting_history_input_policy_intent()
+    history_input_policy_intent["forecast_origin_source"] = "rolling_origin"
+    modeling_intent = _modeling_intent_for_forecasting(
+        forecasting_history_input_policy_intent=history_input_policy_intent
+    )
+    with pytest.raises(ExecutionContractV2ValidationError):
+        _build_execution_contract(
+            modeling_intent, {}, _valid_preparation_recipe_v2(), semantic_intent=_valid_semantic_intent_v4()
+        )
+
+
+def test_execution_contract_v2_history_input_policy_larger_minimum_observation_count_materializes():
+    modeling_intent = _modeling_intent_for_forecasting(
+        forecasting_history_input_policy_intent=_approved_forecasting_history_input_policy_intent(
+            minimum_observation_count=24
+        )
+    )
+    contract = _build_execution_contract(
+        modeling_intent, {}, _valid_preparation_recipe_v2(), semantic_intent=_valid_semantic_intent_v4()
+    )
+    assert contract["history_input_policy"]["minimum_observation_count"] == 24
+
+
+def test_execution_contract_v2_history_input_policy_review_notes_do_not_leak_into_contract():
+    modeling_intent = _modeling_intent_for_forecasting(
+        forecasting_history_input_policy_intent=_approved_forecasting_history_input_policy_intent(
+            review_notes="internal reviewer note that must never appear on the execution contract"
+        )
+    )
+    contract = _build_execution_contract(
+        modeling_intent, {}, _valid_preparation_recipe_v2(), semantic_intent=_valid_semantic_intent_v4()
+    )
+    assert "review_status" not in contract["history_input_policy"]
+    assert "review_notes" not in contract["history_input_policy"]
+    assert set(contract["history_input_policy"].keys()) == {
+        "schema_version",
+        "minimum_observation_count",
+        "required_anchor",
+        "forecast_origin_source",
+    }
+
+
+def test_execution_contract_v2_history_input_policy_never_resolves_concrete_anchor_value():
+    modeling_intent = _modeling_intent_for_forecasting()
+    preparation_recipe = _valid_preparation_recipe_v2()
+    contract = _build_execution_contract(
+        modeling_intent, {}, preparation_recipe, semantic_intent=_valid_semantic_intent_v4()
+    )
+    # The preparation recipe's own governed development-end boundary must
+    # never leak into execution_contract.v2's history_input_policy -- that
+    # concrete anchor value is resolved exclusively by
+    # pipeline/derive_projections.py at runtime-projection time.
+    assert preparation_recipe["partitions"]["development"]["end_index_value"] not in json.dumps(
+        contract["history_input_policy"]
+    )
+
+
+def test_execution_contract_v2_history_input_policy_projection_evidence_reduced_facts():
+    modeling_intent = _modeling_intent_for_forecasting()
+    preparation_recipe = _valid_preparation_recipe_v2()
+    semantic_intent = _valid_semantic_intent_v4()
+    contract = _build_execution_contract(
+        modeling_intent, {}, preparation_recipe, semantic_intent=semantic_intent
+    )
+    evidence = _build_execution_contract_v2_materialization_evidence(
+        modeling_intent,
+        preparation_recipe,
+        contract,
+        execution_contract_relative_path="contracts/synthetic-series/execution-contract.json",
+        discovery_evidence_relative_path=None,
+        preparation_recipe_relative_path=None,
+        prepared_data_metadata_relative_path=None,
+        modeling_intent_relative_path=None,
+        public_context_relative_path=None,
+        raw_dataset_relative_path=None,
+        semantic_intent=semantic_intent,
+        semantic_intent_relative_path=None,
+        generated_at="2026-08-22T00:00:00+00:00",
+    )
+    assert evidence["history_input_policy_schema_version"] == "univariate-forecasting-history-input-policy.v1"
+    assert evidence["history_input_policy_minimum_observation_count"] == 1
+    assert evidence["history_input_policy_required_anchor_source"] == "development_end"
 
 
 def test_execution_contract_v1_tabular_path_unaffected_by_forecasting_training_policy():

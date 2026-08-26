@@ -125,7 +125,7 @@
         },
         "minimum_history_required_through": {
           "type": ["string", "integer"],
-          "description": "The authenticated development-partition end boundary the supplied history must reach, sourced from candidate-preparation-recipe.v2.partitions.development.end, never caller-authored."
+          "description": "Project Spec S0265: the authenticated development-partition end boundary, sourced from candidate-preparation-recipe.v2.partitions.development.end, never caller-authored. This boundary value must both (1) occur among the supplied history's own time-index values, and (2) be reached by the final supplied history row -- a history whose final index is at or after this boundary but which never actually contains the boundary value itself does not satisfy this requirement."
         },
         "ordering": {
           "type": "string",

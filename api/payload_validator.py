@@ -533,8 +533,23 @@ def _validate_and_normalize_forecasting_payload(
     minimum_boundary_parsed, boundary_ok = _parse_governed_boundary_value(
         minimum_boundary_raw, index_kind, pandas_freq_alias
     )
+    if not boundary_ok:
+        return ValidationReport(
+            failures=[_failure(FORECASTING_MINIMUM_HISTORY_NOT_MET, container_key)],
+            normalized_payload=dict(payload),
+            observations=[],
+        )
+    # Project Spec S0265: the governed boundary must both (1) occur among
+    # the supplied history's own parsed index values, and (2) be reached by
+    # the final supplied row -- a history whose final index is at or after
+    # the boundary but which never actually contains the boundary value
+    # itself (for example only a later period, with the boundary period
+    # itself omitted) must still be rejected here. Uses the already-parsed,
+    # governed index-kind comparison values (ordinal int / pd.Period /
+    # pd.Timestamp) -- never a string-equality shortcut.
     last_parsed_value = parsed_index_values[-1]
-    if not boundary_ok or last_parsed_value < minimum_boundary_parsed:
+    boundary_present = any(value == minimum_boundary_parsed for value in parsed_index_values)
+    if not boundary_present or last_parsed_value < minimum_boundary_parsed:
         return ValidationReport(
             failures=[_failure(FORECASTING_MINIMUM_HISTORY_NOT_MET, container_key)],
             normalized_payload=dict(payload),

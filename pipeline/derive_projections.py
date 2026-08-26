@@ -382,6 +382,66 @@ def _derive_forecasting_projection(
             ["preparation recipe partitions.development.end_index_value must be a non-empty string"]
         )
 
+    # Project Spec S0265 (Desired Change C): for a newly governed execution
+    # contract carrying a `history_input_policy` block,
+    # `minimum_observation_count` is sourced from that policy, never a
+    # literal default -- and the policy's `required_anchor`/
+    # `forecast_origin_source` are re-checked here, failing projection
+    # closed if they disagree with the only anchor/origin semantics this
+    # projector can resolve (a required `development_end` anchor and a
+    # `last_validated_history_index` forecast origin). Historical
+    # execution_contract.v2 documents materialized before S0265 never carry
+    # this block; their existing `minimum_observation_count=1` /
+    # `last_validated_history_index` projection behavior is preserved
+    # unchanged so already-released runtime-contract 2.0.0 documents never
+    # require release rewriting.
+    history_input_policy = contract.get("history_input_policy")
+    if history_input_policy is not None:
+        if not isinstance(history_input_policy, dict):
+            raise DerivationFailed(
+                ["execution contract history_input_policy must be an object when present"]
+            )
+        if history_input_policy.get("schema_version") != "univariate-forecasting-history-input-policy.v1":
+            raise DerivationFailed(
+                [
+                    "execution contract history_input_policy.schema_version must be "
+                    "'univariate-forecasting-history-input-policy.v1'"
+                ]
+            )
+        minimum_observation_count = history_input_policy.get("minimum_observation_count")
+        if (
+            isinstance(minimum_observation_count, bool)
+            or not isinstance(minimum_observation_count, int)
+            or minimum_observation_count <= 0
+        ):
+            raise DerivationFailed(
+                [
+                    "execution contract history_input_policy.minimum_observation_count must be a "
+                    "positive integer"
+                ]
+            )
+        required_anchor = history_input_policy.get("required_anchor")
+        required_anchor = required_anchor if isinstance(required_anchor, dict) else {}
+        if required_anchor.get("presence") != "required" or required_anchor.get("source") != "development_end":
+            raise DerivationFailed(
+                [
+                    "execution contract history_input_policy.required_anchor must declare "
+                    "presence='required' and source='development_end' -- this projector cannot "
+                    "resolve any other anchor policy under this contract version"
+                ]
+            )
+        forecast_origin_source = history_input_policy.get("forecast_origin_source")
+        if forecast_origin_source != "last_validated_history_index":
+            raise DerivationFailed(
+                [
+                    "execution contract history_input_policy.forecast_origin_source must be "
+                    "'last_validated_history_index'"
+                ]
+            )
+    else:
+        minimum_observation_count = 1
+        forecast_origin_source = "last_validated_history_index"
+
     time_index_field_name = contract["time_index_column"]
     target_field_name = contract["target_column"]
     index_value_kind = contract["index_value_kind"]
@@ -400,7 +460,7 @@ def _derive_forecasting_projection(
             "frequency": frequency,
             "source_exogenous_predictors": "forbidden",
             "row_field_policy": "exact_time_index_and_target",
-            "minimum_observation_count": 1,
+            "minimum_observation_count": minimum_observation_count,
             "minimum_history_required_through": development_end,
             "ordering": "strictly_increasing",
             "uniqueness_required": True,
@@ -413,7 +473,7 @@ def _derive_forecasting_projection(
             "forecast_horizon": forecast_horizon,
             "horizon_source": FORECASTING_EXECUTION_CONTRACT_VERSION,
             "caller_overridable": False,
-            "forecast_origin_source": "last_validated_history_index",
+            "forecast_origin_source": forecast_origin_source,
             "future_index_policy": "advance_by_governed_frequency",
         },
     }
@@ -484,6 +544,10 @@ def _derive_forecasting_projection(
         "index_value_kind": index_value_kind,
         "frequency": frequency,
         "forecast_horizon": forecast_horizon,
+        "minimum_observation_count": minimum_observation_count,
+        "minimum_observation_count_source": (
+            "execution_contract.history_input_policy" if history_input_policy is not None else "default"
+        ),
         "minimum_history_required_through": development_end,
         "source_exogenous_predictors": "forbidden",
     }

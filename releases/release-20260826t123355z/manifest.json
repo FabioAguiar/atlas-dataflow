@@ -6,9 +6,9 @@
     "dataset_title": "Nottingham Monthly Temperatures"
   },
   "release_identity": {
-    "release_id": "release-20260824t163251z",
+    "release_id": "release-20260826t123355z",
     "release_version": "1.0.0-rc.1",
-    "created_at": "2026-08-24T16:32:52Z"
+    "created_at": "2026-08-26T12:33:57Z"
   },
   "artifacts": [
     {
@@ -21,13 +21,13 @@
       "role": "public_contract",
       "reference": "contracts/public-contract.json",
       "hash_algorithm": "sha256",
-      "hash_value": "695049dc6a937409059c0f558ba490ce2efadbedb641fb00e9b8a8a78b67dfc8"
+      "hash_value": "7230229bd072ab10089a3cd642e9b738c06f48d1be91b8e102e015e32f83ad32"
     },
     {
       "role": "predictive_bundle",
       "reference": "predictions/bundle.json",
       "hash_algorithm": "sha256",
-      "hash_value": "9fade2b86dd9224e96bb4e2ee412505a41d21df7101693935d651871d130a434"
+      "hash_value": "19e1ca35473fd52efac657cb886132107aa30715e2bc1e484bddad2e6dacfd44"
     },
     {
       "role": "model_artifact",
@@ -39,13 +39,13 @@
       "role": "metrics",
       "reference": "metrics/metrics.json",
       "hash_algorithm": "sha256",
-      "hash_value": "c67f8e57d6db4af8e122b967d74c6db412efcedfa7edac04a07ef17a7e501bb4"
+      "hash_value": "1f36b836159cefefcb888eaf867d786378350e80b72d6e60e7613fd18fbfd118"
     },
     {
       "role": "model_card",
       "reference": "model-card.json",
       "hash_algorithm": "sha256",
-      "hash_value": "ba676329ce27cca5a3d1fc2b90cc094a88fade70fdc8fe89379d9857e55971cc"
+      "hash_value": "95272e75568ae6ea9e857a655e6f827635a29fda4364611b5848560319a8d822"
     },
     {
       "role": "public_context",
@@ -57,19 +57,19 @@
       "role": "visualizations",
       "reference": "visualizations/visualizations.json",
       "hash_algorithm": "sha256",
-      "hash_value": "a8ce0d2d69da6e6e3356d4309df5403986233d24f1edfd50395b1866f1fb247a"
+      "hash_value": "955692e864bdb02c989b72f1fe8f34794b0ec629633fc7857b76ccf2e5e1f6f8"
     },
     {
       "role": "manifest_input",
       "reference": "manifest-input.json",
       "hash_algorithm": "sha256",
-      "hash_value": "17ad60e9a57b776e3ae6c2d1594e89e74ffeb42f6e86bbcca7e09d05b163cf70"
+      "hash_value": "5521dea0075a50a2a73fc1cd9cf6f377156d00a4c4f8bc893c4c42f906cd465f"
     },
     {
       "role": "candidate_metadata",
       "reference": "release-candidate.json",
       "hash_algorithm": "sha256",
-      "hash_value": "ec2cc18a40b835040211ab735999891ed902126800c1a1b0d6c1e59f599da653"
+      "hash_value": "9186bc3edb5d3b8503391f44d44468043c0689efcb582864c3c09a4e161356f6"
     }
   ],
   "required_hash_coverage": {

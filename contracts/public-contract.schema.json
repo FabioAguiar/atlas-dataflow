@@ -77,6 +77,39 @@
           "type": "string",
           "minLength": 1,
           "description": "Safe, human-facing projection of the governed logical frequency. Presentation guidance only -- the runtime contract remains payload-validation authority."
+        },
+        "input_guidance": {
+          "$ref": "#/definitions/public_history_input_guidance_v2"
+        }
+      }
+    },
+    "public_history_input_guidance_v2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["minimum_observation_count", "required_anchor", "continuity"],
+      "description": "Project Spec S0266: optional, strict, bounded presentation-only projection of a governed S0265 history-input policy. Absent on historical public-contract 2.0.0 documents materialized before S0266. Never carries required_anchor.source, development_end, training_scope, or any other runtime/training-only property name or value.",
+      "properties": {
+        "minimum_observation_count": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Presentation projection of the governed runtime minimum observation count. Never a UI-invented default."
+        },
+        "required_anchor": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["display_value"],
+          "properties": {
+            "display_value": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Canonical string representation of the required time-index anchor, intended only for display. Never an indication that the browser should parse or validate it."
+            }
+          }
+        },
+        "continuity": {
+          "type": "string",
+          "const": "consecutive_by_frequency",
+          "description": "Bounded presentation vocabulary indicating supplied observations must be consecutive by the governed frequency. Never a copy of a runtime field name."
         }
       }
     },
@@ -145,6 +178,11 @@
           "type": "boolean",
           "const": false,
           "description": "Fixed: the forecast horizon is never user-editable."
+        },
+        "origin_behavior": {
+          "type": "string",
+          "const": "starts_after_last_history_observation",
+          "description": "Project Spec S0266: optional, bounded presentation-only indication that the forecast starts after the last validated/supplied history observation. Absent on historical public-contract 2.0.0 documents materialized before S0266."
         }
       }
     },

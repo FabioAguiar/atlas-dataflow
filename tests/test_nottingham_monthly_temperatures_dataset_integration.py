@@ -401,6 +401,36 @@ def test_notebook_projects_runtime_public_contracts_through_generic_forecasting_
     assert 'assert public_contract["forecast"]["horizon_user_editable"] is False' in code
 
 
+def test_notebook_asserts_s0266_public_history_guidance_from_governed_variables():
+    """Project Spec S0266: the notebook must assert the newly derived
+    Nottingham public contract's safe presentation guidance, sourced from
+    the already-governed execution_contract.history_input_policy and
+    preparation_recipe partition boundary -- never a Nottingham-specific
+    literal ("1", "1938-12") authored directly into the assertion, and never
+    bypassing pipeline/derive_projections.py to construct input_guidance
+    itself."""
+    code = _source("code")
+    assert 'assert public_contract["history_series"]["input_guidance"] == {' in code
+    assert (
+        '"minimum_observation_count": execution_contract["history_input_policy"]'
+        '["minimum_observation_count"],' in code
+    )
+    assert (
+        '"display_value": preparation_recipe["partitions"]["development"]["end_index_value"],'
+        in code
+    )
+    assert '"continuity": "consecutive_by_frequency",' in code
+    assert (
+        'assert public_contract["forecast"]["origin_behavior"] == '
+        '"starts_after_last_history_observation"' in code
+    )
+    # The notebook must not author input_guidance/origin_behavior itself as
+    # a dict literal -- it only asserts what the generic projection
+    # pipeline produced.
+    assert '"input_guidance":' not in code
+    assert '"origin_behavior":' not in code
+
+
 def test_notebook_dataset_context_declares_exactly_one_nottingham_predict_view():
     code = _source("code")
     assert '"predict_views": [nottingham_predict_view],' in code

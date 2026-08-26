@@ -10,6 +10,8 @@
   "index_value_kind": "calendar_period",
   "frequency": "monthly",
   "forecast_horizon": 12,
+  "minimum_observation_count": 1,
+  "minimum_observation_count_source": "execution_contract.history_input_policy",
   "minimum_history_required_through": "1938-12",
   "source_exogenous_predictors": "forbidden"
 }

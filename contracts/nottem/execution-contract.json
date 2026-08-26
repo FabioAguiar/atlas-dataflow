@@ -68,5 +68,14 @@
       "no_retuning_after_final_holdout": true
     }
   },
+  "history_input_policy": {
+    "schema_version": "univariate-forecasting-history-input-policy.v1",
+    "minimum_observation_count": 1,
+    "required_anchor": {
+      "presence": "required",
+      "source": "development_end"
+    },
+    "forecast_origin_source": "last_validated_history_index"
+  },
   "random_seed": 42
 }

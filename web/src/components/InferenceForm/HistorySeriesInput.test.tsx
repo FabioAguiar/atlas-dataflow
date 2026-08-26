@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import HistorySeriesInput, {
   type ForecastGuidance,
+  type HistoryInputGuidance,
   type HistorySeriesGuidance,
 } from "./HistorySeriesInput";
 import type { FieldHint } from "./InferenceForm";
@@ -328,5 +329,143 @@ describe("HistorySeriesInput (Project Spec S0250)", () => {
 
     expect((screen.getByLabelText("Period") as HTMLInputElement).value).toBe("");
     expect(onRowsChangeAfterRemount).toHaveBeenLastCalledWith([{ timeIndexValue: "", targetValue: "" }]);
+  });
+});
+
+// Project Spec S0266: optional bounded history-input guidance and forecast
+// origin-behavior presentation. Exercised independently of the S0250
+// coverage above, which must remain unaffected by a legacy contract with no
+// guidance.
+describe("HistorySeriesInput history-input guidance (Project Spec S0266)", () => {
+  const inputGuidance: HistoryInputGuidance = {
+    minimum_observation_count: 1,
+    required_anchor: { display_value: "1938-12" },
+    continuity: "consecutive_by_frequency",
+  };
+
+  const historySeriesWithGuidance: HistorySeriesGuidance = {
+    ...historySeries,
+    input_guidance: inputGuidance,
+  };
+
+  const forecastWithOriginBehavior: ForecastGuidance = {
+    ...forecast,
+    origin_behavior: "starts_after_last_history_observation",
+  };
+
+  it("renders exactly the existing usable form for a legacy contract without guidance", () => {
+    render(
+      <HistorySeriesInput
+        historySeries={historySeries}
+        forecast={forecast}
+        hintMap={emptyHintMap()}
+        onRowsChange={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByText("Minimum observations")).not.toBeInTheDocument();
+    expect(screen.queryByText("Required history anchor")).not.toBeInTheDocument();
+    expect(screen.queryByText(/consecutively/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/starts after the last valid history observation/)).not.toBeInTheDocument();
+    // Existing Frequency/Forecast horizon guidance is unaffected.
+    expect(screen.getByText("Monthly")).toBeInTheDocument();
+    expect(screen.getByText("12")).toBeInTheDocument();
+  });
+
+  it("renders the minimum observation count dynamically", () => {
+    render(
+      <HistorySeriesInput
+        historySeries={historySeriesWithGuidance}
+        forecast={forecast}
+        hintMap={emptyHintMap()}
+        onRowsChange={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Minimum observations")).toBeInTheDocument();
+    expect(screen.getByText("1")).toBeInTheDocument();
+  });
+
+  it("renders the required anchor display value dynamically", () => {
+    render(
+      <HistorySeriesInput
+        historySeries={historySeriesWithGuidance}
+        forecast={forecast}
+        hintMap={emptyHintMap()}
+        onRowsChange={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Required history anchor")).toBeInTheDocument();
+    expect(screen.getByText("1938-12")).toBeInTheDocument();
+  });
+
+  it("renders a consecutive-by-frequency explanation using the contract frequency, with no dataset-specific literal", () => {
+    render(
+      <HistorySeriesInput
+        historySeries={historySeriesWithGuidance}
+        forecast={forecast}
+        hintMap={emptyHintMap()}
+        onRowsChange={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText(/consecutively at the governed Monthly frequency/)).toBeInTheDocument();
+  });
+
+  it("renders the after-last-observation forecast origin explanation when declared", () => {
+    render(
+      <HistorySeriesInput
+        historySeries={historySeries}
+        forecast={forecastWithOriginBehavior}
+        hintMap={emptyHintMap()}
+        onRowsChange={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("The forecast starts after the last valid history observation.")).toBeInTheDocument();
+  });
+
+  it("does not render the forecast origin explanation when origin_behavior is absent", () => {
+    render(
+      <HistorySeriesInput
+        historySeries={historySeries}
+        forecast={forecast}
+        hintMap={emptyHintMap()}
+        onRowsChange={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByText(/starts after the last valid history observation/)).not.toBeInTheDocument();
+  });
+
+  it("still renders exactly one initial row and never auto-inserts/sorts/gap-fills when guidance is present", () => {
+    const onRowsChange = vi.fn();
+    render(
+      <HistorySeriesInput
+        historySeries={historySeriesWithGuidance}
+        forecast={forecastWithOriginBehavior}
+        hintMap={emptyHintMap()}
+        onRowsChange={onRowsChange}
+      />,
+    );
+
+    expect(screen.getAllByLabelText("Period")).toHaveLength(1);
+    expect(onRowsChange).toHaveBeenLastCalledWith([{ timeIndexValue: "", targetValue: "" }]);
+  });
+
+  it("never renders a local minimum-count/anchor validation control -- guidance is display-only", () => {
+    render(
+      <HistorySeriesInput
+        historySeries={historySeriesWithGuidance}
+        forecast={forecastWithOriginBehavior}
+        hintMap={emptyHintMap()}
+        onRowsChange={vi.fn()}
+      />,
+    );
+
+    // Exactly two inputs exist for the single initial row -- time index and
+    // target -- guidance never adds an editable/validating control.
+    expect(document.querySelectorAll("input")).toHaveLength(2);
   });
 });

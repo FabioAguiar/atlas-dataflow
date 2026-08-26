@@ -3,7 +3,7 @@
   "result_kind": "promotion_result",
   "candidate_identity": {
     "dataset_slug": "nottem",
-    "release_id": "release-20260824t163251z",
+    "release_id": "release-20260826t123355z",
     "release_version": "1.0.0-rc.1"
   },
   "promotion_outcome": "promoted",
@@ -16,10 +16,10 @@
   },
   "registry_update_record": {
     "update_applied": true,
-    "new_active_release_id": "release-20260824t163251z",
+    "new_active_release_id": "release-20260826t123355z",
     "previous_active_release_id": null,
     "previous_release_preserved": true,
-    "promoted_at": "2026-08-24T16:33:12Z",
+    "promoted_at": "2026-08-26T12:35:17Z",
     "registry_action": "created"
   },
   "evidence_safety": {

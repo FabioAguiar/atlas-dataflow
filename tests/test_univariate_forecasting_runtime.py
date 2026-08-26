@@ -486,6 +486,126 @@ def test_v2_projection_history_input_policy_wrong_forecast_origin_source_fails_c
         derive(contract_path, tmp_path / "out", repo_root=REPO_ROOT, preparation_recipe_path=recipe_path)
 
 
+# ---------------------------------------------------------------------------
+# Project Spec S0266: public-contract history-guidance/origin-behavior
+# projection
+# ---------------------------------------------------------------------------
+
+
+def _valid_public_v2_document_with_guidance() -> dict:
+    doc = _valid_public_v2_document()
+    doc["history_series"] = dict(doc["history_series"])
+    doc["history_series"]["input_guidance"] = {
+        "minimum_observation_count": 1,
+        "required_anchor": {"display_value": "19"},
+        "continuity": "consecutive_by_frequency",
+    }
+    doc["forecast"] = dict(doc["forecast"])
+    doc["forecast"]["origin_behavior"] = "starts_after_last_history_observation"
+    return doc
+
+
+def test_public_contract_v2_historical_without_guidance_remains_valid(public_validator):
+    """Acceptance criterion 5: historical public-contract 2.0.0 without
+    input_guidance/origin_behavior remains valid."""
+    assert not list(public_validator.iter_errors(_valid_public_v2_document()))
+
+
+def test_public_contract_v2_with_valid_guidance_is_schema_valid(public_validator):
+    assert not list(public_validator.iter_errors(_valid_public_v2_document_with_guidance()))
+
+
+def test_public_contract_v2_guidance_rejects_unknown_property(public_validator):
+    doc = _valid_public_v2_document_with_guidance()
+    doc["history_series"]["input_guidance"]["extra_property"] = "x"
+    assert list(public_validator.iter_errors(doc))
+
+
+def test_public_contract_v2_required_anchor_rejects_source_property(public_validator):
+    doc = _valid_public_v2_document_with_guidance()
+    doc["history_series"]["input_guidance"]["required_anchor"]["source"] = "development_end"
+    assert list(public_validator.iter_errors(doc))
+
+
+def test_public_contract_v2_guidance_rejects_non_positive_minimum_observation_count(public_validator):
+    doc = _valid_public_v2_document_with_guidance()
+    doc["history_series"]["input_guidance"]["minimum_observation_count"] = 0
+    assert list(public_validator.iter_errors(doc))
+
+
+def test_public_contract_v2_guidance_rejects_non_governed_continuity_value(public_validator):
+    doc = _valid_public_v2_document_with_guidance()
+    doc["history_series"]["input_guidance"]["continuity"] = "gap_filled"
+    assert list(public_validator.iter_errors(doc))
+
+
+def test_public_contract_v2_forecast_rejects_non_governed_origin_behavior(public_validator):
+    doc = _valid_public_v2_document_with_guidance()
+    doc["forecast"]["origin_behavior"] = "starts_at_first_history_observation"
+    assert list(public_validator.iter_errors(doc))
+
+
+def test_v2_projection_without_history_input_policy_emits_no_public_guidance(tmp_path):
+    """Historical execution_contract.v2 without history_input_policy must
+    preserve the existing public-contract v2 output shape -- no
+    input_guidance, no origin_behavior."""
+    contract_path = _write_json(tmp_path / "execution-contract.json", _execution_contract_v2())
+    recipe_path = _write_json(tmp_path / "preparation-recipe.json", _preparation_recipe_v2())
+    out_dir = tmp_path / "out"
+
+    derive(contract_path, out_dir, repo_root=REPO_ROOT, preparation_recipe_path=recipe_path)
+
+    public_contract = json.loads((out_dir / "public-contract.json").read_text())
+    assert "input_guidance" not in public_contract["history_series"]
+    assert "origin_behavior" not in public_contract["forecast"]
+
+
+def test_v2_projection_with_history_input_policy_emits_public_guidance(tmp_path):
+    contract = _execution_contract_v2(
+        history_input_policy=_history_input_policy(minimum_observation_count=3)
+    )
+    contract_path = _write_json(tmp_path / "execution-contract.json", contract)
+    recipe_path = _write_json(tmp_path / "preparation-recipe.json", _preparation_recipe_v2())
+    out_dir = tmp_path / "out"
+
+    derive(contract_path, out_dir, repo_root=REPO_ROOT, preparation_recipe_path=recipe_path)
+
+    public_contract = json.loads((out_dir / "public-contract.json").read_text())
+    assert public_contract["history_series"]["input_guidance"] == {
+        "minimum_observation_count": 3,
+        "required_anchor": {"display_value": "19"},
+        "continuity": "consecutive_by_frequency",
+    }
+    assert public_contract["forecast"]["origin_behavior"] == "starts_after_last_history_observation"
+
+
+def test_v2_projection_public_guidance_never_copies_execution_policy_verbatim(tmp_path):
+    contract = _execution_contract_v2(history_input_policy=_history_input_policy())
+    contract_path = _write_json(tmp_path / "execution-contract.json", contract)
+    recipe_path = _write_json(tmp_path / "preparation-recipe.json", _preparation_recipe_v2())
+    out_dir = tmp_path / "out"
+
+    derive(contract_path, out_dir, repo_root=REPO_ROOT, preparation_recipe_path=recipe_path)
+
+    public_contract = json.loads((out_dir / "public-contract.json").read_text())
+    guidance = public_contract["history_series"]["input_guidance"]
+    assert "source" not in guidance["required_anchor"]
+    assert "presence" not in guidance["required_anchor"]
+    assert "forecast_origin_source" not in public_contract["forecast"]
+    assert "schema_version" not in guidance
+    serialized = json.dumps(public_contract)
+    for forbidden in (
+        "development_end",
+        "required_anchor.source",
+        "training_scope",
+        "minimum_history_required_through",
+        "frequency_contiguous_required",
+        "uniqueness_required",
+        "ordering",
+    ):
+        assert forbidden not in serialized
+
+
 def test_historical_v1_projection_does_not_require_preparation_recipe(tmp_path):
     execution_contract_v1 = {
         "contract_version": "execution_contract.v1",

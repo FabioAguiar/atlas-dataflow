@@ -2183,3 +2183,201 @@ describe("InferenceForm univariate-forecasting dispatch (Project Spec S0250)", (
     expect(executeInference).not.toHaveBeenCalled();
   });
 });
+
+// Project Spec S0266: bounded contract-derived explanation for a
+// forecasting_minimum_history_not_met INVALID_PAYLOAD outcome, sourced only
+// from the active forecasting public contract's S0266 input_guidance --
+// never the backend's raw message. Exercised independently of the S0250
+// forecasting dispatch coverage above.
+describe("InferenceForm forecasting minimum-history contract-derived error message (Project Spec S0266)", () => {
+  const forecastingContractWithGuidance: ForecastingContractPayload = {
+    schema_version: "2.0.0",
+    problem_type: "univariate_forecasting",
+    input_kind: "history_series",
+    history_series: {
+      time_index_field: { name: "period", label: "Period", value_kind: "calendar_period", display_order: 1 },
+      target_field: { name: "passengers", label: "Passengers", value_kind: "number", display_order: 2 },
+      frequency: "Monthly",
+      input_guidance: {
+        minimum_observation_count: 1,
+        required_anchor: { display_value: "1938-12" },
+        continuity: "consecutive_by_frequency",
+      },
+    },
+    forecast: {
+      forecast_horizon: 3,
+      horizon_user_editable: false,
+      origin_behavior: "starts_after_last_history_observation",
+    },
+  };
+
+  const forecastingContractWithoutGuidance: ForecastingContractPayload = {
+    schema_version: "2.0.0",
+    problem_type: "univariate_forecasting",
+    input_kind: "history_series",
+    history_series: {
+      time_index_field: { name: "period", label: "Period", value_kind: "calendar_period", display_order: 1 },
+      target_field: { name: "passengers", label: "Passengers", value_kind: "number", display_order: 2 },
+      frequency: "Monthly",
+    },
+    forecast: { forecast_horizon: 3, horizon_user_editable: false },
+  };
+
+  const availableForecastingResultContract: ResultContract = {
+    status: "available",
+    semantics: {
+      schema_version: "univariate-forecasting-result-semantics.v1",
+      problem_type: "univariate_forecasting",
+      result_schema_version: "univariate-forecasting-result.v1",
+      primary_output: "forecast_series",
+      output_structure: "ordered_forecast_points",
+      forecast_value_kind: "continuous_numeric",
+      forecast_count_source: "forecast_horizon",
+      model_descriptor: { model_family: "deterministic_seasonal_trend_ols", display_name: "Seasonal Trend" },
+    },
+  };
+
+  const forecastingPresentation: UnivariateForecastingResultPresentation = {
+    schema_version: "univariate-forecasting-result-presentation.v1",
+    forecast_series_label: "Forecast",
+    future_time_index_label: "Period",
+    forecast_value_label: "Passengers",
+    model_section_label: "Model",
+    decimal_places: 1,
+  };
+
+  function fillFirstRow(periodValue: string, passengersValue: string) {
+    fireEvent.change(screen.getAllByLabelText("Period")[0], { target: { value: periodValue } });
+    fireEvent.change(screen.getAllByLabelText("Passengers")[0], { target: { value: passengersValue } });
+  }
+
+  it("shows a bounded specific message for forecasting_minimum_history_not_met when valid guidance is present", async () => {
+    const executeInference = vi.fn(
+      async (): Promise<InferenceExecutionResult> => ({
+        ok: false,
+        errorCode: "INVALID_PAYLOAD",
+        validationIssues: [{ field: "history", violation: "forecasting_minimum_history_not_met" }],
+      }),
+    );
+
+    render(
+      <InferenceForm
+        contract={forecastingContractWithGuidance}
+        slug={slug}
+        resultContract={availableForecastingResultContract}
+        resultPresentation={forecastingPresentation}
+        executeInference={executeInference}
+      />,
+    );
+
+    fillFirstRow("2026-01", "100");
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "History must include 1938-12 and contain at least 1 observation(s).",
+    );
+  });
+
+  it("uses only public-contract values in the message, never the raw backend message text", async () => {
+    const executeInference = vi.fn(
+      async (): Promise<InferenceExecutionResult> => ({
+        ok: false,
+        errorCode: "INVALID_PAYLOAD",
+        validationIssues: [{ field: "history", violation: "forecasting_minimum_history_not_met" }],
+      }),
+    );
+
+    render(
+      <InferenceForm
+        contract={forecastingContractWithGuidance}
+        slug={slug}
+        resultContract={availableForecastingResultContract}
+        resultPresentation={forecastingPresentation}
+        executeInference={executeInference}
+      />,
+    );
+
+    fillFirstRow("2026-01", "100");
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).not.toHaveTextContent(/development|training|holdout|fold/i);
+  });
+
+  it("falls back to the existing generic INVALID_PAYLOAD message for a legacy contract without guidance", async () => {
+    const executeInference = vi.fn(
+      async (): Promise<InferenceExecutionResult> => ({
+        ok: false,
+        errorCode: "INVALID_PAYLOAD",
+        validationIssues: [{ field: "history", violation: "forecasting_minimum_history_not_met" }],
+      }),
+    );
+
+    render(
+      <InferenceForm
+        contract={forecastingContractWithoutGuidance}
+        slug={slug}
+        resultContract={availableForecastingResultContract}
+        resultPresentation={forecastingPresentation}
+        executeInference={executeInference}
+      />,
+    );
+
+    fillFirstRow("2026-01", "100");
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Some inputs are invalid. Please check your answers and try again.",
+    );
+  });
+
+  it("preserves the existing generic message for another INVALID_PAYLOAD violation even when guidance is present", async () => {
+    const executeInference = vi.fn(
+      async (): Promise<InferenceExecutionResult> => ({
+        ok: false,
+        errorCode: "INVALID_PAYLOAD",
+        validationIssues: [{ field: "history[0].period", violation: "forecasting_invalid_time_index" }],
+      }),
+    );
+
+    render(
+      <InferenceForm
+        contract={forecastingContractWithGuidance}
+        slug={slug}
+        resultContract={availableForecastingResultContract}
+        resultPresentation={forecastingPresentation}
+        executeInference={executeInference}
+      />,
+    );
+
+    fillFirstRow("2026-01", "100");
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Some inputs are invalid. Please check your answers and try again.",
+    );
+  });
+
+  it("preserves the existing generic message when no validationIssues accompany INVALID_PAYLOAD", async () => {
+    const executeInference = vi.fn(
+      async (): Promise<InferenceExecutionResult> => ({ ok: false, errorCode: "INVALID_PAYLOAD" }),
+    );
+
+    render(
+      <InferenceForm
+        contract={forecastingContractWithGuidance}
+        slug={slug}
+        resultContract={availableForecastingResultContract}
+        resultPresentation={forecastingPresentation}
+        executeInference={executeInference}
+      />,
+    );
+
+    fillFirstRow("2026-01", "100");
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Some inputs are invalid. Please check your answers and try again.",
+    );
+  });
+});

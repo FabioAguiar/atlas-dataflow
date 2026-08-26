@@ -487,29 +487,47 @@ def _derive_forecasting_projection(
             [f"derived forecasting runtime contract failed schema validation: {m}" for m in msgs]
         )
 
+    public_history_series: dict[str, Any] = {
+        "time_index_field": {
+            "name": time_index_field_name,
+            "label": _fresh_label(time_index_field_name),
+            "value_kind": index_value_kind,
+            "display_order": 1,
+        },
+        "target_field": {
+            "name": target_field_name,
+            "label": _fresh_label(target_field_name),
+            "value_kind": "number",
+            "display_order": 2,
+        },
+        "frequency": frequency,
+    }
+    public_forecast: dict[str, Any] = {
+        "forecast_horizon": forecast_horizon,
+        "horizon_user_editable": False,
+    }
+
+    # Project Spec S0266: a newly governed history_input_policy authorizes a
+    # bounded, presentation-only public projection of the same governed
+    # facts already resolved above -- never a copy of history_input_policy
+    # itself, never required_anchor.source/development_end, and never a
+    # runtime-only field name. Historical execution contracts (no policy)
+    # emit no input_guidance/origin_behavior, preserving the exact pre-S0266
+    # public-contract shape.
+    if history_input_policy is not None:
+        public_history_series["input_guidance"] = {
+            "minimum_observation_count": minimum_observation_count,
+            "required_anchor": {"display_value": development_end},
+            "continuity": "consecutive_by_frequency",
+        }
+        public_forecast["origin_behavior"] = "starts_after_last_history_observation"
+
     public_contract: dict[str, Any] = {
         "schema_version": FORECASTING_PUBLIC_CONTRACT_SCHEMA_VERSION,
         "problem_type": FORECASTING_PROBLEM_TYPE,
         "input_kind": "history_series",
-        "history_series": {
-            "time_index_field": {
-                "name": time_index_field_name,
-                "label": _fresh_label(time_index_field_name),
-                "value_kind": index_value_kind,
-                "display_order": 1,
-            },
-            "target_field": {
-                "name": target_field_name,
-                "label": _fresh_label(target_field_name),
-                "value_kind": "number",
-                "display_order": 2,
-            },
-            "frequency": frequency,
-        },
-        "forecast": {
-            "forecast_horizon": forecast_horizon,
-            "horizon_user_editable": False,
-        },
+        "history_series": public_history_series,
+        "forecast": public_forecast,
     }
 
     public_schema = _load_json(public_schema_path)

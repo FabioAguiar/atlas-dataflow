@@ -3,7 +3,7 @@
   "validation_kind": "release_candidate_cross_artifact_consistency",
   "candidate_identity": {
     "dataset_slug": "nottem",
-    "release_id": "release-20260824t163251z",
+    "release_id": "release-20260826t123355z",
     "release_version": "1.0.0-rc.1"
   },
   "source_candidate": {
@@ -21,7 +21,7 @@
       "manifest_input",
       "candidate_metadata"
     ],
-    "candidate_reference": "release-candidate-v1:nottem/release-20260824t163251z"
+    "candidate_reference": "release-candidate-v1:nottem/release-20260826t123355z"
   },
   "validation_outcome": "accepted",
   "required_artifact_role_results": {

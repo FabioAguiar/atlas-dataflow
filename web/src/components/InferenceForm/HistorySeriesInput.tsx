@@ -23,15 +23,35 @@ export type HistoryTargetField = {
   display_order: number;
 };
 
+/**
+ * Project Spec S0266: presentation-safe projection of a governed S0265
+ * history-input policy. Mirrors public_history_input_guidance_v2 exactly --
+ * never carries required_anchor.source, development_end, training_scope, or
+ * any other runtime/training-only field name or value. Optional: absent on
+ * a legacy public-contract v2 document that predates S0266.
+ */
+export type HistoryInputGuidance = {
+  minimum_observation_count: number;
+  required_anchor: { display_value: string };
+  continuity: "consecutive_by_frequency";
+};
+
 export type HistorySeriesGuidance = {
   time_index_field: HistoryTemporalField;
   target_field: HistoryTargetField;
   frequency: string;
+  input_guidance?: HistoryInputGuidance;
 };
 
 export type ForecastGuidance = {
   forecast_horizon: number;
   horizon_user_editable: false;
+  /**
+   * Project Spec S0266: optional bounded presentation indication that the
+   * forecast starts after the last validated/supplied history observation.
+   * Absent on a legacy public-contract v2 document that predates S0266.
+   */
+  origin_behavior?: "starts_after_last_history_observation";
 };
 
 /**
@@ -171,6 +191,30 @@ export default function HistorySeriesInput({ historySeries, forecast, hintMap, o
           <span className="history-series-input__guidance-value">{forecast.forecast_horizon}</span>
           <span className="history-series-input__guidance-note"> (fixed, not editable)</span>
         </p>
+        {historySeries.input_guidance && (
+          <>
+            <p className="history-series-input__guidance-item">
+              <span className="history-series-input__guidance-label">Minimum observations</span>
+              <span className="history-series-input__guidance-value">
+                {historySeries.input_guidance.minimum_observation_count}
+              </span>
+            </p>
+            <p className="history-series-input__guidance-item">
+              <span className="history-series-input__guidance-label">Required history anchor</span>
+              <span className="history-series-input__guidance-value">
+                {historySeries.input_guidance.required_anchor.display_value}
+              </span>
+            </p>
+            <p className="history-series-input__guidance-note">
+              Add later observations consecutively at the governed {historySeries.frequency} frequency.
+            </p>
+          </>
+        )}
+        {forecast.origin_behavior === "starts_after_last_history_observation" && (
+          <p className="history-series-input__guidance-note">
+            The forecast starts after the last valid history observation.
+          </p>
+        )}
       </div>
 
       {(timeCopy || targetCopy) && (

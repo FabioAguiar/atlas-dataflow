@@ -211,6 +211,40 @@ function mapErrorCode(errorCode: string | undefined): string {
 }
 
 /**
+ * Project Spec S0266: for a forecasting INVALID_PAYLOAD failure whose
+ * normalized validationIssues include forecasting_minimum_history_not_met,
+ * and whose active forecasting public contract carries valid S0266
+ * input_guidance, resolves a bounded, contract-derived explanation built
+ * only from public-contract presentation values -- never the backend's raw
+ * message, training/development terminology, runtime diagnostics, or
+ * submitted values. The backend violation is what authorizes this
+ * explanation; the browser never infers payload invalidity on its own.
+ * Falls back to the existing safe generic INVALID_PAYLOAD message for a
+ * legacy contract without guidance, a malformed guidance shape, a
+ * non-forecasting contract, or any other violation.
+ */
+function resolveInvalidPayloadMessage(
+  errorCode: string | undefined,
+  validationIssues: InferenceValidationIssue[] | undefined,
+  contract: ContractPayload,
+): string {
+  const fallback = mapErrorCode(errorCode);
+  if (errorCode !== "INVALID_PAYLOAD" || !isForecastingContractPayload(contract)) {
+    return fallback;
+  }
+  const guidance = contract.history_series.input_guidance;
+  if (!guidance) return fallback;
+  const hasMinimumHistoryViolation = validationIssues?.some(
+    (issue) => issue.violation === "forecasting_minimum_history_not_met",
+  );
+  if (!hasMinimumHistoryViolation) return fallback;
+  return (
+    `History must include ${guidance.required_anchor.display_value} and contain ` +
+    `at least ${guidance.minimum_observation_count} observation(s).`
+  );
+}
+
+/**
  * Project Spec S0147: the exhaustive allowlisted violation vocabulary the
  * shared governed inference boundary can report for an INVALID_PAYLOAD
  * response. An unrecognized value is never retained -- see
@@ -933,7 +967,10 @@ export default function InferenceForm({
         onLifecycleEvent?.({ type: "execution_failed" });
       }
     } else {
-      setSubmission({ status: "error", message: mapErrorCode(outcome.errorCode) });
+      setSubmission({
+        status: "error",
+        message: resolveInvalidPayloadMessage(outcome.errorCode, outcome.validationIssues, contract),
+      });
       if (outcome.errorCode === "INVALID_PAYLOAD") {
         const issues = resolveIssues(outcome.validationIssues);
         onLifecycleEvent?.(issues ? { type: "validation_failed", issues } : { type: "validation_failed" });

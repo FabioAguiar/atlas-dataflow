@@ -39,6 +39,18 @@ export type DatasetDetailSurfaceProps = {
   // alongside this, and its own targetDistributionContent/
   // featureImportanceContent are omitted by the caller.
   forecastingDiagnosticsContent?: ReactNode;
+  // Project Spec S0272: an optional, bounded final-holdout forecast-evaluation
+  // section (evaluation context + development/final-holdout boundary +
+  // Forecast vs Actual chart), rendered after Problem summary and before the
+  // primary analytics grid for a valid analytical-visualizations.v6
+  // forecasting release. Omitted entirely (never a placeholder) keeps
+  // classification/regression and historical v4 forecasting Overview layouts
+  // exactly as they are today. This stays a separate responsibility from
+  // performanceContent (the independent metric authority) and
+  // forecastingDiagnosticsContent (the three secondary diagnostics below the
+  // grid). This surface never parses visualizations or a contract itself --
+  // the caller decides whether to supply the node.
+  forecastingEvaluationContent?: ReactNode;
   inferenceContent: ReactNode;
   // Project Spec S0271: whether this shared public-style surface exposes the
   // Inference tab. Optional, defaults to true for compatibility. The value is
@@ -69,6 +81,7 @@ export default function DatasetDetailSurface({
   confusionMatrixContent,
   regressionDiagnosticsContent,
   forecastingDiagnosticsContent,
+  forecastingEvaluationContent,
   inferenceContent,
   inferenceAvailable = true,
   documentationContent,
@@ -82,6 +95,10 @@ export default function DatasetDetailSurface({
           <h3>{problemSummaryTitle?.trim() || "Problem summary"}</h3>
           <p>{problemSummaryBody}</p>
         </Card>
+      )}
+
+      {forecastingEvaluationContent && (
+        <div className="dataset-detail-overview__forecasting-evaluation">{forecastingEvaluationContent}</div>
       )}
 
       <div className="dataset-detail-overview__analytics">

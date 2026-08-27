@@ -7,7 +7,7 @@ import DatasetDetailSurface, {
 import DatasetDocumentation from "../components/DatasetDetail/DatasetDocumentation";
 import ConfusionMatrix from "../components/DatasetDetail/ConfusionMatrix";
 import FeatureImportance from "../components/DatasetDetail/FeatureImportance";
-import ForecastingDiagnostics from "../components/DatasetDetail/ForecastingDiagnostics";
+import ForecastingDiagnostics, { ForecastingEvaluationOverview } from "../components/DatasetDetail/ForecastingDiagnostics";
 import PerformanceSummary, { type PerformanceFocus } from "../components/DatasetDetail/PerformanceSummary";
 import RegressionDiagnostics from "../components/DatasetDetail/RegressionDiagnostics";
 import TargetDistribution, { type VisualizationsPayload } from "../components/DatasetDetail/TargetDistribution";
@@ -605,6 +605,21 @@ export default function DatasetPage() {
       <ForecastingDiagnostics visualizations={visualizationsState.data} />
     ) : null;
 
+  // Project Spec S0272: the final-holdout forecast-evaluation overview is
+  // built from the same single, already-loaded visualizations payload and the
+  // same release-bound forecasting result contract authority as
+  // ForecastingDiagnostics above -- never a second request, never gated on
+  // S0271 public inference availability. The renderer owns the bounded v4/v6
+  // validation; the nullish guard here only keeps historical v4 releases
+  // (which carry no forecasting_evaluation field) DOM-identical to today by
+  // omitting the shared-surface slot entirely.
+  const forecastingEvaluationContent =
+    visualizationsState.status === "ready" &&
+    isForecastingRelease &&
+    visualizationsState.data.forecasting_evaluation != null ? (
+      <ForecastingEvaluationOverview visualizations={visualizationsState.data} />
+    ) : null;
+
   // Project Spec S0196: the public Documentation tab renders only the
   // published snapshot's documentation (context.documentation), through the
   // same shared renderer the Admin Documentation tab and Live Preview use --
@@ -632,6 +647,7 @@ export default function DatasetPage() {
           documentationContent={documentationContent}
           featureImportanceContent={featureImportanceContent}
           forecastingDiagnosticsContent={forecastingDiagnosticsContent}
+          forecastingEvaluationContent={forecastingEvaluationContent}
           inferenceAvailable={publicPredictionSurfaceAvailable}
           inferenceContent={inferenceContent}
           metadata={metadataItems}

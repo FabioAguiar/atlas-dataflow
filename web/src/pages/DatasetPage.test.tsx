@@ -2970,6 +2970,241 @@ describe("DatasetPage univariate-forecasting diagnostics (Project Spec S0248)", 
   });
 });
 
+// Project Spec S0272: the final-holdout forecast-evaluation Overview is
+// driven from the same single /visualizations payload and the same
+// release-bound forecasting result contract as ForecastingDiagnostics, using
+// bounded synthetic S0270-shaped public projection fixtures (never the real
+// Nottingham 1939 series, no hard-coded month arithmetic).
+describe("DatasetPage forecasting final-holdout evaluation overview (Project Spec S0272)", () => {
+  const forecastingResultContractAvailable = {
+    status: "available" as const,
+    semantics: {
+      schema_version: "univariate-forecasting-result-semantics.v1" as const,
+      problem_type: "univariate_forecasting" as const,
+      result_schema_version: "univariate-forecasting-result.v1" as const,
+      primary_output: "forecast_series" as const,
+      output_structure: "ordered_forecast_points" as const,
+      forecast_value_kind: "continuous_numeric" as const,
+      forecast_count_source: "forecast_horizon" as const,
+      model_descriptor: { model_family: "deterministic_seasonal_trend_ols", display_name: "Seasonal Trend Model" },
+    },
+  };
+
+  const forecastingMetricsPayload = { evaluation: { metrics: { mae: 3.21, rmse: 4.55 } } };
+
+  const forecastingDiagnostics = {
+    forecast_horizon: 4,
+    frequency: "synthetic-step",
+    seasonal_profile: {
+      seasonal_period: 4,
+      points: [
+        { season_position: 0, mean_target: 10.0, observation_count: 5 },
+        { season_position: 1, mean_target: 12.0, observation_count: 5 },
+        { season_position: 2, mean_target: 9.0, observation_count: 5 },
+        { season_position: 3, mean_target: 13.0, observation_count: 5 },
+      ],
+    },
+    backtesting_fold_metric: {
+      metric_id: "mae",
+      direction: "lower_is_better",
+      points: [
+        { fold_index: 1, forecast_origin: "11", value: 1.2 },
+        { fold_index: 2, forecast_origin: "15", value: 0.9 },
+      ],
+    },
+    horizon_mae: {
+      points: [
+        { horizon_step: 1, mae: 0.5 },
+        { horizon_step: 2, mae: 0.8 },
+        { horizon_step: 3, mae: 1.1 },
+        { horizon_step: 4, mae: 1.4 },
+      ],
+    },
+  };
+
+  // Bounded synthetic v6 public projection matching the S0270 API shape
+  // (api/public_visualizations_loader.py::_bounded_forecasting_evaluation),
+  // not the internal analytical-visualizations artifact.
+  const v6VisualizationsPayload = {
+    charts: [],
+    dataset_statistics: { instance_count: 28, development_observations: 24, final_holdout_observations: 4 },
+    forecasting_diagnostics: forecastingDiagnostics,
+    forecasting_evaluation: {
+      index_value_kind: "ordinal_time",
+      frequency: "synthetic-step",
+      development_boundary: { start_index: "T-024", end_index: "T-001", observation_count: 24 },
+      final_holdout_boundary: { start_index: "H-01", end_index: "H-04", observation_count: 4 },
+      evaluation: {
+        split_name: "final_holdout",
+        evaluation_count: 1,
+        model_frozen_before_open: true,
+        forecast_generated_before_target_open: true,
+      },
+      points: [
+        { time_index: "H-01", actual: 10.5, forecast: 11.2 },
+        { time_index: "H-02", actual: 12.1, forecast: 11.8 },
+        { time_index: "H-03", actual: 9.7, forecast: 10.4 },
+        { time_index: "H-04", actual: 13.3, forecast: 12.6 },
+      ],
+    },
+  };
+
+  const v4VisualizationsPayload = {
+    charts: [],
+    dataset_statistics: { instance_count: 28 },
+    forecasting_diagnostics: forecastingDiagnostics,
+  };
+
+  function installForecastingEvaluationFetchMock(
+    visualizations: Record<string, unknown>,
+    context: ContextPayloadFixture = { ...contextPayload, problem_type: "univariate_forecasting" },
+  ) {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith(`/datasets/${slug}/context`)) {
+        return jsonResponse({ dataset_slug: slug, context });
+      }
+      if (url.endsWith(`/datasets/${slug}/metrics`)) {
+        return jsonResponse({ dataset_slug: slug, metrics: forecastingMetricsPayload });
+      }
+      if (url.endsWith(`/datasets/${slug}/visualizations`)) {
+        return jsonResponse({ dataset_slug: slug, visualizations });
+      }
+      if (url.endsWith(`/datasets/${slug}/contract`)) {
+        return jsonResponse({
+          dataset_slug: slug,
+          contract: contractPayload,
+          result_contract: forecastingResultContractAvailable,
+        });
+      }
+      if (url.endsWith(`/datasets/${slug}`)) {
+        return jsonResponse(datasetMetadata);
+      }
+      return jsonResponse({}, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  it("renders the full evaluation story before Performance for a valid v6 projection", async () => {
+    const fetchMock = installForecastingEvaluationFetchMock(v6VisualizationsPayload);
+    const { container } = renderDatasetPage();
+
+    await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
+    expect(await screen.findByRole("heading", { name: "Forecast Evaluation Overview" })).toBeInTheDocument();
+
+    // Governed frozen/pre-target-open semantics communicated (not overgeneralized).
+    expect(
+      screen.getByText(/frozen before the final holdout was opened/i),
+    ).toBeInTheDocument();
+
+    // Development + final-holdout boundary context, straight from the projection.
+    expect(screen.getAllByText("T-024 → T-001").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("H-01 → H-04").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("synthetic-step")).toBeInTheDocument();
+
+    // Forecast vs Actual final-holdout chart + both series identified.
+    expect(screen.getByRole("heading", { name: "Forecast vs Actual — Final Holdout" })).toBeInTheDocument();
+    const chartLayout = screen.getByLabelText("Forecast vs Actual — Final Holdout");
+    const seriesLegend = chartLayout.querySelector(".dataset-detail-forecasting-evaluation__series-legend")!;
+    expect(within(seriesLegend as HTMLElement).getByText("Actual", { exact: true })).toBeInTheDocument();
+    expect(within(seriesLegend as HTMLElement).getByText("Forecast", { exact: true })).toBeInTheDocument();
+
+    // Every governed final-holdout time_index is represented, in projected
+    // order, straight from the projection -- no hard-coded month logic.
+    const pointsList = chartLayout.querySelector(".dataset-detail-forecasting-evaluation__points")!;
+    const pointLabels = Array.from(
+      pointsList.querySelectorAll(".forecasting-diagnostics__legend-label"),
+    ).map((el) => el.textContent);
+    expect(pointLabels).toEqual(["H-01", "H-02", "H-03", "H-04"]);
+
+    // Evaluation slot sits before the analytics grid / Performance.
+    const evaluationWrapper = container.querySelector(".dataset-detail-overview__forecasting-evaluation")!;
+    const analytics = container.querySelector(".dataset-detail-overview__analytics")!;
+    expect(
+      evaluationWrapper.compareDocumentPosition(analytics) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+
+    // Performance Summary still comes from the metrics response.
+    expect(container.querySelector(".performance-summary")).toBeInTheDocument();
+    expect(screen.getByText("MAE")).toBeInTheDocument();
+
+    // The three secondary diagnostics still render.
+    expect(screen.getByRole("heading", { name: "Seasonal Profile" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Backtesting by Origin" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Horizon MAE" })).toBeInTheDocument();
+
+    // No inference POST and a single /visualizations request.
+    expect(fetchMock.mock.calls.some((call) => String(call[0]).endsWith("/inference"))).toBe(false);
+    expect(
+      fetchMock.mock.calls.filter((call) => String(call[0]).endsWith(`/datasets/${slug}/visualizations`)),
+    ).toHaveLength(1);
+  });
+
+  it("omits the evaluation section (no fabricated placeholder) for a historical v4 projection", async () => {
+    installForecastingEvaluationFetchMock(v4VisualizationsPayload);
+    const { container } = renderDatasetPage();
+
+    await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
+    await screen.findByRole("heading", { name: "Seasonal Profile" });
+
+    expect(container.querySelector(".dataset-detail-overview__forecasting-evaluation")).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Forecast Evaluation Overview" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Forecast vs Actual — Final Holdout" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Evaluation unavailable")).not.toBeInTheDocument();
+
+    // Existing diagnostics unaffected.
+    expect(screen.getByRole("heading", { name: "Backtesting by Origin" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Horizon MAE" })).toBeInTheDocument();
+  });
+
+  it("fails closed for a malformed present evaluation projection -- no partial chart", async () => {
+    installForecastingEvaluationFetchMock({
+      ...v6VisualizationsPayload,
+      forecasting_evaluation: {
+        // Present but incoherent: boundaries/points missing entirely.
+        index_value_kind: "ordinal_time",
+        frequency: "synthetic-step",
+      },
+    });
+    renderDatasetPage();
+
+    await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
+    expect(await screen.findByRole("heading", { name: "Evaluation unavailable" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Forecast vs Actual — Final Holdout" })).not.toBeInTheDocument();
+    // Secondary diagnostics still render.
+    expect(screen.getByRole("heading", { name: "Seasonal Profile" })).toBeInTheDocument();
+  });
+
+  it("fails closed when the projected point count disagrees with forecast_horizon", async () => {
+    installForecastingEvaluationFetchMock({
+      ...v6VisualizationsPayload,
+      forecasting_evaluation: {
+        ...v6VisualizationsPayload.forecasting_evaluation,
+        final_holdout_boundary: { start_index: "H-01", end_index: "H-03", observation_count: 3 },
+        points: v6VisualizationsPayload.forecasting_evaluation.points.slice(0, 3),
+      },
+    });
+    renderDatasetPage();
+
+    await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
+    expect(await screen.findByRole("heading", { name: "Evaluation unavailable" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Forecast vs Actual — Final Holdout" })).not.toBeInTheDocument();
+  });
+
+  it("renders the evaluation independently of the Inference tab presence (S0271 orthogonality)", async () => {
+    installForecastingEvaluationFetchMock(v6VisualizationsPayload);
+    renderDatasetPage();
+
+    await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
+    expect(await screen.findByRole("heading", { name: "Forecast Evaluation Overview" })).toBeInTheDocument();
+    // The evaluation Overview does not depend on the Inference tab -- it is
+    // built from the visualizations payload, not the prediction-surface
+    // capability.
+    expect(screen.getByRole("heading", { name: "Forecast vs Actual — Final Holdout" })).toBeInTheDocument();
+  });
+});
+
 // Project Spec S0250: the actual public-contract v2 forecasting form
 // (HistorySeriesInput wired through the shared InferenceForm), Features
 // metadata safety, and real forecasting inference execution -- distinct

@@ -59,14 +59,16 @@ export type VisualizationsPayload = {
       bins?: Array<{ label?: string; count?: number }>;
     };
   };
-  // Project Spec S0248: bounded forecasting diagnostics the public
+  // Project Spec S0248 / S0270: bounded forecasting diagnostics the public
   // visualizations projection may carry instead of charts/
-  // regression_diagnostics/confusion_matrix, present only for a valid
-  // native univariate-forecasting (v4) release. TargetDistribution/
-  // FeatureImportance never read this themselves -- it lives on the shared
-  // payload type so ForecastingDiagnostics.tsx, DatasetPage.tsx,
-  // DatasetAdminPage.tsx, and livePreviewProjection.ts can all consume it
-  // without a competing type.
+  // regression_diagnostics/confusion_matrix. A native univariate-forecasting
+  // public projection may be a historical analytical-visualizations.v4
+  // artifact (diagnostics only) or an S0270 analytical-visualizations.v6
+  // artifact (the same diagnostics plus the optional forecasting_evaluation
+  // block below). TargetDistribution/FeatureImportance never read this
+  // themselves -- it lives on the shared payload type so
+  // ForecastingDiagnostics.tsx, DatasetPage.tsx, DatasetAdminPage.tsx, and
+  // livePreviewProjection.ts can all consume it without a competing type.
   forecasting_diagnostics?: {
     forecast_horizon?: number;
     frequency?: string;
@@ -82,6 +84,41 @@ export type VisualizationsPayload = {
     horizon_mae?: {
       points?: Array<{ horizon_step?: number; mae?: number }>;
     };
+  };
+  // Project Spec S0270 (consumed by S0272): the optional bounded public
+  // final-holdout forecast-evaluation projection, present only for a valid
+  // analytical-visualizations.v6 native univariate-forecasting release. A
+  // historical v4 release never carries this field, so it stays optional at
+  // this TypeScript boundary. Every leaf stays optional too because the
+  // frontend must still defend against a malformed network/private-preview
+  // value even though api/public_visualizations_loader.py validates canonical
+  // v6 responses. ForecastingDiagnostics.tsx's ForecastingEvaluationOverview
+  // renderer owns the bounded frontend validation before any chart is drawn;
+  // TargetDistribution/FeatureImportance never read this themselves.
+  forecasting_evaluation?: {
+    index_value_kind?: string;
+    frequency?: string;
+    development_boundary?: {
+      start_index?: string;
+      end_index?: string;
+      observation_count?: number;
+    };
+    final_holdout_boundary?: {
+      start_index?: string;
+      end_index?: string;
+      observation_count?: number;
+    };
+    evaluation?: {
+      split_name?: string;
+      evaluation_count?: number;
+      model_frozen_before_open?: boolean;
+      forecast_generated_before_target_open?: boolean;
+    };
+    points?: Array<{
+      time_index?: string;
+      actual?: number;
+      forecast?: number;
+    }>;
   };
 };
 

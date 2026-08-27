@@ -19,7 +19,9 @@ import TargetDistribution from "../../components/DatasetDetail/TargetDistributio
 import FeatureImportance from "../../components/DatasetDetail/FeatureImportance";
 import ConfusionMatrix from "../../components/DatasetDetail/ConfusionMatrix";
 import RegressionDiagnostics from "../../components/DatasetDetail/RegressionDiagnostics";
-import ForecastingDiagnostics from "../../components/DatasetDetail/ForecastingDiagnostics";
+import ForecastingDiagnostics, {
+  ForecastingEvaluationOverview,
+} from "../../components/DatasetDetail/ForecastingDiagnostics";
 import BinaryClassificationResult from "../../components/ResultCard/BinaryClassificationResult";
 import MulticlassClassificationResult from "../../components/ResultCard/MulticlassClassificationResult";
 import ContinuousRegressionResult from "../../components/ResultCard/ContinuousRegressionResult";
@@ -4753,6 +4755,17 @@ function DatasetDetailLivePreview({
   const forecastingDiagnosticsContent = isForecastingPreview ? (
     <ForecastingDiagnostics visualizations={visualizations} />
   ) : null;
+  // Project Spec S0272: Admin Live Preview builds the exact same shared
+  // final-holdout forecast-evaluation overview from the same already-loaded
+  // authoring-context visualizations payload -- never executing private
+  // inference, reading draft form values, or issuing a second request. The
+  // nullish guard mirrors DatasetPage.tsx so a historical v4 authoring
+  // context stays DOM-identical; the renderer owns the bounded v4/v6
+  // validation.
+  const forecastingEvaluationContent =
+    isForecastingPreview && visualizations?.forecasting_evaluation != null ? (
+      <ForecastingEvaluationOverview visualizations={visualizations} />
+    ) : null;
 
   // Project Spec S0143: the Dataset Detail Live Preview Inference tab now
   // owns one real, executable InferenceForm lifecycle -- the same
@@ -4822,6 +4835,7 @@ function DatasetDetailLivePreview({
       documentationContent={documentationContent}
       featureImportanceContent={featureImportanceContent}
       forecastingDiagnosticsContent={forecastingDiagnosticsContent}
+      forecastingEvaluationContent={forecastingEvaluationContent}
       inferenceAvailable={inferenceAvailable}
       inferenceContent={inferenceContent}
       metadata={preview.metadata}

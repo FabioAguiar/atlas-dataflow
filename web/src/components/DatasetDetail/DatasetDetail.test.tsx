@@ -1183,6 +1183,105 @@ describe("DatasetDetailSurface exact tab card ownership (S0138)", () => {
   });
 });
 
+// Project Spec S0272: DatasetDetailSurface gains one optional, bounded
+// forecasting-evaluation content slot placed after Problem summary and before
+// the analytics grid. These tests exercise only the shared surface's DOM
+// composition with synthetic nodes -- the real renderer's v4/v6 data
+// validation is covered by the DatasetPage / Admin Live Preview integration
+// tests using the actual shared component.
+describe("DatasetDetailSurface forecasting-evaluation slot (Project Spec S0272)", () => {
+  const metadata: DatasetDetailMetadataItem[] = [
+    { label: "Source", value: "Example Org", href: "https://example.org/data" },
+    { label: "Release", value: "01/07/2026", hint: "Format: dd/mm/yyyy" },
+  ];
+
+  function renderSurface(overrides: Partial<ComponentProps<typeof DatasetDetailSurface>> = {}) {
+    return render(
+      <MemoryRouter>
+        <DatasetDetailSurface
+          analysisType="Univariate Forecasting"
+          datasetSubtitle="Synthetic surface subtitle"
+          datasetTitle="Synthetic Surface Dataset"
+          featureImportanceContent={null}
+          inferenceContent={<div data-testid="inference-slot">Inference content</div>}
+          metadata={metadata}
+          performanceContent={<div data-testid="performance-slot">Performance content</div>}
+          problemSummaryBody="Synthetic problem summary body."
+          problemSummaryTitle="Problem summary"
+          targetDistributionContent={null}
+          themePresetId="ocean-blue"
+          {...overrides}
+        />
+      </MemoryRouter>,
+    );
+  }
+
+  it("renders the forecasting-evaluation node after Problem summary and before the analytics grid / performance content", () => {
+    renderSurface({
+      forecastingEvaluationContent: <div data-testid="evaluation-slot">Evaluation content</div>,
+      forecastingDiagnosticsContent: <div data-testid="diagnostics-slot">Diagnostics content</div>,
+    });
+
+    const problemSummary = screen.getByText("Synthetic problem summary body.");
+    const evaluationSlot = screen.getByTestId("evaluation-slot");
+    const performanceSlot = screen.getByTestId("performance-slot");
+    const analytics = document.querySelector(".dataset-detail-overview__analytics")!;
+
+    expect(
+      problemSummary.compareDocumentPosition(evaluationSlot) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      evaluationSlot.compareDocumentPosition(performanceSlot) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(analytics.contains(evaluationSlot)).toBe(false);
+    expect(
+      document.querySelector(".dataset-detail-overview__forecasting-evaluation")!.contains(evaluationSlot),
+    ).toBe(true);
+  });
+
+  it("keeps the forecasting diagnostics node below the analytics grid", () => {
+    renderSurface({
+      forecastingEvaluationContent: <div data-testid="evaluation-slot">Evaluation content</div>,
+      forecastingDiagnosticsContent: <div data-testid="diagnostics-slot">Diagnostics content</div>,
+    });
+
+    const analytics = document.querySelector(".dataset-detail-overview__analytics")!;
+    const diagnosticsSlot = screen.getByTestId("diagnostics-slot");
+    expect(
+      analytics.compareDocumentPosition(diagnosticsSlot) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      document.querySelector(".dataset-detail-overview__forecasting-diagnostics")!.contains(diagnosticsSlot),
+    ).toBe(true);
+  });
+
+  it("omitting forecastingEvaluationContent preserves the historical Overview DOM composition", () => {
+    const { container } = renderSurface();
+
+    expect(container.querySelector(".dataset-detail-overview__forecasting-evaluation")).not.toBeInTheDocument();
+    const overview = container.querySelector(".dataset-detail-overview")!;
+    const firstChild = overview.firstElementChild;
+    expect(firstChild).toHaveClass("dataset-detail-overview__problem-summary");
+    expect(firstChild?.nextElementSibling).toHaveClass("dataset-detail-overview__analytics");
+  });
+
+  it("renders no evaluation wrapper when the content is falsy", () => {
+    const { container } = renderSurface({ forecastingEvaluationContent: null });
+    expect(container.querySelector(".dataset-detail-overview__forecasting-evaluation")).not.toBeInTheDocument();
+  });
+
+  it("leaves S0271 inferenceAvailable tab behavior unaffected by the new slot", () => {
+    renderSurface({
+      forecastingEvaluationContent: <div data-testid="evaluation-slot">Evaluation content</div>,
+      inferenceAvailable: false,
+    });
+
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Overview", "Documentation"]);
+    expect(screen.queryByTestId("inference-slot")).not.toBeInTheDocument();
+    expect(screen.getByTestId("evaluation-slot")).toBeInTheDocument();
+  });
+});
+
 // Project Spec S0200/S0221: PerformanceSummary consumes the shared
 // performanceMetricMetadata module for both its performance_focus.visible_scores
 // path and its normalizeEvaluation(metrics) fallback path, exposing an

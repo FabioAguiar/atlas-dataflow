@@ -32,6 +32,10 @@ function formatValue(value: number): string {
   return value.toLocaleString(undefined, { maximumFractionDigits: 4 });
 }
 
+function formatCount(value: number): string {
+  return value.toLocaleString();
+}
+
 /**
  * The Seasonal Profile only renders when every point carries a finite,
  * non-negative integer season position and a finite mean target -- anything
@@ -106,6 +110,315 @@ function getValidHorizonMae(points: RawHorizonPoint[] | undefined): ValidHorizon
     validated.push({ label: `h+${step}`, mae });
   }
   return { points: validated };
+}
+
+// ---------------------------------------------------------------------------
+// Project Spec S0270 evidence, S0272 presentation: the shared final-holdout
+// forecast-evaluation overview. It consumes only the bounded public
+// visualizations.forecasting_evaluation projection (plus the already-present
+// forecasting_diagnostics.forecast_horizon) -- never a dataset slug, model
+// name, raw training/history vector, inference executor, or external study
+// data. It performs bounded frontend validation before drawing any chart so a
+// malformed present projection never produces misleading partial evidence,
+// and it derives no evaluation metric (MAE/RMSE/seasonal-MASE or a
+// replacement score) from the projected points -- PerformanceSummary remains
+// the independent metric authority.
+// ---------------------------------------------------------------------------
+
+type RawEvaluationBoundary = {
+  start_index?: string;
+  end_index?: string;
+  observation_count?: number;
+};
+
+type ValidEvaluationBoundary = {
+  startIndex: string;
+  endIndex: string;
+  observationCount: number;
+};
+
+type ValidForecastingEvaluation = {
+  indexValueKind: string;
+  frequency: string;
+  development: ValidEvaluationBoundary;
+  finalHoldout: ValidEvaluationBoundary;
+  forecastHorizon: number | null;
+  points: Array<{ timeIndex: string; actual: number; forecast: number }>;
+};
+
+const EVALUATION_TITLE = "Forecast Evaluation Overview";
+const FORECAST_VS_ACTUAL_TITLE = "Forecast vs Actual — Final Holdout";
+const EVALUATION_UNAVAILABLE_MESSAGE =
+  "This release does not carry a complete governed final-holdout forecast evaluation.";
+const EVALUATION_FROZEN_COPY =
+  "The evaluated model was frozen before the final holdout was opened. Its forecast for that holdout was generated before the observed targets were revealed.";
+
+function isPositiveInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value > 0;
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  // typeof already excludes booleans; Number.isFinite rejects NaN/Infinity.
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function nonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function getValidEvaluationBoundary(value: RawEvaluationBoundary | undefined): ValidEvaluationBoundary | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const { start_index: startIndex, end_index: endIndex, observation_count: observationCount } = value;
+  if (!nonEmptyString(startIndex) || !nonEmptyString(endIndex) || !isPositiveInteger(observationCount)) {
+    return null;
+  }
+  return { startIndex, endIndex, observationCount };
+}
+
+/**
+ * The final-holdout evaluation renders only when every governed public
+ * semantic is coherent. Anything missing, malformed, or internally
+ * inconsistent returns null so the caller can fail closed instead of handing
+ * partial/incorrect values to Recharts. The projected boundaries and points
+ * are used verbatim -- no point is added or dropped, no chronological index is
+ * reconstructed, and no metric is computed.
+ */
+function getValidForecastingEvaluation(
+  visualizations: VisualizationsPayload | null,
+): ValidForecastingEvaluation | null {
+  const evaluation = visualizations?.forecasting_evaluation;
+  if (!evaluation || typeof evaluation !== "object") {
+    return null;
+  }
+
+  if (!nonEmptyString(evaluation.index_value_kind) || !nonEmptyString(evaluation.frequency)) {
+    return null;
+  }
+
+  const development = getValidEvaluationBoundary(evaluation.development_boundary);
+  const finalHoldout = getValidEvaluationBoundary(evaluation.final_holdout_boundary);
+  if (!development || !finalHoldout) {
+    return null;
+  }
+
+  const flags = evaluation.evaluation;
+  if (
+    !flags ||
+    typeof flags !== "object" ||
+    flags.split_name !== "final_holdout" ||
+    flags.evaluation_count !== 1 ||
+    flags.model_frozen_before_open !== true ||
+    flags.forecast_generated_before_target_open !== true
+  ) {
+    return null;
+  }
+
+  const { points } = evaluation;
+  if (!Array.isArray(points) || points.length === 0) {
+    return null;
+  }
+  if (points.length !== finalHoldout.observationCount) {
+    return null;
+  }
+
+  // The diagnostics forecast_horizon is optional, but when present it must
+  // agree with the projected point count -- a mismatch means the projection is
+  // internally inconsistent. A missing horizon never invents a competing one.
+  const rawHorizon = visualizations?.forecasting_diagnostics?.forecast_horizon;
+  let forecastHorizon: number | null = null;
+  if (rawHorizon !== undefined) {
+    if (!isPositiveInteger(rawHorizon) || rawHorizon !== points.length) {
+      return null;
+    }
+    forecastHorizon = rawHorizon;
+  }
+
+  const seenLabels = new Set<string>();
+  const validatedPoints: Array<{ timeIndex: string; actual: number; forecast: number }> = [];
+  for (const point of points) {
+    if (!point || typeof point !== "object") {
+      return null;
+    }
+    const { time_index: timeIndex, actual, forecast } = point;
+    if (!nonEmptyString(timeIndex) || seenLabels.has(timeIndex)) {
+      return null;
+    }
+    seenLabels.add(timeIndex);
+    if (!isFiniteNumber(actual) || !isFiniteNumber(forecast)) {
+      return null;
+    }
+    validatedPoints.push({ timeIndex, actual, forecast });
+  }
+
+  if (
+    validatedPoints[0].timeIndex !== finalHoldout.startIndex ||
+    validatedPoints[validatedPoints.length - 1].timeIndex !== finalHoldout.endIndex
+  ) {
+    return null;
+  }
+
+  return {
+    indexValueKind: evaluation.index_value_kind,
+    frequency: evaluation.frequency,
+    development,
+    finalHoldout,
+    forecastHorizon,
+    points: validatedPoints,
+  };
+}
+
+/**
+ * Shared final-holdout forecast-evaluation overview rendered by both the
+ * public Dataset Detail route and Admin Live Preview through the same
+ * DatasetDetailSurface slot. Returns null when no evaluation projection is
+ * present (historical v4 releases keep their exact prior Overview), and a
+ * bounded non-chart "evaluation unavailable" surface when a projection is
+ * present but fails validation.
+ */
+export function ForecastingEvaluationOverview({ visualizations }: ForecastingDiagnosticsProps) {
+  const rawEvaluation = visualizations?.forecasting_evaluation;
+  if (rawEvaluation === undefined || rawEvaluation === null) {
+    return null;
+  }
+
+  const evaluation = getValidForecastingEvaluation(visualizations);
+  if (!evaluation) {
+    return (
+      <Card className="dataset-detail-visualization dataset-detail-forecasting-evaluation dataset-detail-forecasting-evaluation--unavailable">
+        <h3>{EVALUATION_TITLE}</h3>
+        <EmptyState message={EVALUATION_UNAVAILABLE_MESSAGE} title="Evaluation unavailable" />
+      </Card>
+    );
+  }
+
+  const { development, finalHoldout, frequency, forecastHorizon, points } = evaluation;
+  const chartData = points.map((point) => ({
+    label: point.timeIndex,
+    actual: point.actual,
+    forecast: point.forecast,
+  }));
+  const holdoutCountLabel =
+    forecastHorizon !== null ? "Final holdout observations / forecast horizon" : "Final holdout observations";
+  const developmentRange = `${development.startIndex} → ${development.endIndex}`;
+  const finalHoldoutRange = `${finalHoldout.startIndex} → ${finalHoldout.endIndex}`;
+
+  return (
+    <Card className="dataset-detail-visualization dataset-detail-forecasting-evaluation">
+      <h3>{EVALUATION_TITLE}</h3>
+
+      <p className="dataset-detail-forecasting-evaluation__statement">{EVALUATION_FROZEN_COPY}</p>
+
+      <dl className="dataset-detail-forecasting-evaluation__context">
+        <div className="dataset-detail-forecasting-evaluation__context-row">
+          <dt>Development / training evidence range</dt>
+          <dd>{developmentRange}</dd>
+        </div>
+        <div className="dataset-detail-forecasting-evaluation__context-row">
+          <dt>Development observations</dt>
+          <dd>{formatCount(development.observationCount)}</dd>
+        </div>
+        <div className="dataset-detail-forecasting-evaluation__context-row">
+          <dt>Final holdout range</dt>
+          <dd>{finalHoldoutRange}</dd>
+        </div>
+        <div className="dataset-detail-forecasting-evaluation__context-row">
+          <dt>{holdoutCountLabel}</dt>
+          <dd>{formatCount(finalHoldout.observationCount)}</dd>
+        </div>
+        <div className="dataset-detail-forecasting-evaluation__context-row">
+          <dt>Frequency</dt>
+          <dd>{frequency}</dd>
+        </div>
+      </dl>
+
+      <div
+        aria-label={`Development and training evidence from ${development.startIndex} to ${development.endIndex} (${development.observationCount} observations), then the sealed final holdout from ${finalHoldout.startIndex} to ${finalHoldout.endIndex} (${finalHoldout.observationCount} observations).`}
+        className="dataset-detail-forecasting-evaluation__boundary"
+        role="img"
+      >
+        <div className="dataset-detail-forecasting-evaluation__boundary-segment dataset-detail-forecasting-evaluation__boundary-segment--development">
+          <span className="dataset-detail-forecasting-evaluation__boundary-title">Development / training evidence</span>
+          <span className="dataset-detail-forecasting-evaluation__boundary-range">{developmentRange}</span>
+          <span className="dataset-detail-forecasting-evaluation__boundary-count">
+            {formatCount(development.observationCount)} observations
+          </span>
+        </div>
+        <div className="dataset-detail-forecasting-evaluation__boundary-segment dataset-detail-forecasting-evaluation__boundary-segment--final-holdout">
+          <span className="dataset-detail-forecasting-evaluation__boundary-title">Final holdout</span>
+          <span className="dataset-detail-forecasting-evaluation__boundary-range">{finalHoldoutRange}</span>
+          <span className="dataset-detail-forecasting-evaluation__boundary-count">
+            {formatCount(finalHoldout.observationCount)} observations
+          </span>
+        </div>
+      </div>
+
+      <h4 className="dataset-detail-forecasting-evaluation__chart-title">{FORECAST_VS_ACTUAL_TITLE}</h4>
+      <div
+        aria-label={FORECAST_VS_ACTUAL_TITLE}
+        className="dataset-detail-visualization__chart dataset-detail-forecasting-evaluation__chart-layout"
+        data-chart-grid={CHART_GRID}
+        data-chart-primary={CHART_PRIMARY}
+        data-chart-secondary={CHART_SECONDARY}
+      >
+        <ul className="dataset-detail-forecasting-evaluation__series-legend">
+          <li className="dataset-detail-forecasting-evaluation__series">
+            <span
+              aria-hidden="true"
+              className="dataset-detail-forecasting-evaluation__series-marker dataset-detail-forecasting-evaluation__series-marker--actual"
+            />
+            Actual
+          </li>
+          <li className="dataset-detail-forecasting-evaluation__series">
+            <span
+              aria-hidden="true"
+              className="dataset-detail-forecasting-evaluation__series-marker dataset-detail-forecasting-evaluation__series-marker--forecast"
+            />
+            Forecast
+          </li>
+        </ul>
+        <div className="dataset-detail-forecasting-evaluation__chart">
+          <ResponsiveContainer height="100%" width="100%">
+            <LineChart data={chartData} margin={{ bottom: 8 }}>
+              <CartesianGrid stroke={CHART_GRID} strokeDasharray="3 3" vertical={false} />
+              <XAxis dataKey="label" tick={{ fontSize: 11 }} />
+              <YAxis width={48} />
+              <Line
+                dataKey="actual"
+                dot={{ r: 3 }}
+                isAnimationActive={false}
+                name="Actual"
+                stroke={CHART_PRIMARY}
+                strokeWidth={2}
+                type="monotone"
+              />
+              <Line
+                dataKey="forecast"
+                dot={{ r: 3 }}
+                isAnimationActive={false}
+                name="Forecast"
+                stroke={CHART_SECONDARY}
+                strokeDasharray="6 4"
+                strokeWidth={2}
+                type="monotone"
+              />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+        <ul className="dataset-detail-forecasting-evaluation__points forecasting-diagnostics__legend">
+          {chartData.map((point) => (
+            <li className="forecasting-diagnostics__legend-row" key={point.label}>
+              <span className="forecasting-diagnostics__legend-label">{point.label}</span>
+              <span className="forecasting-diagnostics__legend-value">
+                {`Actual ${formatValue(point.actual)} · Forecast ${formatValue(point.forecast)}`}
+              </span>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </Card>
+  );
 }
 
 // Project Spec S0248: a single shared renderer for the three bounded

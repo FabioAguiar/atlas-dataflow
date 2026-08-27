@@ -4546,6 +4546,175 @@ describe("DatasetAdminPage", () => {
     });
   });
 
+  // Project Spec S0272: Dataset Detail Live Preview reuses the exact same
+  // shared ForecastingEvaluationOverview renderer and shared-surface slot the
+  // public route uses, fed only by the already-loaded authoring-context
+  // visualizations payload -- no extra request, no private inference
+  // execution, no synthesis from draft form fields.
+  describe("Dataset Detail Live Preview final-holdout forecast evaluation (Project Spec S0272)", () => {
+    const forecastingResultContract = {
+      status: "available",
+      semantics: {
+        schema_version: "univariate-forecasting-result-semantics.v1",
+        problem_type: "univariate_forecasting",
+        result_schema_version: "univariate-forecasting-result.v1",
+        primary_output: "forecast_series",
+        output_structure: "ordered_forecast_points",
+        forecast_value_kind: "continuous_numeric",
+        forecast_count_source: "forecast_horizon",
+        model_descriptor: { model_family: "deterministic_seasonal_trend_ols", display_name: "Seasonal Trend Model" },
+      },
+    };
+
+    const forecastingDiagnostics = {
+      forecast_horizon: 4,
+      frequency: "synthetic-step",
+      seasonal_profile: {
+        seasonal_period: 4,
+        points: [
+          { season_position: 0, mean_target: 10.0, observation_count: 5 },
+          { season_position: 1, mean_target: 12.0, observation_count: 5 },
+          { season_position: 2, mean_target: 9.0, observation_count: 5 },
+          { season_position: 3, mean_target: 13.0, observation_count: 5 },
+        ],
+      },
+      backtesting_fold_metric: {
+        metric_id: "mae",
+        direction: "lower_is_better",
+        points: [
+          { fold_index: 1, forecast_origin: "11", value: 1.2 },
+          { fold_index: 2, forecast_origin: "15", value: 0.9 },
+        ],
+      },
+      horizon_mae: {
+        points: [
+          { horizon_step: 1, mae: 0.5 },
+          { horizon_step: 2, mae: 0.8 },
+          { horizon_step: 3, mae: 1.1 },
+          { horizon_step: 4, mae: 1.4 },
+        ],
+      },
+    };
+
+    // Bounded synthetic authoring-context visualizations carrying a valid
+    // S0270-shaped forecasting_evaluation (never the real Nottingham series).
+    const v6ForecastingVisualizations = {
+      charts: [],
+      dataset_statistics: { instance_count: 28, development_observations: 24, final_holdout_observations: 4 },
+      forecasting_diagnostics: forecastingDiagnostics,
+      forecasting_evaluation: {
+        index_value_kind: "ordinal_time",
+        frequency: "synthetic-step",
+        development_boundary: { start_index: "T-024", end_index: "T-001", observation_count: 24 },
+        final_holdout_boundary: { start_index: "H-01", end_index: "H-04", observation_count: 4 },
+        evaluation: {
+          split_name: "final_holdout",
+          evaluation_count: 1,
+          model_frozen_before_open: true,
+          forecast_generated_before_target_open: true,
+        },
+        points: [
+          { time_index: "H-01", actual: 10.5, forecast: 11.2 },
+          { time_index: "H-02", actual: 12.1, forecast: 11.8 },
+          { time_index: "H-03", actual: 9.7, forecast: 10.4 },
+          { time_index: "H-04", actual: 13.3, forecast: 12.6 },
+        ],
+      },
+    };
+
+    const v4ForecastingVisualizations = {
+      charts: [],
+      dataset_statistics: { instance_count: 28 },
+      forecasting_diagnostics: forecastingDiagnostics,
+    };
+
+    it("renders the same evaluation title/context/chart semantics as the public Dataset Detail", async () => {
+      installFetchMock({
+        resultContractOverride: forecastingResultContract,
+        visualizationsOverride: v6ForecastingVisualizations,
+        metricsOverride: { mae: 3.21, rmse: 4.55 },
+      });
+      const { container } = renderAdminPage();
+      await loadDraftOnly();
+
+      fireEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
+
+      expect(await screen.findByRole("heading", { name: "Forecast Evaluation Overview" })).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "Forecast vs Actual — Final Holdout" })).toBeInTheDocument();
+      expect(screen.getByText(/frozen before the final holdout was opened/i)).toBeInTheDocument();
+      expect(screen.getAllByText("T-024 → T-001").length).toBeGreaterThanOrEqual(1);
+      expect(screen.getAllByText("H-01 → H-04").length).toBeGreaterThanOrEqual(1);
+
+      const overviewPanel = container.querySelector(".dataset-detail-tabs__panel:not([hidden])")!;
+      const evaluationWrapper = overviewPanel.querySelector(".dataset-detail-overview__forecasting-evaluation")!;
+      const analytics = overviewPanel.querySelector(".dataset-detail-overview__analytics")!;
+      expect(
+        evaluationWrapper.compareDocumentPosition(analytics) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+
+      // Performance and the three secondary diagnostics remain present.
+      expect(overviewPanel.querySelector(".performance-summary")).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "Seasonal Profile" })).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "Backtesting by Origin" })).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "Horizon MAE" })).toBeInTheDocument();
+    });
+
+    it("makes no extra fetch and executes no private inference to render the Overview", async () => {
+      const fetchMock = installFetchMock({
+        resultContractOverride: forecastingResultContract,
+        visualizationsOverride: v6ForecastingVisualizations,
+        metricsOverride: { mae: 3.21, rmse: 4.55 },
+      });
+      renderAdminPage();
+      await loadDraftOnly();
+
+      fireEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
+      await screen.findByRole("heading", { name: "Forecast vs Actual — Final Holdout" });
+
+      const authoringContextCalls = fetchMock.mock.calls.filter((call) =>
+        String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/authoring-context`),
+      );
+      expect(authoringContextCalls.length).toBe(1);
+      expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/inference"))).toBe(false);
+    });
+
+    it("omits the evaluation section for a historical v4 authoring context, without fabricated data", async () => {
+      installFetchMock({
+        resultContractOverride: forecastingResultContract,
+        visualizationsOverride: v4ForecastingVisualizations,
+        metricsOverride: { mae: 3.21, rmse: 4.55 },
+      });
+      const { container } = renderAdminPage();
+      await loadDraftOnly();
+
+      fireEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
+      await screen.findByRole("heading", { name: "Seasonal Profile" });
+
+      expect(container.querySelector(".dataset-detail-overview__forecasting-evaluation")).not.toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: "Forecast Evaluation Overview" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: "Forecast vs Actual — Final Holdout" })).not.toBeInTheDocument();
+      expect(screen.queryByText("Evaluation unavailable")).not.toBeInTheDocument();
+    });
+
+    it("keeps S0271 Inference-tab availability independent of the evaluation section", async () => {
+      installFetchMock({
+        resultContractOverride: forecastingResultContract,
+        visualizationsOverride: v6ForecastingVisualizations,
+        metricsOverride: { mae: 3.21, rmse: 4.55 },
+      });
+      renderAdminPage();
+      await loadDraftOnly();
+
+      fireEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
+      await screen.findByRole("heading", { name: "Forecast Evaluation Overview" });
+
+      // The default forecasting contract has no predictive_interaction, so the
+      // Inference tab stays available -- the evaluation section neither adds
+      // nor removes it.
+      expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toContain("Inference");
+    });
+  });
+
   // Project Spec S0250: the real public-contract v2 univariate-forecasting
   // history-series form -- Admin contract-family-aware field projection, a
   // bounded (no field-bank/no-group/no-hide) Inference Form customization

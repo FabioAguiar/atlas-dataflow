@@ -277,6 +277,35 @@ describe("DatasetViewPage access states (Project Spec S0117)", () => {
     ).toBeInTheDocument();
   });
 
+  // Project Spec S0271: the backend returns the existing VIEW_NOT_FOUND public
+  // envelope for a Predict View disabled by the release's predictive-interaction
+  // applicability. The shared classifier now maps it to the not-found page
+  // state so a direct disabled Predict View URL shows "The dataset or link you
+  // tried to access does not exist." -- never the generic transient
+  // "information is currently unavailable" copy, and without exposing any
+  // capability internals.
+  it("renders the shared not-found state for a VIEW_NOT_FOUND primary response, not the generic unavailable copy", async () => {
+    const fetchMock = installDatasetViewPageErrorFetchMock(
+      {
+        error_type: "view_not_found",
+        error_code: "VIEW_NOT_FOUND",
+        message: "The requested predict view is not available for this dataset.",
+      },
+      404,
+    );
+
+    renderDatasetViewPage();
+
+    expect(await screen.findByRole("heading", { level: 1, name: "Dataset not found" })).toBeInTheDocument();
+    expect(
+      screen.getByText("The dataset or link you tried to access does not exist."),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { level: 1, name: "Dataset information is currently unavailable" }),
+    ).not.toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("fires contract/customization/context requests only after the primary view request reaches ready", async () => {
     const { fetchMock } = installFetchMock();
 

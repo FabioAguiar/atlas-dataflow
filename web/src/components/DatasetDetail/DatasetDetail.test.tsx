@@ -954,6 +954,87 @@ describe("DatasetDetailSurface shared composition (S0119)", () => {
     );
     expect(screen.getByText("Format: dd/mm/yyyy")).toBeInTheDocument();
   });
+
+  // Project Spec S0271: the shared surface accepts a bounded, presentation-only
+  // inferenceAvailable input (default true) and never reads a contract itself.
+  // These assertions stay dataset-agnostic -- only tab composition, panel
+  // mounting, selection reset, and unchanged Overview/Documentation content.
+  describe("capability-driven Inference tab (S0271)", () => {
+    it("defaults to three tabs when inferenceAvailable is omitted", () => {
+      renderSurface();
+      expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
+        "Overview",
+        "Inference",
+        "Documentation",
+      ]);
+    });
+
+    it("renders three tabs when inferenceAvailable is explicitly true", () => {
+      renderSurface({ inferenceAvailable: true });
+      expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
+        "Overview",
+        "Inference",
+        "Documentation",
+      ]);
+    });
+
+    it("renders exactly Overview and Documentation when inferenceAvailable is false", () => {
+      renderSurface({ inferenceAvailable: false });
+      expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
+        "Overview",
+        "Documentation",
+      ]);
+      expect(screen.queryByRole("tab", { name: "Inference" })).not.toBeInTheDocument();
+    });
+
+    it("does not mount an Inference tabpanel at all when inferenceAvailable is false", () => {
+      renderSurface({ inferenceAvailable: false });
+      expect(screen.queryByTestId("inference-slot")).not.toBeInTheDocument();
+      const panels = document.querySelectorAll(".dataset-detail-tabs__panel");
+      expect(panels).toHaveLength(2);
+    });
+
+    it("resets the selection to Overview when Inference was selected and availability flips false", () => {
+      const { rerender } = renderSurface({ inferenceAvailable: true });
+      fireEvent.click(screen.getByRole("tab", { name: "Inference" }));
+      expect(screen.getByRole("tab", { name: "Inference" })).toHaveAttribute("aria-selected", "true");
+
+      rerender(
+        <MemoryRouter>
+          <DatasetDetailSurface
+            analysisType="Binary Classification"
+            datasetSubtitle="Synthetic surface subtitle"
+            datasetTitle="Synthetic Surface Dataset"
+            featureImportanceContent={<div data-testid="feature-importance-slot">Feature importance content</div>}
+            inferenceAvailable={false}
+            inferenceContent={<div data-testid="inference-slot">Inference content</div>}
+            metadata={metadata}
+            performanceContent={<div data-testid="performance-slot">Performance content</div>}
+            problemSummaryBody="Synthetic problem summary body."
+            problemSummaryTitle="Problem summary"
+            targetDistributionContent={<div data-testid="target-distribution-slot">Target distribution content</div>}
+            themePresetId="ocean-blue"
+          />
+        </MemoryRouter>,
+      );
+
+      expect(screen.getByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "true");
+      expect(screen.queryByRole("tab", { name: "Inference" })).not.toBeInTheDocument();
+      expect(screen.queryByTestId("inference-slot")).not.toBeInTheDocument();
+    });
+
+    it("keeps Overview and Documentation content unchanged when Inference is unavailable", () => {
+      renderSurface({ inferenceAvailable: false, documentationContent: <p>Extra guidance</p> });
+
+      expect(screen.getByTestId("performance-slot")).toBeInTheDocument();
+      expect(screen.getByTestId("target-distribution-slot")).toBeInTheDocument();
+      expect(screen.getByTestId("feature-importance-slot")).toBeInTheDocument();
+      expect(screen.getByText("Synthetic problem summary body.")).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("tab", { name: "Documentation" }));
+      expect(screen.getByRole("tabpanel")).toHaveTextContent("Extra guidance");
+    });
+  });
 });
 
 // Project Spec S0138: the shared surface's public presentation contract

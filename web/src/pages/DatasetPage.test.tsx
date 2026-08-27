@@ -3124,3 +3124,196 @@ describe("DatasetPage univariate-forecasting inference form and metadata (Projec
     });
   });
 });
+
+// Project Spec S0271: public Dataset Detail Inference-tab availability derives
+// only from the active public contract's S0269
+// predictive_interaction.public_prediction.applicability -- never dataset
+// slug, model family, problem type alone, or a stale bound_predict_view_id.
+describe("DatasetPage capability-driven public prediction surface (Project Spec S0271)", () => {
+  const forecastingBase = {
+    schema_version: "2.0.0",
+    problem_type: "univariate_forecasting",
+    input_kind: "history_series",
+    history_series: {
+      time_index_field: { name: "period", label: "Period", value_kind: "calendar_period" as const, display_order: 1 },
+      target_field: { name: "passengers", label: "Passengers", value_kind: "number" as const, display_order: 2 },
+      frequency: "Monthly",
+    },
+    forecast: { forecast_horizon: 3, horizon_user_editable: false as const },
+  };
+
+  const historicalForecastingContract = { ...forecastingBase };
+  const availableForecastingContract = {
+    ...forecastingBase,
+    predictive_interaction: {
+      history_target_values: { affect_forecast: false },
+      public_prediction: { applicability: "available" as const },
+    },
+  };
+  const notApplicableForecastingContract = {
+    ...forecastingBase,
+    predictive_interaction: {
+      history_target_values: { affect_forecast: false },
+      public_prediction: { applicability: "not_applicable" as const },
+    },
+  };
+
+  const forecastingResultContract = {
+    status: "available" as const,
+    semantics: {
+      schema_version: "univariate-forecasting-result-semantics.v1" as const,
+      problem_type: "univariate_forecasting" as const,
+      result_schema_version: "univariate-forecasting-result.v1" as const,
+      primary_output: "forecast_series" as const,
+      output_structure: "ordered_forecast_points" as const,
+      forecast_value_kind: "continuous_numeric" as const,
+      forecast_count_source: "forecast_horizon" as const,
+      model_descriptor: { model_family: "deterministic_seasonal_trend_ols", display_name: "Seasonal Trend" },
+    },
+  };
+
+  function installCapabilityFetchMock(options: {
+    contract: unknown;
+    resultContract?: unknown;
+    boundPredictViewId?: string | null;
+    documentation?: { format: "markdown"; content: string };
+  }) {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith(`/datasets/${slug}/context`)) {
+        return jsonResponse({
+          dataset_slug: slug,
+          context: {
+            ...contextPayload,
+            problem_type: "univariate_forecasting",
+            bound_predict_view_id: options.boundPredictViewId ?? null,
+            documentation: options.documentation ?? { format: "markdown", content: "Synthetic documentation body." },
+          },
+        });
+      }
+      if (url.endsWith(`/datasets/${slug}/metrics`)) {
+        return jsonResponse({ dataset_slug: slug, metrics: {} });
+      }
+      if (url.endsWith(`/datasets/${slug}/visualizations`)) {
+        return jsonResponse({
+          dataset_slug: slug,
+          visualizations: { charts: [], dataset_statistics: { instance_count: 48 } },
+        });
+      }
+      if (url.endsWith(`/datasets/${slug}/contract`)) {
+        return jsonResponse({
+          dataset_slug: slug,
+          contract: options.contract,
+          result_contract: options.resultContract ?? forecastingResultContract,
+        });
+      }
+      if (url.endsWith(`/datasets/${slug}`)) {
+        return jsonResponse(datasetMetadata);
+      }
+      return jsonResponse({}, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  it("keeps the Inference tab for a historical forecasting v2 contract without predictive_interaction", async () => {
+    installCapabilityFetchMock({ contract: historicalForecastingContract });
+    renderDatasetPage();
+    await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
+
+    expect(await screen.findByRole("tab", { name: "Inference" })).toBeInTheDocument();
+  });
+
+  it("keeps the Inference tab when applicability is available", async () => {
+    installCapabilityFetchMock({ contract: availableForecastingContract });
+    renderDatasetPage();
+    await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
+
+    expect(await screen.findByRole("tab", { name: "Inference" })).toBeInTheDocument();
+  });
+
+  it("keeps the Inference tab for a scalar historical contract", async () => {
+    installCapabilityFetchMock({ contract: contractPayload, resultContract: resultContractAvailable });
+    renderDatasetPage();
+    await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
+
+    expect(await screen.findByRole("tab", { name: "Inference" })).toBeInTheDocument();
+  });
+
+  it("hides the Inference tab when applicability is not_applicable", async () => {
+    installCapabilityFetchMock({ contract: notApplicableForecastingContract });
+    renderDatasetPage();
+    await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
+
+    await waitFor(() => {
+      expect(screen.getByRole("tab", { name: "Overview" })).toBeInTheDocument();
+    });
+    expect(screen.queryByRole("tab", { name: "Inference" })).not.toBeInTheDocument();
+    expect(
+      screen.getAllByRole("tab").map((tab) => tab.textContent),
+    ).toEqual(["Overview", "Documentation"]);
+  });
+
+  it("keeps Overview and Documentation usable when Inference is not_applicable", async () => {
+    installCapabilityFetchMock({
+      contract: notApplicableForecastingContract,
+      documentation: { format: "markdown", content: "Capability-independent documentation." },
+    });
+    renderDatasetPage();
+    await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
+
+    await screen.findByRole("tab", { name: "Documentation" });
+    fireEvent.click(screen.getByRole("tab", { name: "Documentation" }));
+    expect(await screen.findByText("Capability-independent documentation.")).toBeInTheDocument();
+  });
+
+  it("does not fetch bound Predict View customization when a stale bound_predict_view_id is present but applicability is not_applicable", async () => {
+    const fetchMock = installCapabilityFetchMock({
+      contract: notApplicableForecastingContract,
+      boundPredictViewId: "stale-bound-view",
+    });
+    renderDatasetPage();
+    await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
+
+    await waitFor(() => {
+      expect(screen.getByRole("tab", { name: "Overview" })).toBeInTheDocument();
+    });
+    expect(screen.queryByRole("tab", { name: "Inference" })).not.toBeInTheDocument();
+    expect(
+      fetchMock.mock.calls.some((call) => String(call[0]).includes("/customization")),
+    ).toBe(false);
+  });
+
+  it("still fetches bound Predict View customization when applicability is available", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith(`/datasets/${slug}/views/bound-view/customization`)) {
+        return jsonResponse({}, 404);
+      }
+      if (url.endsWith(`/datasets/${slug}/context`)) {
+        return jsonResponse({
+          dataset_slug: slug,
+          context: { ...contextPayload, problem_type: "univariate_forecasting", bound_predict_view_id: "bound-view" },
+        });
+      }
+      if (url.endsWith(`/datasets/${slug}/metrics`)) return jsonResponse({ dataset_slug: slug, metrics: {} });
+      if (url.endsWith(`/datasets/${slug}/visualizations`)) {
+        return jsonResponse({ dataset_slug: slug, visualizations: { charts: [], dataset_statistics: { instance_count: 48 } } });
+      }
+      if (url.endsWith(`/datasets/${slug}/contract`)) {
+        return jsonResponse({ dataset_slug: slug, contract: availableForecastingContract, result_contract: forecastingResultContract });
+      }
+      if (url.endsWith(`/datasets/${slug}`)) return jsonResponse(datasetMetadata);
+      return jsonResponse({}, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderDatasetPage();
+    await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
+
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some((call) => String(call[0]).includes(`/views/bound-view/customization`)),
+      ).toBe(true);
+    });
+  });
+});

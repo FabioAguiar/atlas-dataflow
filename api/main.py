@@ -57,6 +57,7 @@ from external_inference_client import (  # noqa: E402
 from public_contract_loader import (  # noqa: E402
     PublicContractUnavailableError,
     load_public_contract,
+    public_prediction_surface_available,
 )
 from public_context_loader import (  # noqa: E402
     PublicContextUnavailableError,
@@ -163,6 +164,18 @@ CUSTOMIZATION_NOT_FOUND = PublicError(
     error_type="customization_not_found",
     error_code="CUSTOMIZATION_NOT_FOUND",
     message="No customization is available for this predict view.",
+)
+
+# Project Spec S0271: bounded, dataset-agnostic public error returned when the
+# active release's reviewed public contract declares
+# predictive_interaction.public_prediction.applicability = not_applicable and
+# the caller reaches the public inference POST. It is a closed, stable code --
+# never INVALID_PAYLOAD, and returned before any payload/runtime work.
+PUBLIC_PREDICTION_NOT_AVAILABLE = PublicError(
+    status_code=404,
+    error_type="public_prediction_not_available",
+    error_code="PUBLIC_PREDICTION_NOT_AVAILABLE",
+    message="Public prediction interaction is not available for this dataset.",
 )
 
 # Project Spec S0121: bounded per-resource error for the private authoring
@@ -338,6 +351,30 @@ def _resolve_public_dataset_detail_access(dataset_slug: str):
         return public_error_response(DATASET_MAINTENANCE)
 
     return resolved
+
+
+def _resolve_public_prediction_capability(active_release: str) -> bool | None:
+    """
+    Project Spec S0271: interpret the active release's reviewed public
+    contract for public prediction-surface availability, using the single
+    bounded ``public_prediction_surface_available`` interpretation shared with
+    every gated public route.
+
+    Returns ``True``/``False`` when the public contract loads. Returns
+    ``None`` when the public contract itself is unavailable. ``None`` is
+    additive-consumption compatible: a release that predates the S0269 public
+    contract projection is never retroactively disabled -- every gated
+    surface preserves its historical behavior and only an explicitly loaded
+    ``not_applicable`` contract closes a surface. The public inference route
+    still relies on ``_execute_governed_inference``'s own fail-closed
+    contract/artifact boundary so a model is never executed for a release
+    whose interface projection cannot be resolved.
+    """
+    try:
+        public_contract = load_public_contract(active_release)
+    except PublicContractUnavailableError:
+        return None
+    return public_prediction_surface_available(public_contract)
 
 
 def _dataset_publicly_ready(dataset_slug: str) -> bool:
@@ -965,6 +1002,21 @@ def validate_dataset_inference_payload(
     if isinstance(resolved, JSONResponse):
         return resolved
 
+    # Project Spec S0271: the release-bound public prediction capability is
+    # consulted after dataset readiness but before payload type/schema
+    # validation, runtime-contract load, inference-bundle load, model load,
+    # model execution, or result validation. An explicit not_applicable
+    # release rejects here with a bounded 404 -- never INVALID_PAYLOAD, and
+    # never after any payload/runtime work. A release whose public contract
+    # cannot be resolved at all preserves historical behavior and delegates
+    # to _execute_governed_inference, whose own contract/artifact boundary
+    # already fails closed before executing a model. This guard is never
+    # applied to POST /admin/datasets/{dataset_slug}/inference and is never
+    # embedded inside _execute_governed_inference (shared with that private
+    # route).
+    if _resolve_public_prediction_capability(resolved.active_release) is False:
+        return public_error_response(PUBLIC_PREDICTION_NOT_AVAILABLE)
+
     return _execute_governed_inference(resolved.dataset_slug, resolved.active_release, payload)
 
 
@@ -1041,6 +1093,16 @@ def get_public_context(dataset_slug: str):
     overlay = resolve_public_presentation_overlay(dataset_slug, expected_problem_type=expected_problem_type)
     context = {**context, **overlay}
 
+    # Project Spec S0271: the published profile snapshot stays authoritative
+    # for presentation configuration, but the final public projection must not
+    # advertise a bound Predict View as an available public interaction when
+    # the active release declares public prediction not_applicable. Only the
+    # projection is suppressed -- the snapshot/draft is never mutated, and
+    # every other context field (result-card/documentation presentation) is
+    # unchanged. A release without the S0269 field keeps its existing binding.
+    if _resolve_public_prediction_capability(resolved.active_release) is False:
+        context = {**context, "bound_predict_view_id": None}
+
     return {
         "dataset_slug": resolved.dataset_slug,
         "context": context,
@@ -1087,6 +1149,16 @@ def list_predict_views(dataset_slug: str):
     if isinstance(guard, JSONResponse):
         return guard
 
+    # Project Spec S0271: an explicit not_applicable release exposes no public
+    # Predict Views -- return an empty list without ever touching the Predict
+    # View registry loader. A release whose public contract cannot be loaded
+    # preserves the historical behavior below.
+    if _resolve_public_prediction_capability(guard.active_release) is False:
+        return {
+            "dataset_slug": dataset_slug,
+            "views": [],
+        }
+
     try:
         views = load_public_predict_view_list(dataset_slug)
     except ViewNotFoundError:
@@ -1108,6 +1180,13 @@ def get_predict_view(dataset_slug: str, view_id: str):
     if isinstance(guard, JSONResponse):
         return guard
 
+    # Project Spec S0271: for an explicit not_applicable release the direct
+    # Predict View lookup is unavailable -- return the existing VIEW_NOT_FOUND
+    # public envelope before the registry lookup, so a caller cannot use a
+    # disabled surface to probe whether a particular bound record exists.
+    if _resolve_public_prediction_capability(guard.active_release) is False:
+        return public_error_response(VIEW_NOT_FOUND)
+
     try:
         view = load_public_predict_view(dataset_slug, view_id)
     except ViewBindingInvalidError:
@@ -1123,6 +1202,14 @@ def get_predict_view_customization(dataset_slug: str, view_id: str):
     resolved = _resolve_public_dataset_detail_access(dataset_slug)
     if isinstance(resolved, JSONResponse):
         return resolved
+
+    # Project Spec S0271: for an explicit not_applicable release the public
+    # Predict View customization is unavailable -- return the existing
+    # CUSTOMIZATION_NOT_FOUND public envelope before the customization
+    # resolution, for the same probe-prevention reason as the direct view
+    # route above.
+    if _resolve_public_prediction_capability(resolved.active_release) is False:
+        return public_error_response(CUSTOMIZATION_NOT_FOUND)
 
     try:
         customization = load_public_predict_view_customization(

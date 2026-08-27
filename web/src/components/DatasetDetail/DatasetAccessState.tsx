@@ -73,7 +73,14 @@ export function classifyDatasetAccessError(body: unknown): DatasetAccessStateKin
   if (errorCode === "DATASET_MAINTENANCE") {
     return "maintenance";
   }
-  if (errorCode === "DATASET_NOT_FOUND") {
+  // Project Spec S0271: the backend already returns VIEW_NOT_FOUND for a
+  // Predict View that is unavailable (including one disabled by the release's
+  // predictive-interaction applicability). Classifying it as the shared
+  // not-found page state -- rather than the generic transient "information is
+  // currently unavailable" state -- gives a direct disabled Predict View URL
+  // the correct, capability-internals-free copy ("The dataset or link you
+  // tried to access does not exist.").
+  if (errorCode === "DATASET_NOT_FOUND" || errorCode === "VIEW_NOT_FOUND") {
     return "not_found";
   }
   return "unavailable";

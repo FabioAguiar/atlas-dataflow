@@ -129,3 +129,47 @@ def load_public_contract(
             "Public contract is not available for this release."
         )
     return projection
+
+
+def public_prediction_surface_available(public_contract: dict) -> bool:
+    """
+    Project Spec S0271: interpret an already-loaded, schema-valid public
+    contract to decide whether public prediction surfaces (the Dataset Detail
+    Inference tab, public Predict View routes, and the public inference POST)
+    are available for the active release.
+
+    This consumes only the S0269 release-bound public applicability
+    projection. It never inspects problem type, model family/name, dataset
+    slug, Predict View registry/profile state, ``required_anchor``,
+    ``frequency``, or ``history_target_values.affect_forecast``.
+
+    Compatibility rule (identical to the frontend helper):
+
+      * ``predictive_interaction`` absent (scalar or historical forecasting
+        v2 contract) -> ``True``
+      * ``predictive_interaction.public_prediction.applicability`` is
+        ``"available"`` -> ``True``
+      * ``applicability`` is ``"not_applicable"`` -> ``False``
+
+    A present-but-malformed ``predictive_interaction`` shape fails closed
+    (``False``) rather than silently resolving to available.
+    """
+    if not isinstance(public_contract, dict):
+        return False
+
+    projection = public_contract.get("predictive_interaction")
+    if projection is None:
+        return True
+    if not isinstance(projection, dict):
+        return False
+
+    public_prediction = projection.get("public_prediction")
+    if not isinstance(public_prediction, dict):
+        return False
+
+    applicability = public_prediction.get("applicability")
+    if applicability == "available":
+        return True
+    if applicability == "not_applicable":
+        return False
+    return False

@@ -47,6 +47,7 @@ import {
 } from "../../components/ResultCard/types";
 import InferenceForm, {
   isForecastingContractPayload,
+  isPublicPredictionSurfaceAvailable,
   normalizeAdminInferenceGuidance,
   normalizeInferenceRuntimeDiagnostic,
   normalizeInferenceValidationIssues,
@@ -4803,6 +4804,15 @@ function DatasetDetailLivePreview({
   // editing buffer, which stays local to DocumentationTab until Save.
   const documentationContent = <DatasetDocumentation content={form.documentation} />;
 
+  // Project Spec S0271: Live Preview mirrors the public Dataset Detail tab
+  // availability using the same bounded helper and the active-release public
+  // contract already present in readOnlyData.contract -- no extra request,
+  // no dataset slug/model branch. An explicit not_applicable release omits
+  // Inference in the preview so it reflects what publication exposes; the
+  // private liveInferenceExecutor / customization editor / Predict View
+  // authoring resources stay intact and simply dormant in this composition.
+  const inferenceAvailable = contract ? isPublicPredictionSurfaceAvailable(contract) : true;
+
   return (
     <DatasetDetailSurface
       analysisType={preview.analysisType}
@@ -4812,6 +4822,7 @@ function DatasetDetailLivePreview({
       documentationContent={documentationContent}
       featureImportanceContent={featureImportanceContent}
       forecastingDiagnosticsContent={forecastingDiagnosticsContent}
+      inferenceAvailable={inferenceAvailable}
       inferenceContent={inferenceContent}
       metadata={preview.metadata}
       modelDisplayName={preview.modelDisplayName}

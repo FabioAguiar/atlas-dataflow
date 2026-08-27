@@ -4691,6 +4691,245 @@ def test_authoring_context_route_never_mutates_registry_or_predict_views_files()
 
 
 # ---------------------------------------------------------------------------
+# Project Spec S0271: capability-driven public prediction surface availability.
+# Public routes consume only the active release public contract's S0269
+# predictive_interaction.public_prediction.applicability -- never problem type,
+# dataset slug, model family, Predict View/profile state, or
+# history_target_values.affect_forecast.
+# ---------------------------------------------------------------------------
+
+_S0271_RELEASE = "release-s0271-capability-fixture"
+
+_S0271_FORECASTING_BASE = {
+    "schema_version": "2.0.0",
+    "problem_type": "univariate_forecasting",
+    "input_kind": "history_series",
+    "history_series": {
+        "time_index_field": {"name": "period", "label": "Period", "value_kind": "calendar_period", "display_order": 1},
+        "target_field": {"name": "passengers", "label": "Passengers", "value_kind": "number", "display_order": 2},
+        "frequency": "Monthly",
+    },
+    "forecast": {"forecast_horizon": 3, "horizon_user_editable": False},
+}
+
+
+def _s0271_forecasting_contract(applicability=None):
+    contract = json.loads(json.dumps(_S0271_FORECASTING_BASE))
+    if applicability is not None:
+        contract["predictive_interaction"] = {
+            "history_target_values": {"affect_forecast": False},
+            "public_prediction": {"applicability": applicability},
+        }
+    return contract
+
+
+_S0271_CONTRACT_UNAVAILABLE = object()
+
+
+def _s0271_install_public_access(monkeypatch, dataset_slug, contract):
+    """
+    Isolate the shared public Dataset Detail access guard and feed a bounded
+    active-release public contract (or, with _S0271_CONTRACT_UNAVAILABLE, make
+    load_public_contract fail closed) for the S0271 capability tests.
+    """
+    monkeypatch.setattr(
+        api_main,
+        "resolve_dataset",
+        lambda _slug: SimpleNamespace(dataset_slug=dataset_slug, active_release=_S0271_RELEASE),
+    )
+    monkeypatch.setattr(api_main, "resolve_dataset_visibility", lambda _slug: True)
+    monkeypatch.setattr(api_main, "is_dataset_needs_review", lambda _slug: False)
+    monkeypatch.setattr(
+        api_main,
+        "resolve_dataset_snapshot_readiness",
+        lambda *_a, **_k: {"status": "current_release", "matches_active_release": True},
+    )
+
+    def _load_public_contract(_active_release, releases_root=None):
+        if contract is _S0271_CONTRACT_UNAVAILABLE:
+            raise api_main.PublicContractUnavailableError("public contract unavailable")
+        return contract
+
+    monkeypatch.setattr(api_main, "load_public_contract", _load_public_contract)
+
+
+def test_s0271_not_applicable_public_inference_rejects_before_governed_execution(monkeypatch):
+    _s0271_install_public_access(monkeypatch, "fixture-s0271", _s0271_forecasting_contract("not_applicable"))
+
+    def _must_not_run(*_a, **_k):
+        raise AssertionError("_execute_governed_inference must not run for a not_applicable release")
+
+    monkeypatch.setattr(api_main, "_execute_governed_inference", _must_not_run)
+
+    response = api_main.validate_dataset_inference_payload("fixture-s0271", payload={"period": "2026-01"})
+
+    assert response.status_code == 404
+    assert _response_json(response)["error_code"] == "PUBLIC_PREDICTION_NOT_AVAILABLE"
+    _assert_no_internal_public_exposure(_response_json(response))
+
+
+def test_s0271_available_public_inference_preserves_existing_behavior(monkeypatch):
+    _s0271_install_public_access(monkeypatch, "fixture-s0271", _s0271_forecasting_contract("available"))
+    sentinel = {"dataset_slug": "fixture-s0271", "result": {"ok": True}}
+    monkeypatch.setattr(api_main, "_execute_governed_inference", lambda *_a, **_k: sentinel)
+
+    response = api_main.validate_dataset_inference_payload("fixture-s0271", payload={"period": "2026-01"})
+
+    assert response is sentinel
+
+
+def test_s0271_historical_forecasting_public_inference_preserves_existing_behavior(monkeypatch):
+    _s0271_install_public_access(monkeypatch, "fixture-s0271", _s0271_forecasting_contract(None))
+    sentinel = {"dataset_slug": "fixture-s0271", "result": {"ok": True}}
+    monkeypatch.setattr(api_main, "_execute_governed_inference", lambda *_a, **_k: sentinel)
+
+    response = api_main.validate_dataset_inference_payload("fixture-s0271", payload={"period": "2026-01"})
+
+    assert response is sentinel
+
+
+def test_s0271_public_contract_unavailable_preserves_existing_inference_boundary(monkeypatch):
+    # Project Spec S0271: additive consumption -- a release whose public
+    # contract projection cannot be resolved is never retroactively disabled.
+    # The capability guard does not short-circuit; the public route keeps its
+    # existing behavior, delegating to _execute_governed_inference whose own
+    # payload/contract/artifact boundary still fails closed before any model
+    # execution (proven here with a malformed payload that must still yield
+    # the bounded INVALID_PAYLOAD envelope, never a capability bypass or a
+    # crash, and never model execution).
+    _s0271_install_public_access(monkeypatch, "fixture-s0271", _S0271_CONTRACT_UNAVAILABLE)
+    monkeypatch.setattr(api_main, "load_contract", lambda _active_release: {"features": []})
+    monkeypatch.setattr(
+        api_main,
+        "execute_prediction",
+        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("no model execution for a malformed payload")),
+    )
+
+    response = api_main.validate_dataset_inference_payload("fixture-s0271", payload="not-a-dict")
+
+    assert response.status_code == 422
+    assert _response_json(response)["error_code"] == "INVALID_PAYLOAD"
+
+
+def test_s0271_not_applicable_view_list_is_empty_without_registry_resolution(monkeypatch):
+    _s0271_install_public_access(monkeypatch, "fixture-s0271", _s0271_forecasting_contract("not_applicable"))
+    monkeypatch.setattr(
+        api_main,
+        "load_public_predict_view_list",
+        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("registry must not be resolved for not_applicable")),
+    )
+
+    response = api_main.list_predict_views("fixture-s0271")
+
+    assert response == {"dataset_slug": "fixture-s0271", "views": []}
+
+
+def test_s0271_available_view_list_preserves_registry_resolution(monkeypatch):
+    _s0271_install_public_access(monkeypatch, "fixture-s0271", _s0271_forecasting_contract("available"))
+    monkeypatch.setattr(api_main, "load_public_predict_view_list", lambda *_a, **_k: [{"view_id": "v1"}])
+
+    response = api_main.list_predict_views("fixture-s0271")
+
+    assert response == {"dataset_slug": "fixture-s0271", "views": [{"view_id": "v1"}]}
+
+
+def test_s0271_not_applicable_direct_view_returns_view_not_found_before_registry(monkeypatch):
+    _s0271_install_public_access(monkeypatch, "fixture-s0271", _s0271_forecasting_contract("not_applicable"))
+    monkeypatch.setattr(
+        api_main,
+        "load_public_predict_view",
+        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("registry lookup must not run for not_applicable")),
+    )
+
+    response = api_main.get_predict_view("fixture-s0271", "some-view")
+
+    assert response.status_code == 404
+    assert _response_json(response)["error_code"] == "VIEW_NOT_FOUND"
+
+
+def test_s0271_not_applicable_customization_returns_not_found_before_resolution(monkeypatch):
+    _s0271_install_public_access(monkeypatch, "fixture-s0271", _s0271_forecasting_contract("not_applicable"))
+    monkeypatch.setattr(
+        api_main,
+        "load_public_predict_view_customization",
+        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("customization must not be resolved for not_applicable")),
+    )
+
+    response = api_main.get_predict_view_customization("fixture-s0271", "some-view")
+
+    assert response.status_code == 404
+    assert _response_json(response)["error_code"] == "CUSTOMIZATION_NOT_FOUND"
+
+
+def test_s0271_not_applicable_public_context_nulls_bound_predict_view_id(monkeypatch):
+    _s0271_install_public_access(monkeypatch, "fixture-s0271", _s0271_forecasting_contract("not_applicable"))
+    monkeypatch.setattr(
+        api_main,
+        "load_public_context",
+        lambda _release: {"schema_version": "public-context.v1", "title": "Fixture", "summary": "s"},
+    )
+    monkeypatch.setattr(
+        api_main,
+        "resolve_public_presentation_overlay",
+        lambda _slug, expected_problem_type=None: {
+            "bound_predict_view_id": "stale-bound-view",
+            "legacy_submit_button_label": "Predict",
+            "result_card": {"schema_version": "univariate-forecasting-result-presentation.v1"},
+        },
+    )
+
+    response = api_main.get_public_context("fixture-s0271")
+    context = response["context"]
+
+    assert context["bound_predict_view_id"] is None
+    # Every other presentation field is preserved unchanged.
+    assert context["legacy_submit_button_label"] == "Predict"
+    assert context["result_card"] == {"schema_version": "univariate-forecasting-result-presentation.v1"}
+    assert context["title"] == "Fixture"
+
+
+def test_s0271_available_public_context_keeps_bound_predict_view_id(monkeypatch):
+    _s0271_install_public_access(monkeypatch, "fixture-s0271", _s0271_forecasting_contract("available"))
+    monkeypatch.setattr(
+        api_main,
+        "load_public_context",
+        lambda _release: {"schema_version": "public-context.v1", "title": "Fixture", "summary": "s"},
+    )
+    monkeypatch.setattr(
+        api_main,
+        "resolve_public_presentation_overlay",
+        lambda _slug, expected_problem_type=None: {"bound_predict_view_id": "bound-view", "legacy_submit_button_label": None},
+    )
+
+    response = api_main.get_public_context("fixture-s0271")
+
+    assert response["context"]["bound_predict_view_id"] == "bound-view"
+
+
+def test_s0271_private_admin_inference_is_not_capability_gated(monkeypatch):
+    monkeypatch.setenv("ATLAS_ADMIN_ENABLED", "true")
+    monkeypatch.setattr(
+        api_main,
+        "resolve_dataset",
+        lambda _slug: SimpleNamespace(dataset_slug="fixture-s0271", active_release=_S0271_RELEASE),
+    )
+    # A not_applicable public contract must never influence the private route:
+    # load_public_contract is not even consulted here.
+    monkeypatch.setattr(
+        api_main,
+        "load_public_contract",
+        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("private Admin inference must not read the public contract")),
+    )
+    sentinel = {"dataset_slug": "fixture-s0271", "result": {"ok": True}}
+    monkeypatch.setattr(api_main, "_execute_governed_inference", lambda *_a, **_k: sentinel)
+
+    request = Request({"type": "http", "method": "POST", "path": "/admin/datasets/fixture-s0271/inference", "headers": []})
+    response = api_main.post_admin_dataset_inference("fixture-s0271", request, payload={"period": "2026-01"})
+
+    assert response is sentinel
+
+
+# ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
 

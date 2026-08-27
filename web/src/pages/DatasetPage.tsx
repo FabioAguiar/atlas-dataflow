@@ -14,6 +14,7 @@ import TargetDistribution, { type VisualizationsPayload } from "../components/Da
 import InferenceForm, {
   ContractPayload,
   isForecastingContractPayload,
+  isPublicPredictionSurfaceAvailable,
   PredictViewCustomization,
 } from "../components/InferenceForm/InferenceForm";
 import {
@@ -265,8 +266,24 @@ export default function DatasetPage() {
   // instead of removing the form.
   const boundPredictViewId = contextState.status === "ready" ? contextState.data.bound_predict_view_id : null;
 
+  // Project Spec S0271: public tab availability derives from the active public
+  // contract only -- never from context.bound_predict_view_id or any other
+  // presentation binding. While the contract is still loading or unavailable
+  // the historical behavior (Inference present) is retained; an explicit
+  // not_applicable forecasting contract makes the surface unavailable.
+  const publicPredictionSurfaceAvailable =
+    contractState.status === "ready"
+      ? isPublicPredictionSurfaceAvailable(contractState.data.contract)
+      : true;
+
   useEffect(() => {
-    if (!slug || !primaryReady || !boundPredictViewId) {
+    // Project Spec S0271: the bound Predict View customization fetch is gated
+    // on the public prediction surface being available, so an explicit
+    // not_applicable release never issues
+    // GET /datasets/{slug}/views/{boundId}/customization merely because an
+    // older profile still carries a binding. The stored binding value is
+    // never deleted or rewritten here.
+    if (!slug || !primaryReady || !boundPredictViewId || !publicPredictionSurfaceAvailable) {
       setBoundViewCustomizationState({ status: "ready", data: null });
       return;
     }
@@ -300,7 +317,7 @@ export default function DatasetPage() {
       });
 
     return () => controller.abort();
-  }, [slug, primaryReady, boundPredictViewId]);
+  }, [slug, primaryReady, boundPredictViewId, publicPredictionSurfaceAvailable]);
 
   useEffect(() => {
     if (!slug) {
@@ -615,6 +632,7 @@ export default function DatasetPage() {
           documentationContent={documentationContent}
           featureImportanceContent={featureImportanceContent}
           forecastingDiagnosticsContent={forecastingDiagnosticsContent}
+          inferenceAvailable={publicPredictionSurfaceAvailable}
           inferenceContent={inferenceContent}
           metadata={metadataItems}
           modelDisplayName={modelDisplayName}

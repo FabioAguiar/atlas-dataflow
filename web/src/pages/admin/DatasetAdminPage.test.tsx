@@ -4984,6 +4984,120 @@ describe("DatasetAdminPage", () => {
     });
   });
 
+  // Project Spec S0271: Admin Live Preview mirrors the public Dataset Detail
+  // Inference-tab availability using the active-release public contract already
+  // present in readOnlyData -- no dataset slug/model-name branch. Private
+  // Admin inference execution and Predict View authoring resources stay
+  // intact; only the shared preview surface omits the tab.
+  describe("Dataset Admin Live Preview capability-driven Inference tab (Project Spec S0271)", () => {
+    const forecastingContractBase = {
+      schema_version: "2.0.0",
+      problem_type: "univariate_forecasting",
+      input_kind: "history_series",
+      history_series: {
+        time_index_field: { name: "period", label: "Period", value_kind: "calendar_period", display_order: 1 },
+        target_field: { name: "passengers", label: "Passengers", value_kind: "number", display_order: 2 },
+        frequency: "Monthly",
+      },
+      forecast: { forecast_horizon: 3, horizon_user_editable: false },
+    };
+    const historicalContract = { ...forecastingContractBase };
+    const availableContract = {
+      ...forecastingContractBase,
+      predictive_interaction: {
+        history_target_values: { affect_forecast: false },
+        public_prediction: { applicability: "available" },
+      },
+    };
+    const notApplicableContract = {
+      ...forecastingContractBase,
+      predictive_interaction: {
+        history_target_values: { affect_forecast: false },
+        public_prediction: { applicability: "not_applicable" },
+      },
+    };
+    const forecastingResultContract = {
+      status: "available",
+      semantics: {
+        schema_version: "univariate-forecasting-result-semantics.v1",
+        problem_type: "univariate_forecasting",
+        result_schema_version: "univariate-forecasting-result.v1",
+        primary_output: "forecast_series",
+        output_structure: "ordered_forecast_points",
+        forecast_value_kind: "continuous_numeric",
+        forecast_count_source: "forecast_horizon",
+        model_descriptor: { model_family: "deterministic_seasonal_trend_ols", display_name: "Seasonal Trend" },
+      },
+    };
+
+    function livePreviewDetailTabs() {
+      fireEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
+      return within(screen.getByRole("tablist", { name: "Dataset detail sections" }));
+    }
+
+    it("renders Overview and Documentation only when the active-release contract is not_applicable", async () => {
+      installFetchMock({
+        contractOverride: notApplicableContract,
+        resultContractOverride: forecastingResultContract,
+      });
+      renderAdminPage();
+      await loadDraftOnly();
+
+      const detailTabs = livePreviewDetailTabs();
+      await waitFor(() => {
+        expect(detailTabs.getByRole("tab", { name: "Overview" })).toBeInTheDocument();
+      });
+      expect(detailTabs.getByRole("tab", { name: "Documentation" })).toBeInTheDocument();
+      expect(detailTabs.queryByRole("tab", { name: "Inference" })).not.toBeInTheDocument();
+    });
+
+    it("keeps the Inference tab when the active-release contract declares available", async () => {
+      installFetchMock({
+        contractOverride: availableContract,
+        resultContractOverride: forecastingResultContract,
+      });
+      renderAdminPage();
+      await loadDraftOnly();
+
+      const detailTabs = livePreviewDetailTabs();
+      expect(await detailTabs.findByRole("tab", { name: "Inference" })).toBeInTheDocument();
+    });
+
+    it("keeps the Inference tab for a historical contract with no predictive_interaction field", async () => {
+      installFetchMock({
+        contractOverride: historicalContract,
+        resultContractOverride: forecastingResultContract,
+      });
+      renderAdminPage();
+      await loadDraftOnly();
+
+      const detailTabs = livePreviewDetailTabs();
+      expect(await detailTabs.findByRole("tab", { name: "Inference" })).toBeInTheDocument();
+    });
+
+    it("keeps Predict View authoring state loadable even when the public Inference tab is omitted", async () => {
+      installFetchMock({
+        contractOverride: notApplicableContract,
+        resultContractOverride: forecastingResultContract,
+        customizationAbsent: true,
+      });
+      renderAdminPage();
+      await loadDraftOnly();
+
+      // The private authoring Inference Form editor still bootstraps from the
+      // same contract, independently of the public preview tab omission.
+      fireEvent.click(screen.getByRole("tab", { name: "Inference Form" }));
+      expect(await screen.findByLabelText("History-series field customization")).toBeInTheDocument();
+      expect(screen.getByLabelText("Period display label")).toBeInTheDocument();
+
+      // And the Live Preview still omits the public Inference tab.
+      const detailTabs = livePreviewDetailTabs();
+      await waitFor(() => {
+        expect(detailTabs.queryByRole("tab", { name: "Inference" })).not.toBeInTheDocument();
+      });
+    });
+  });
+
   // Project Spec S0229: continuous-regression Result Card authoring --
   // release-derived family (never operator-selectable), read-only technical
   // summary, editable fields limited to predicted-value label/decimal

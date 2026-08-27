@@ -40,6 +40,12 @@ export type DatasetDetailSurfaceProps = {
   // featureImportanceContent are omitted by the caller.
   forecastingDiagnosticsContent?: ReactNode;
   inferenceContent: ReactNode;
+  // Project Spec S0271: whether this shared public-style surface exposes the
+  // Inference tab. Optional, defaults to true for compatibility. The value is
+  // decided by the caller (DatasetPage / Admin Live Preview) from the active
+  // release public contract -- this presentation-only surface never reads a
+  // contract, fetches, or inspects dataset slug/Admin state itself.
+  inferenceAvailable?: boolean;
   documentationContent?: ReactNode;
 };
 
@@ -64,6 +70,7 @@ export default function DatasetDetailSurface({
   regressionDiagnosticsContent,
   forecastingDiagnosticsContent,
   inferenceContent,
+  inferenceAvailable = true,
   documentationContent,
 }: DatasetDetailSurfaceProps) {
   const resolvedTheme = resolveDatasetThemePreset(themePresetId);
@@ -111,6 +118,7 @@ export default function DatasetDetailSurface({
 
       <DatasetDetailTabs
         documentationContent={documentationContent}
+        inferenceAvailable={inferenceAvailable}
         inferenceContent={inferenceContent}
         overviewContent={overviewContent}
       />

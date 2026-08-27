@@ -74,12 +74,31 @@ export type ScalarContractPayload = {
   features: Feature[];
 };
 
+/**
+ * Project Spec S0269 / S0271: the optional, additive public projection of the
+ * reviewed predictive-interaction policy. Historical `public-contract` 2.0.0
+ * forecasting documents materialized before S0269 omit this entirely and stay
+ * valid; when present, `public_prediction.applicability` is the single
+ * release-bound authority for public prediction-surface availability
+ * (`history_target_values.affect_forecast` describes model behavior only and
+ * is never a surface-availability decision input).
+ */
+export type PredictiveInteractionProjection = {
+  history_target_values: {
+    affect_forecast: boolean;
+  };
+  public_prediction: {
+    applicability: "available" | "not_applicable";
+  };
+};
+
 export type ForecastingContractPayload = {
   schema_version: "2.0.0";
   problem_type: "univariate_forecasting";
   input_kind: "history_series";
   history_series: HistorySeriesGuidance;
   forecast: ForecastGuidance;
+  predictive_interaction?: PredictiveInteractionProjection;
 };
 
 /**
@@ -101,6 +120,49 @@ export function isForecastingContractPayload(
     (contract as ForecastingContractPayload).problem_type === "univariate_forecasting" &&
     (contract as ForecastingContractPayload).input_kind === "history_series"
   );
+}
+
+/**
+ * Project Spec S0271: the single bounded consumer of the S0269 release-bound
+ * public predictive-interaction applicability. Answers exactly one question --
+ * "is the public prediction surface (Inference tab / Predict View routes /
+ * public inference POST) available for this active-release contract?" -- and
+ * is shared by the public Dataset Page and Admin Live Preview so the two can
+ * never diverge.
+ *
+ * Rules:
+ *   scalar contract                                    -> true
+ *   forecasting v2 + predictive_interaction absent      -> true (historical)
+ *   forecasting v2 + applicability = "available"        -> true
+ *   forecasting v2 + applicability = "not_applicable"   -> false
+ *
+ * It never derives availability from problem type alone, dataset slug, model
+ * name/family, result/Predict View/profile state, `required_anchor`,
+ * `frequency`, or `history_target_values.affect_forecast`. A present but
+ * malformed `predictive_interaction` shape fails closed (false) rather than
+ * silently resolving to available.
+ */
+export function isPublicPredictionSurfaceAvailable(contract: ContractPayload): boolean {
+  if (!isForecastingContractPayload(contract)) {
+    return true;
+  }
+
+  const projection = contract.predictive_interaction;
+  if (projection === undefined || projection === null) {
+    return true;
+  }
+  if (typeof projection !== "object") {
+    return false;
+  }
+
+  const applicability = (projection as PredictiveInteractionProjection).public_prediction?.applicability;
+  if (applicability === "available") {
+    return true;
+  }
+  if (applicability === "not_applicable") {
+    return false;
+  }
+  return false;
 }
 
 export type AdminInferenceFieldGuidance = {

@@ -35,6 +35,7 @@ from pipeline.discovery_evidence import (
     build_multiclass_result_semantics_intent,
     build_univariate_forecasting_evaluation_policy_intent,
     build_univariate_forecasting_history_input_policy_intent,
+    build_univariate_forecasting_predictive_interaction_intent,
     build_univariate_forecasting_result_semantics_intent,
     build_univariate_forecasting_training_policy_intent,
 )
@@ -2206,6 +2207,19 @@ def _approved_forecasting_history_input_policy_intent(**overrides):
     return build_univariate_forecasting_history_input_policy_intent(**kwargs)
 
 
+def _approved_forecasting_predictive_interaction_intent(**overrides):
+    kwargs = dict(
+        review_status="approved",
+        history_target_values_affect_forecast=False,
+        refit_on_input=False,
+        model_parameters_updated_on_input=False,
+        public_prediction_interaction_applicability="not_applicable",
+        review_notes="Reviewed forecasting predictive-interaction policy.",
+    )
+    kwargs.update(overrides)
+    return build_univariate_forecasting_predictive_interaction_intent(**kwargs)
+
+
 def _valid_semantic_intent_v4(
     target_field_name="demand",
     time_index_field_name="period",
@@ -2362,6 +2376,7 @@ def _modeling_intent_for_forecasting(
     forecasting_evaluation_policy_intent=_MISSING,
     forecasting_training_policy_intent=_MISSING,
     forecasting_history_input_policy_intent=_MISSING,
+    forecasting_predictive_interaction_intent=_MISSING,
     binary_result_semantics_intent=None,
     multiclass_result_semantics_intent=None,
     continuous_regression_result_semantics_intent=None,
@@ -2413,6 +2428,11 @@ def _modeling_intent_for_forecasting(
             if forecasting_history_input_policy_intent is _MISSING
             else forecasting_history_input_policy_intent
         ),
+        "univariate_forecasting_predictive_interaction_intent": (
+            _approved_forecasting_predictive_interaction_intent()
+            if forecasting_predictive_interaction_intent is _MISSING
+            else forecasting_predictive_interaction_intent
+        ),
     }
 
 
@@ -2444,6 +2464,13 @@ def test_execution_contract_v2_materializes_from_approved_fixtures():
         "minimum_observation_count": 1,
         "required_anchor": {"presence": "required", "source": "development_end"},
         "forecast_origin_source": "last_validated_history_index",
+    }
+    assert contract["predictive_interaction_policy"] == {
+        "schema_version": "univariate-forecasting-predictive-interaction-policy.v1",
+        "history_target_values_affect_forecast": False,
+        "refit_on_input": False,
+        "model_parameters_updated_on_input": False,
+        "public_prediction_interaction_applicability": "not_applicable",
     }
 
 
@@ -2955,6 +2982,131 @@ def test_execution_contract_v2_history_input_policy_projection_evidence_reduced_
     assert evidence["history_input_policy_schema_version"] == "univariate-forecasting-history-input-policy.v1"
     assert evidence["history_input_policy_minimum_observation_count"] == 1
     assert evidence["history_input_policy_required_anchor_source"] == "development_end"
+
+
+# ---------------------------------------------------------------------------
+# execution_contract.v2 -- forecasting predictive-interaction-policy
+# materialization (Project Spec S0269)
+# ---------------------------------------------------------------------------
+
+
+def test_execution_contract_v2_predictive_interaction_missing_fails_closed():
+    modeling_intent = _modeling_intent_for_forecasting(forecasting_predictive_interaction_intent=None)
+    with pytest.raises(ExecutionContractV2ValidationError):
+        _build_execution_contract(
+            modeling_intent, {}, _valid_preparation_recipe_v2(), semantic_intent=_valid_semantic_intent_v4()
+        )
+
+
+def test_execution_contract_v2_predictive_interaction_pending_fails_closed():
+    modeling_intent = _modeling_intent_for_forecasting(
+        forecasting_predictive_interaction_intent=_approved_forecasting_predictive_interaction_intent(
+            review_status="pending"
+        )
+    )
+    with pytest.raises(ExecutionContractV2ValidationError):
+        _build_execution_contract(
+            modeling_intent, {}, _valid_preparation_recipe_v2(), semantic_intent=_valid_semantic_intent_v4()
+        )
+
+
+def test_execution_contract_v2_predictive_interaction_rejected_fails_closed():
+    modeling_intent = _modeling_intent_for_forecasting(
+        forecasting_predictive_interaction_intent=_approved_forecasting_predictive_interaction_intent(
+            review_status="rejected"
+        )
+    )
+    with pytest.raises(ExecutionContractV2ValidationError):
+        _build_execution_contract(
+            modeling_intent, {}, _valid_preparation_recipe_v2(), semantic_intent=_valid_semantic_intent_v4()
+        )
+
+
+def test_execution_contract_v2_predictive_interaction_malformed_applicability_fails_closed():
+    # A hand-built (not builder-validated) modeling intent, mirroring how
+    # test_execution_contract_v2_history_input_policy_malformed_anchor_fails_closed
+    # mutates an already-built object to exercise contract_derivation's own
+    # independent re-validation rather than the discovery_evidence builder's.
+    predictive_interaction_intent = _approved_forecasting_predictive_interaction_intent()
+    predictive_interaction_intent["public_prediction_interaction_applicability"] = "sometimes"
+    modeling_intent = _modeling_intent_for_forecasting(
+        forecasting_predictive_interaction_intent=predictive_interaction_intent
+    )
+    with pytest.raises(ExecutionContractV2ValidationError):
+        _build_execution_contract(
+            modeling_intent, {}, _valid_preparation_recipe_v2(), semantic_intent=_valid_semantic_intent_v4()
+        )
+
+
+def test_execution_contract_v2_predictive_interaction_incoherent_refit_fails_closed():
+    predictive_interaction_intent = _approved_forecasting_predictive_interaction_intent()
+    predictive_interaction_intent["refit_on_input"] = True
+    predictive_interaction_intent["history_target_values_affect_forecast"] = False
+    modeling_intent = _modeling_intent_for_forecasting(
+        forecasting_predictive_interaction_intent=predictive_interaction_intent
+    )
+    with pytest.raises(ExecutionContractV2ValidationError):
+        _build_execution_contract(
+            modeling_intent, {}, _valid_preparation_recipe_v2(), semantic_intent=_valid_semantic_intent_v4()
+        )
+
+
+def test_execution_contract_v2_predictive_interaction_available_materializes():
+    modeling_intent = _modeling_intent_for_forecasting(
+        forecasting_predictive_interaction_intent=_approved_forecasting_predictive_interaction_intent(
+            history_target_values_affect_forecast=True,
+            refit_on_input=True,
+            model_parameters_updated_on_input=True,
+            public_prediction_interaction_applicability="available",
+        )
+    )
+    contract = _build_execution_contract(
+        modeling_intent, {}, _valid_preparation_recipe_v2(), semantic_intent=_valid_semantic_intent_v4()
+    )
+    assert contract["predictive_interaction_policy"]["history_target_values_affect_forecast"] is True
+    assert contract["predictive_interaction_policy"]["refit_on_input"] is True
+    assert contract["predictive_interaction_policy"]["model_parameters_updated_on_input"] is True
+    assert contract["predictive_interaction_policy"]["public_prediction_interaction_applicability"] == "available"
+
+
+def test_execution_contract_v2_predictive_interaction_review_notes_do_not_leak_into_contract():
+    modeling_intent = _modeling_intent_for_forecasting(
+        forecasting_predictive_interaction_intent=_approved_forecasting_predictive_interaction_intent(
+            review_notes="internal reviewer note that must never appear on the execution contract"
+        )
+    )
+    contract = _build_execution_contract(
+        modeling_intent, {}, _valid_preparation_recipe_v2(), semantic_intent=_valid_semantic_intent_v4()
+    )
+    assert "review_status" not in contract["predictive_interaction_policy"]
+    assert "review_notes" not in contract["predictive_interaction_policy"]
+    assert set(contract["predictive_interaction_policy"].keys()) == {
+        "schema_version",
+        "history_target_values_affect_forecast",
+        "refit_on_input",
+        "model_parameters_updated_on_input",
+        "public_prediction_interaction_applicability",
+    }
+
+
+def test_execution_contract_v2_predictive_interaction_not_derived_from_model_family_or_dataset_slug():
+    modeling_intent = _modeling_intent_for_forecasting()
+    contract = _build_execution_contract(
+        modeling_intent, {}, _valid_preparation_recipe_v2(), semantic_intent=_valid_semantic_intent_v4()
+    )
+    serialized = json.dumps(contract["predictive_interaction_policy"])
+    assert "deterministic_seasonal_trend_ols" not in serialized
+    assert "synthetic-series" not in serialized
+
+
+def test_execution_contract_v2_existing_forecasting_fields_remain_unchanged_with_predictive_interaction():
+    modeling_intent = _modeling_intent_for_forecasting()
+    contract = _build_execution_contract(
+        modeling_intent, {}, _valid_preparation_recipe_v2(), semantic_intent=_valid_semantic_intent_v4()
+    )
+    assert contract["result_semantics"]["schema_version"] == "univariate-forecasting-result-semantics.v1"
+    assert contract["training_policy"]["model_family"] == "deterministic_seasonal_trend_ols"
+    assert contract["history_input_policy"]["forecast_origin_source"] == "last_validated_history_index"
 
 
 def test_execution_contract_v1_tabular_path_unaffected_by_forecasting_training_policy():

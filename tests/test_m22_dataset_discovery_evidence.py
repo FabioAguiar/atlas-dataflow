@@ -19,6 +19,7 @@ from pipeline.discovery_evidence import (
     MULTICLASS_RESULT_SEMANTICS_INTENT_CONTRACT_VERSION,
     UNIVARIATE_FORECASTING_EVALUATION_POLICY_INTENT_CONTRACT_VERSION,
     UNIVARIATE_FORECASTING_HISTORY_INPUT_POLICY_INTENT_CONTRACT_VERSION,
+    UNIVARIATE_FORECASTING_PREDICTIVE_INTERACTION_INTENT_CONTRACT_VERSION,
     UNIVARIATE_FORECASTING_RESULT_SEMANTICS_INTENT_CONTRACT_VERSION,
     UNIVARIATE_FORECASTING_TRAINING_POLICY_INTENT_CONTRACT_VERSION,
     authoring_helper_evidence_policy,
@@ -29,6 +30,7 @@ from pipeline.discovery_evidence import (
     build_multiclass_result_semantics_intent,
     build_univariate_forecasting_evaluation_policy_intent,
     build_univariate_forecasting_history_input_policy_intent,
+    build_univariate_forecasting_predictive_interaction_intent,
     build_univariate_forecasting_result_semantics_intent,
     build_univariate_forecasting_training_policy_intent,
     derive_feature_candidates,
@@ -1683,4 +1685,147 @@ def test_modeling_intent_historical_fields_unchanged_alongside_forecasting_histo
     assert intent["contract_version"] == "dataset_modeling_intent.v1"
     assert intent["target_intent"]["target_column"] == "Churn"
     assert intent["univariate_forecasting_training_policy_intent"] is None
+    assert intent["training_policy_intent"] is None
+
+
+# ---------------------------------------------------------------------------
+# Project Spec S0269: univariate-forecasting-predictive-interaction-intent.v1
+# ---------------------------------------------------------------------------
+
+
+def _build_forecasting_predictive_interaction_intent(**overrides):
+    kwargs = dict(
+        review_status="approved",
+        history_target_values_affect_forecast=False,
+        refit_on_input=False,
+        model_parameters_updated_on_input=False,
+        public_prediction_interaction_applicability="not_applicable",
+        review_notes="Reviewed predictive-interaction policy.",
+    )
+    kwargs.update(overrides)
+    return build_univariate_forecasting_predictive_interaction_intent(**kwargs)
+
+
+def test_forecasting_predictive_interaction_intent_approved_shape():
+    intent = _build_forecasting_predictive_interaction_intent()
+    assert intent["schema_version"] == UNIVARIATE_FORECASTING_PREDICTIVE_INTERACTION_INTENT_CONTRACT_VERSION
+    assert intent["review_status"] == "approved"
+    assert intent["history_target_values_affect_forecast"] is False
+    assert intent["refit_on_input"] is False
+    assert intent["model_parameters_updated_on_input"] is False
+    assert intent["public_prediction_interaction_applicability"] == "not_applicable"
+    assert set(intent.keys()) == {
+        "schema_version",
+        "review_status",
+        "history_target_values_affect_forecast",
+        "refit_on_input",
+        "model_parameters_updated_on_input",
+        "public_prediction_interaction_applicability",
+        "review_notes",
+    }
+
+
+def test_forecasting_predictive_interaction_intent_pending_is_representable_but_not_approved():
+    intent = _build_forecasting_predictive_interaction_intent(review_status="pending")
+    assert intent["review_status"] == "pending"
+    assert intent["review_status"] != "approved"
+
+
+def test_forecasting_predictive_interaction_intent_rejected_is_representable_but_not_approved():
+    intent = _build_forecasting_predictive_interaction_intent(review_status="rejected")
+    assert intent["review_status"] == "rejected"
+    assert intent["review_status"] != "approved"
+
+
+def test_forecasting_predictive_interaction_intent_rejects_unknown_review_status():
+    with pytest.raises(ValueError):
+        _build_forecasting_predictive_interaction_intent(review_status="pending_review")
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    [
+        "history_target_values_affect_forecast",
+        "refit_on_input",
+        "model_parameters_updated_on_input",
+    ],
+)
+def test_forecasting_predictive_interaction_intent_rejects_non_boolean_semantic_field(field_name):
+    with pytest.raises(ValueError):
+        _build_forecasting_predictive_interaction_intent(**{field_name: "false"})
+
+
+def test_forecasting_predictive_interaction_intent_rejects_unknown_public_applicability():
+    with pytest.raises(ValueError):
+        _build_forecasting_predictive_interaction_intent(
+            public_prediction_interaction_applicability="sometimes"
+        )
+
+
+def test_forecasting_predictive_interaction_intent_rejects_refit_true_with_affect_false():
+    with pytest.raises(ValueError):
+        _build_forecasting_predictive_interaction_intent(
+            refit_on_input=True, history_target_values_affect_forecast=False
+        )
+
+
+def test_forecasting_predictive_interaction_intent_rejects_model_parameters_updated_true_with_affect_false():
+    with pytest.raises(ValueError):
+        _build_forecasting_predictive_interaction_intent(
+            model_parameters_updated_on_input=True, history_target_values_affect_forecast=False
+        )
+
+
+def test_forecasting_predictive_interaction_intent_accepts_available_with_affect_true():
+    intent = _build_forecasting_predictive_interaction_intent(
+        history_target_values_affect_forecast=True,
+        refit_on_input=True,
+        model_parameters_updated_on_input=True,
+        public_prediction_interaction_applicability="available",
+    )
+    assert intent["history_target_values_affect_forecast"] is True
+    assert intent["refit_on_input"] is True
+    assert intent["model_parameters_updated_on_input"] is True
+    assert intent["public_prediction_interaction_applicability"] == "available"
+
+
+def test_forecasting_predictive_interaction_intent_builder_does_not_auto_derive_applicability():
+    """public_prediction_interaction_applicability is a reviewed semantic/
+    public-capability declaration -- it must never be auto-derived from
+    history_target_values_affect_forecast."""
+    intent = _build_forecasting_predictive_interaction_intent(
+        history_target_values_affect_forecast=True,
+        refit_on_input=True,
+        model_parameters_updated_on_input=True,
+        public_prediction_interaction_applicability="not_applicable",
+    )
+    assert intent["public_prediction_interaction_applicability"] == "not_applicable"
+
+
+def test_forecasting_predictive_interaction_intent_builder_exposes_no_dataset_or_model_identifier():
+    intent = _build_forecasting_predictive_interaction_intent()
+    serialized = json.dumps(intent)
+    for forbidden in ("dataset_slug", "model_family", "model_id", "target_field", "time_index_field",
+                      "frequency", "forecast_horizon", "predict_view_id", "profile_id"):
+        assert forbidden not in serialized
+
+
+def test_modeling_intent_forecasting_predictive_interaction_intent_defaults_to_none():
+    intent = _build_telco_shaped_modeling_intent()
+    assert intent["univariate_forecasting_predictive_interaction_intent"] is None
+
+
+def test_modeling_intent_carries_forecasting_predictive_interaction_intent_verbatim():
+    policy_intent = _build_forecasting_predictive_interaction_intent()
+    intent = _build_telco_shaped_modeling_intent(
+        univariate_forecasting_predictive_interaction_intent=policy_intent
+    )
+    assert intent["univariate_forecasting_predictive_interaction_intent"] == policy_intent
+
+
+def test_modeling_intent_historical_fields_unchanged_alongside_forecasting_predictive_interaction_default():
+    intent = _build_telco_shaped_modeling_intent()
+    assert intent["contract_version"] == "dataset_modeling_intent.v1"
+    assert intent["target_intent"]["target_column"] == "Churn"
+    assert intent["univariate_forecasting_history_input_policy_intent"] is None
     assert intent["training_policy_intent"] is None

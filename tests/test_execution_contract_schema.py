@@ -3145,6 +3145,146 @@ def test_execution_contract_v2_history_input_policy_unknown_field_rejected():
 
 
 # ---------------------------------------------------------------------------
+# execution-contract.schema.json: forecasting predictive_interaction_policy
+# (Project Spec S0269)
+# ---------------------------------------------------------------------------
+
+
+def _valid_forecasting_predictive_interaction_policy() -> dict:
+    return {
+        "schema_version": "univariate-forecasting-predictive-interaction-policy.v1",
+        "history_target_values_affect_forecast": False,
+        "refit_on_input": False,
+        "model_parameters_updated_on_input": False,
+        "public_prediction_interaction_applicability": "not_applicable",
+    }
+
+
+def test_execution_contract_v2_without_predictive_interaction_policy_still_validates():
+    """Historical execution_contract.v2 documents materialized before
+    Project Spec S0269 never carry predictive_interaction_policy -- it must
+    remain an optional, non-required member so those documents remain
+    structurally valid without rewriting."""
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_execution_contract_v2()
+    assert "predictive_interaction_policy" not in contract
+    jsonschema.validate(contract, schema)
+
+
+def test_execution_contract_v2_with_valid_predictive_interaction_policy_validates():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_execution_contract_v2()
+    contract["predictive_interaction_policy"] = _valid_forecasting_predictive_interaction_policy()
+    jsonschema.validate(contract, schema)
+
+
+def test_execution_contract_v2_predictive_interaction_policy_available_validates():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_execution_contract_v2()
+    contract["predictive_interaction_policy"] = _valid_forecasting_predictive_interaction_policy()
+    contract["predictive_interaction_policy"]["history_target_values_affect_forecast"] = True
+    contract["predictive_interaction_policy"]["refit_on_input"] = True
+    contract["predictive_interaction_policy"]["model_parameters_updated_on_input"] = True
+    contract["predictive_interaction_policy"]["public_prediction_interaction_applicability"] = "available"
+    jsonschema.validate(contract, schema)
+
+
+def test_execution_contract_v2_predictive_interaction_policy_wrong_schema_version_rejected():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_execution_contract_v2()
+    contract["predictive_interaction_policy"] = _valid_forecasting_predictive_interaction_policy()
+    contract["predictive_interaction_policy"]["schema_version"] = (
+        "univariate-forecasting-predictive-interaction-policy.v2"
+    )
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_execution_contract_v2_predictive_interaction_policy_unknown_schema_version_rejected():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_execution_contract_v2()
+    contract["predictive_interaction_policy"] = _valid_forecasting_predictive_interaction_policy()
+    contract["predictive_interaction_policy"]["schema_version"] = "made-up-policy.v1"
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    [
+        "history_target_values_affect_forecast",
+        "refit_on_input",
+        "model_parameters_updated_on_input",
+    ],
+)
+def test_execution_contract_v2_predictive_interaction_policy_non_boolean_flag_rejected(field_name):
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_execution_contract_v2()
+    contract["predictive_interaction_policy"] = _valid_forecasting_predictive_interaction_policy()
+    contract["predictive_interaction_policy"][field_name] = "true"
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_execution_contract_v2_predictive_interaction_policy_unknown_applicability_rejected():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_execution_contract_v2()
+    contract["predictive_interaction_policy"] = _valid_forecasting_predictive_interaction_policy()
+    contract["predictive_interaction_policy"]["public_prediction_interaction_applicability"] = "sometimes"
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_execution_contract_v2_predictive_interaction_policy_refit_true_with_affect_false_rejected():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_execution_contract_v2()
+    contract["predictive_interaction_policy"] = _valid_forecasting_predictive_interaction_policy()
+    contract["predictive_interaction_policy"]["refit_on_input"] = True
+    contract["predictive_interaction_policy"]["history_target_values_affect_forecast"] = False
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_execution_contract_v2_predictive_interaction_policy_update_true_with_affect_false_rejected():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_execution_contract_v2()
+    contract["predictive_interaction_policy"] = _valid_forecasting_predictive_interaction_policy()
+    contract["predictive_interaction_policy"]["model_parameters_updated_on_input"] = True
+    contract["predictive_interaction_policy"]["history_target_values_affect_forecast"] = False
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_execution_contract_v2_predictive_interaction_policy_review_status_rejected():
+    """The normalized execution policy must never carry authoring-only
+    review_status/review_notes fields -- those remain exclusively on the
+    dataset modeling intent."""
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_execution_contract_v2()
+    contract["predictive_interaction_policy"] = _valid_forecasting_predictive_interaction_policy()
+    contract["predictive_interaction_policy"]["review_status"] = "approved"
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_execution_contract_v2_predictive_interaction_policy_unknown_field_rejected():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_execution_contract_v2()
+    contract["predictive_interaction_policy"] = _valid_forecasting_predictive_interaction_policy()
+    contract["predictive_interaction_policy"]["dataset_slug"] = "nottem"
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+# ---------------------------------------------------------------------------
 # execution_contract.v2 -- strict forecasting training_policy branch
 # (Project Spec S0244)
 # ---------------------------------------------------------------------------

@@ -306,6 +306,10 @@
         "history_input_policy": {
           "$ref": "#/definitions/univariate_forecasting_history_input_policy",
           "description": "Project Spec S0265: strict, normalized, governed forecasting history-input policy materialized from a reviewed, approved univariate_forecasting_history_input_policy_intent. Bounded additive field -- deliberately not a member of execution_contract_v2's required[] array so that historical execution_contract.v2 documents materialized before S0265 remain structurally valid without this field. New v2 materialization through pipeline/contract_derivation.py always emits it."
+        },
+        "predictive_interaction_policy": {
+          "$ref": "#/definitions/univariate_forecasting_predictive_interaction_policy",
+          "description": "Project Spec S0269: strict, normalized, governed release-bound predictive-interaction policy materialized from a reviewed, approved univariate-forecasting-predictive-interaction-intent.v1. Bounded additive field -- deliberately not a member of execution_contract_v2's required[] array so that historical execution_contract.v2 documents materialized before S0269 remain structurally valid without this field. New v2 materialization through pipeline/contract_derivation.py always emits it."
         }
       }
     },
@@ -459,6 +463,50 @@
         "presence": { "type": "string", "const": "required" },
         "source": { "type": "string", "const": "development_end" }
       }
+    },
+    "univariate_forecasting_predictive_interaction_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "history_target_values_affect_forecast",
+        "refit_on_input",
+        "model_parameters_updated_on_input",
+        "public_prediction_interaction_applicability"
+      ],
+      "description": "Project Spec S0269: strict, normalized, governed release-bound predictive-interaction policy materialized from a reviewed, approved univariate-forecasting-predictive-interaction-intent.v1. Never carries review_status/review_notes -- those remain authoring-only fields on the dataset modeling intent, not on the execution contract. Never carries a dataset slug, model family, or Predict View/profile identifier. If refit_on_input is true, history_target_values_affect_forecast must also be true; if model_parameters_updated_on_input is true, history_target_values_affect_forecast must also be true.",
+      "properties": {
+        "schema_version": { "type": "string", "const": "univariate-forecasting-predictive-interaction-policy.v1" },
+        "history_target_values_affect_forecast": { "type": "boolean" },
+        "refit_on_input": { "type": "boolean" },
+        "model_parameters_updated_on_input": { "type": "boolean" },
+        "public_prediction_interaction_applicability": {
+          "type": "string",
+          "enum": ["available", "not_applicable"]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "refit_on_input": { "const": true } },
+            "required": ["refit_on_input"]
+          },
+          "then": {
+            "properties": { "history_target_values_affect_forecast": { "const": true } },
+            "required": ["history_target_values_affect_forecast"]
+          }
+        },
+        {
+          "if": {
+            "properties": { "model_parameters_updated_on_input": { "const": true } },
+            "required": ["model_parameters_updated_on_input"]
+          },
+          "then": {
+            "properties": { "history_target_values_affect_forecast": { "const": true } },
+            "required": ["history_target_values_affect_forecast"]
+          }
+        }
+      ]
     },
     "deterministic_seasonal_trend_ols_fixed_configuration": {
       "type": "object",

@@ -349,6 +349,28 @@ def test_notebook_passes_history_input_policy_intent_into_modeling_intent():
     )
 
 
+def test_notebook_authors_reviewed_forecasting_predictive_interaction_intent():
+    code = _source("code")
+    assert "build_univariate_forecasting_predictive_interaction_intent" in _called_names()
+    assert (
+        "forecasting_predictive_interaction_intent = "
+        "build_univariate_forecasting_predictive_interaction_intent(" in code
+    )
+    assert "history_target_values_affect_forecast=False," in code
+    assert "refit_on_input=False," in code
+    assert "model_parameters_updated_on_input=False," in code
+    assert 'public_prediction_interaction_applicability="not_applicable"' in code
+    assert 'assert forecasting_predictive_interaction_intent["review_status"] == "approved"' in code
+
+
+def test_notebook_passes_predictive_interaction_intent_into_modeling_intent():
+    code = _source("code")
+    assert (
+        "univariate_forecasting_predictive_interaction_intent=forecasting_predictive_interaction_intent,"
+        in code
+    )
+
+
 def test_notebook_encodes_frozen_nottingham_model_configuration():
     code = _source("code")
     assert (
@@ -388,6 +410,23 @@ def test_notebook_materializes_execution_contract_v2():
     assert (
         'assert execution_contract["history_input_policy"]["forecast_origin_source"] == ('
         in code
+    )
+    assert (
+        'assert execution_contract["predictive_interaction_policy"]["schema_version"] == ('
+        in code
+    )
+    assert (
+        'assert execution_contract["predictive_interaction_policy"]'
+        '["history_target_values_affect_forecast"] is False' in code
+    )
+    assert 'assert execution_contract["predictive_interaction_policy"]["refit_on_input"] is False' in code
+    assert (
+        'assert execution_contract["predictive_interaction_policy"]'
+        '["model_parameters_updated_on_input"] is False' in code
+    )
+    assert (
+        'assert execution_contract["predictive_interaction_policy"]'
+        '["public_prediction_interaction_applicability"] == (' in code
     )
 
 
@@ -475,6 +514,47 @@ def test_notebook_asserts_s0267_public_temporal_interaction_from_governed_variab
     for forbidden in ("1938-12", "min_date", "max_date", "minimum_date", "maximum_date"):
         assert forbidden not in temporal_interaction_source
     assert 'if dataset_slug ==' not in temporal_interaction_source
+
+
+def test_notebook_asserts_s0269_public_predictive_interaction_from_governed_variables():
+    """Project Spec S0269: the notebook must assert the newly derived
+    Nottingham public contract's bounded predictive-interaction projection,
+    sourced only from the already-governed
+    execution_contract.predictive_interaction_policy asserted above -- never
+    a hardcoded Nottingham-specific literal authored directly into the
+    assertion, never a UI tab-hiding/Predict-View-removal implementation, and
+    never a dependency on the external dataset-study at runtime."""
+    code = _source("code")
+    assert (
+        'assert public_contract["predictive_interaction"]["history_target_values"]["affect_forecast"] == ('
+        in code
+    )
+    assert (
+        'execution_contract["predictive_interaction_policy"]["history_target_values_affect_forecast"]'
+        in code
+    )
+    assert (
+        'assert public_contract["predictive_interaction"]["public_prediction"]["applicability"] == ('
+        in code
+    )
+    assert (
+        'execution_contract["predictive_interaction_policy"]["public_prediction_interaction_applicability"]'
+        in code
+    )
+    # The notebook must not author predictive_interaction itself as a dict
+    # literal, must never hardcode "not_applicable"/False directly into the
+    # assertion, and must never hide/remove a UI tab or Predict View.
+    assert '"predictive_interaction":' not in code
+    predictive_interaction_start = code.index(
+        'assert public_contract["predictive_interaction"]'
+    )
+    predictive_interaction_end = code.index(
+        "# Project Spec S0252", predictive_interaction_start
+    )
+    predictive_interaction_source = code[predictive_interaction_start:predictive_interaction_end]
+    for forbidden in ("hide_tab", "remove_tab", "hidden_tabs", "predict_view_removed"):
+        assert forbidden not in predictive_interaction_source
+    assert 'if dataset_slug ==' not in predictive_interaction_source
 
 
 def test_notebook_dataset_context_declares_exactly_one_nottingham_predict_view():

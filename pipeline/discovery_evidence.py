@@ -1445,6 +1445,106 @@ def build_univariate_forecasting_history_input_policy_intent(
     }
 
 
+# Project Spec S0269: a single reviewed univariate-forecasting predictive-
+# interaction declaration -- the currently supported release-bound public
+# prediction-interaction semantics. "approved" is the only status that may
+# later be promoted into execution policy by
+# contract_derivation._build_execution_contract_v2; "pending"/"rejected" keep
+# the declaration visible as an unresolved/declined review item without ever
+# silently materializing into executable policy. Mirrors
+# build_univariate_forecasting_history_input_policy_intent's review-status
+# vocabulary and conventions above, but this builder deliberately never
+# accepts a dataset slug, model family, model id/path/hash, target field,
+# time-index field, frequency, forecast horizon, required anchor, Predict
+# View id, profile id, or public tab configuration --
+# public_prediction_interaction_applicability is a reviewed semantic/public-
+# capability declaration, not a presentation preference, and is never
+# auto-derived from any other field in v1.
+UNIVARIATE_FORECASTING_PREDICTIVE_INTERACTION_INTENT_CONTRACT_VERSION = (
+    "univariate-forecasting-predictive-interaction-intent.v1"
+)
+UNIVARIATE_FORECASTING_PREDICTIVE_INTERACTION_REVIEW_STATUSES = frozenset(
+    {"approved", "pending", "rejected"}
+)
+UNIVARIATE_FORECASTING_PREDICTIVE_INTERACTION_APPLICABILITY_VALUES = frozenset(
+    {"available", "not_applicable"}
+)
+
+
+def build_univariate_forecasting_predictive_interaction_intent(
+    review_status: str,
+    history_target_values_affect_forecast: bool,
+    refit_on_input: bool,
+    model_parameters_updated_on_input: bool,
+    public_prediction_interaction_applicability: str,
+    review_notes: str | None = None,
+) -> dict[str, Any]:
+    """Build a `univariate-forecasting-predictive-interaction-intent.v1`
+    reviewed declaration (Project Spec S0269).
+
+    Deliberately owns only the reviewed predictive-interaction semantics --
+    no dataset slug, model family, model id/path/hash, target field,
+    time-index field, frequency, forecast horizon, required anchor, Predict
+    View id, profile id, or public tab configuration is ever accepted here.
+    Only `review_status == "approved"` may later be promoted into executable
+    execution-contract policy by `contract_derivation._build_execution_contract_v2`;
+    `"pending"` and `"rejected"` keep the declaration visible as an
+    unresolved/declined review item and this builder still returns it rather
+    than raising, mirroring
+    `build_univariate_forecasting_history_input_policy_intent`'s convention --
+    but every structural/value validation below still applies regardless of
+    review_status, since a pending or rejected declaration must still be
+    well-formed. Raises ValueError on a structurally malformed declaration
+    (unknown review_status, a non-boolean semantic flag, an unknown
+    public_prediction_interaction_applicability value, a true
+    `refit_on_input` combined with `history_target_values_affect_forecast=False`,
+    or a true `model_parameters_updated_on_input` combined with
+    `history_target_values_affect_forecast=False`).
+    """
+    if review_status not in UNIVARIATE_FORECASTING_PREDICTIVE_INTERACTION_REVIEW_STATUSES:
+        raise ValueError(
+            "review_status must be one of "
+            f"{sorted(UNIVARIATE_FORECASTING_PREDICTIVE_INTERACTION_REVIEW_STATUSES)}, "
+            f"got {review_status!r}"
+        )
+    for field_name, value in (
+        ("history_target_values_affect_forecast", history_target_values_affect_forecast),
+        ("refit_on_input", refit_on_input),
+        ("model_parameters_updated_on_input", model_parameters_updated_on_input),
+    ):
+        if not isinstance(value, bool):
+            raise ValueError(f"{field_name} must be a strict boolean, got {value!r}")
+    if (
+        public_prediction_interaction_applicability
+        not in UNIVARIATE_FORECASTING_PREDICTIVE_INTERACTION_APPLICABILITY_VALUES
+    ):
+        raise ValueError(
+            "public_prediction_interaction_applicability must be one of "
+            f"{sorted(UNIVARIATE_FORECASTING_PREDICTIVE_INTERACTION_APPLICABILITY_VALUES)}, "
+            f"got {public_prediction_interaction_applicability!r}"
+        )
+    if refit_on_input and not history_target_values_affect_forecast:
+        raise ValueError(
+            "refit_on_input=True is internally incoherent with "
+            "history_target_values_affect_forecast=False"
+        )
+    if model_parameters_updated_on_input and not history_target_values_affect_forecast:
+        raise ValueError(
+            "model_parameters_updated_on_input=True is internally incoherent with "
+            "history_target_values_affect_forecast=False"
+        )
+
+    return {
+        "schema_version": UNIVARIATE_FORECASTING_PREDICTIVE_INTERACTION_INTENT_CONTRACT_VERSION,
+        "review_status": review_status,
+        "history_target_values_affect_forecast": history_target_values_affect_forecast,
+        "refit_on_input": refit_on_input,
+        "model_parameters_updated_on_input": model_parameters_updated_on_input,
+        "public_prediction_interaction_applicability": public_prediction_interaction_applicability,
+        "review_notes": review_notes,
+    }
+
+
 MODELING_INTENT_BOUNDARY_CONFIRMATIONS: dict[str, bool] = {
     "is_execution_contract": False,
     "is_runtime_contract": False,
@@ -1484,6 +1584,7 @@ def build_dataset_modeling_intent(
     univariate_forecasting_evaluation_policy_intent: dict[str, Any] | None = None,
     univariate_forecasting_training_policy_intent: dict[str, Any] | None = None,
     univariate_forecasting_history_input_policy_intent: dict[str, Any] | None = None,
+    univariate_forecasting_predictive_interaction_intent: dict[str, Any] | None = None,
     training_policy_intent: dict[str, Any] | None = None,
     generated_at: str | None = None,
 ) -> dict[str, Any]:
@@ -1545,6 +1646,19 @@ def build_dataset_modeling_intent(
     candidate-preparation-recipe.v2's governed development.end_index_value).
     Materialization into execution_contract.v2's `history_input_policy` is
     owned exclusively by `contract_derivation._build_execution_contract_v2`.
+
+    `univariate_forecasting_predictive_interaction_intent` (Project Spec
+    S0269) is an optional reviewed release-bound predictive-interaction
+    declaration, built via
+    `build_univariate_forecasting_predictive_interaction_intent` above.
+    Defaults to `None`; when supplied, this builder carries it forward
+    verbatim -- it never approves or infers the declaration itself, and
+    never owns a dataset slug, model family, target/time-index field,
+    Predict View id, profile id, or public tab configuration.
+    Materialization into execution_contract.v2's
+    `predictive_interaction_policy` is owned exclusively by
+    `contract_derivation._build_execution_contract_v2`. Historical callers
+    that omit this argument continue to receive `None`.
 
     `training_policy_intent` (Project Spec S0216) is optional reviewed
     native training policy authoring intent -- execution-only fields
@@ -1636,6 +1750,11 @@ def build_dataset_modeling_intent(
         "univariate_forecasting_history_input_policy_intent": (
             dict(univariate_forecasting_history_input_policy_intent)
             if univariate_forecasting_history_input_policy_intent is not None
+            else None
+        ),
+        "univariate_forecasting_predictive_interaction_intent": (
+            dict(univariate_forecasting_predictive_interaction_intent)
+            if univariate_forecasting_predictive_interaction_intent is not None
             else None
         ),
         "training_policy_intent": (

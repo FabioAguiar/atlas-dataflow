@@ -83,6 +83,7 @@ from pipeline.discovery_evidence import (
     build_multiclass_result_semantics_intent,
     build_univariate_forecasting_evaluation_policy_intent,
     build_univariate_forecasting_history_input_policy_intent,
+    build_univariate_forecasting_predictive_interaction_intent,
     build_univariate_forecasting_result_semantics_intent,
     build_univariate_forecasting_training_policy_intent,
 )
@@ -2322,6 +2323,57 @@ def _build_execution_contract_v2(
             ]
         ) from exc
 
+    # Project Spec S0269 (Desired Change C): require an approved
+    # univariate_forecasting_predictive_interaction_intent whenever a solo
+    # forecasting result intent is materialized into execution_contract.v2.
+    # Independently rebuilt/revalidated exactly like the evaluation-policy,
+    # training-policy, and history-input-policy intents above -- absent,
+    # pending, rejected, or malformed fails closed. Never derived from
+    # training_policy.model_family/finalization_policy, history_input_policy,
+    # runtime strategy, capability profile, dataset slug, or Predict
+    # View/profile metadata -- the v2 materializer below copies only
+    # normalized execution fields, never review_status/review_notes.
+    predictive_interaction_intent = modeling_intent.get(
+        "univariate_forecasting_predictive_interaction_intent"
+    )
+    if not isinstance(predictive_interaction_intent, dict):
+        raise ExecutionContractV2ValidationError(
+            [
+                "univariate_forecasting_predictive_interaction_intent is required for "
+                "execution_contract.v2 and is absent from the dataset modeling intent"
+            ]
+        )
+    predictive_interaction_review_status = predictive_interaction_intent.get("review_status")
+    if predictive_interaction_review_status != "approved":
+        raise ExecutionContractV2ValidationError(
+            [
+                "univariate_forecasting_predictive_interaction_intent.review_status is "
+                f"{predictive_interaction_review_status!r}, not 'approved'"
+            ]
+        )
+    try:
+        rebuilt_predictive_interaction = build_univariate_forecasting_predictive_interaction_intent(
+            review_status=predictive_interaction_review_status,
+            history_target_values_affect_forecast=predictive_interaction_intent.get(
+                "history_target_values_affect_forecast"
+            ),
+            refit_on_input=predictive_interaction_intent.get("refit_on_input"),
+            model_parameters_updated_on_input=predictive_interaction_intent.get(
+                "model_parameters_updated_on_input"
+            ),
+            public_prediction_interaction_applicability=predictive_interaction_intent.get(
+                "public_prediction_interaction_applicability"
+            ),
+            review_notes=predictive_interaction_intent.get("review_notes"),
+        )
+    except ValueError as exc:
+        raise ExecutionContractV2ValidationError(
+            [
+                "univariate_forecasting_predictive_interaction_intent failed independent "
+                f"re-validation: {exc}"
+            ]
+        ) from exc
+
     if not isinstance(semantic_intent, dict):
         raise ExecutionContractV2ValidationError(
             ["execution_contract.v2 materialization requires a dataset-semantic-intent.v4 semantic_intent"]
@@ -2484,6 +2536,22 @@ def _build_execution_contract_v2(
         "required_anchor": dict(rebuilt_history_input_policy["required_anchor"]),
         "forecast_origin_source": rebuilt_history_input_policy["forecast_origin_source"],
     }
+    # Project Spec S0269: copy only normalized execution fields from the
+    # independently rebuilt predictive-interaction intent -- review_status
+    # and review_notes never leak into the execution contract.
+    predictive_interaction_policy = {
+        "schema_version": "univariate-forecasting-predictive-interaction-policy.v1",
+        "history_target_values_affect_forecast": rebuilt_predictive_interaction[
+            "history_target_values_affect_forecast"
+        ],
+        "refit_on_input": rebuilt_predictive_interaction["refit_on_input"],
+        "model_parameters_updated_on_input": rebuilt_predictive_interaction[
+            "model_parameters_updated_on_input"
+        ],
+        "public_prediction_interaction_applicability": rebuilt_predictive_interaction[
+            "public_prediction_interaction_applicability"
+        ],
+    }
 
     return {
         "contract_version": EXECUTION_CONTRACT_V2_CONTRACT_VERSION,
@@ -2500,6 +2568,7 @@ def _build_execution_contract_v2(
         "result_semantics": result_semantics,
         "training_policy": training_policy,
         "history_input_policy": history_input_policy,
+        "predictive_interaction_policy": predictive_interaction_policy,
         "random_seed": seed if isinstance(seed, int) else None,
     }
 

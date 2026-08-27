@@ -791,6 +791,208 @@ def test_v2_projection_unsupported_temporal_profile_omits_temporal_interaction_k
     assert public_contract["history_series"]["input_guidance"]["minimum_observation_count"] == 3
 
 
+# ---------------------------------------------------------------------------
+# Project Spec S0269: public-contract predictive_interaction projection
+# ---------------------------------------------------------------------------
+
+
+def _predictive_interaction_policy(**overrides) -> dict:
+    policy = {
+        "schema_version": "univariate-forecasting-predictive-interaction-policy.v1",
+        "history_target_values_affect_forecast": False,
+        "refit_on_input": False,
+        "model_parameters_updated_on_input": False,
+        "public_prediction_interaction_applicability": "not_applicable",
+    }
+    policy.update(overrides)
+    return policy
+
+
+def _valid_public_v2_document_with_predictive_interaction() -> dict:
+    doc = _valid_public_v2_document()
+    doc["predictive_interaction"] = {
+        "history_target_values": {"affect_forecast": False},
+        "public_prediction": {"applicability": "not_applicable"},
+    }
+    return doc
+
+
+def test_public_contract_v2_historical_without_predictive_interaction_remains_valid(public_validator):
+    assert not list(public_validator.iter_errors(_valid_public_v2_document()))
+
+
+def test_public_contract_v2_with_valid_predictive_interaction_is_schema_valid(public_validator):
+    assert not list(public_validator.iter_errors(_valid_public_v2_document_with_predictive_interaction()))
+
+
+def test_public_contract_v2_predictive_interaction_available_is_schema_valid(public_validator):
+    doc = _valid_public_v2_document_with_predictive_interaction()
+    doc["predictive_interaction"]["history_target_values"]["affect_forecast"] = True
+    doc["predictive_interaction"]["public_prediction"]["applicability"] = "available"
+    assert not list(public_validator.iter_errors(doc))
+
+
+def test_public_contract_v2_predictive_interaction_rejects_unknown_top_level_property(public_validator):
+    doc = _valid_public_v2_document_with_predictive_interaction()
+    doc["predictive_interaction"]["extra_property"] = "x"
+    assert list(public_validator.iter_errors(doc))
+
+
+def test_public_contract_v2_predictive_interaction_rejects_missing_history_target_values(public_validator):
+    doc = _valid_public_v2_document_with_predictive_interaction()
+    del doc["predictive_interaction"]["history_target_values"]
+    assert list(public_validator.iter_errors(doc))
+
+
+def test_public_contract_v2_predictive_interaction_rejects_missing_public_prediction(public_validator):
+    doc = _valid_public_v2_document_with_predictive_interaction()
+    del doc["predictive_interaction"]["public_prediction"]
+    assert list(public_validator.iter_errors(doc))
+
+
+def test_public_contract_v2_predictive_interaction_rejects_non_boolean_affect_forecast(public_validator):
+    doc = _valid_public_v2_document_with_predictive_interaction()
+    doc["predictive_interaction"]["history_target_values"]["affect_forecast"] = "false"
+    assert list(public_validator.iter_errors(doc))
+
+
+def test_public_contract_v2_predictive_interaction_rejects_unknown_applicability(public_validator):
+    doc = _valid_public_v2_document_with_predictive_interaction()
+    doc["predictive_interaction"]["public_prediction"]["applicability"] = "sometimes"
+    assert list(public_validator.iter_errors(doc))
+
+
+def test_public_contract_v2_predictive_interaction_rejects_refit_flag_exposed(public_validator):
+    doc = _valid_public_v2_document_with_predictive_interaction()
+    doc["predictive_interaction"]["refit_on_input"] = False
+    assert list(public_validator.iter_errors(doc))
+
+
+def test_public_contract_v2_predictive_interaction_rejects_model_update_flag_exposed(public_validator):
+    doc = _valid_public_v2_document_with_predictive_interaction()
+    doc["predictive_interaction"]["model_parameters_updated_on_input"] = False
+    assert list(public_validator.iter_errors(doc))
+
+
+def test_v2_projection_without_predictive_interaction_policy_emits_no_public_field(tmp_path):
+    """Historical execution_contract.v2 documents materialized before
+    Project Spec S0269 never carry predictive_interaction_policy --
+    projection must omit predictive_interaction entirely rather than
+    inventing one."""
+    assert "predictive_interaction_policy" not in _execution_contract_v2()
+    contract_path = _write_json(tmp_path / "execution-contract.json", _execution_contract_v2())
+    recipe_path = _write_json(tmp_path / "preparation-recipe.json", _preparation_recipe_v2())
+    out_dir = tmp_path / "out"
+
+    derive(contract_path, out_dir, repo_root=REPO_ROOT, preparation_recipe_path=recipe_path)
+
+    public_contract = json.loads((out_dir / "public-contract.json").read_text())
+    assert "predictive_interaction" not in public_contract
+
+
+def test_v2_projection_emits_predictive_interaction_from_policy(tmp_path):
+    contract = _execution_contract_v2(
+        predictive_interaction_policy=_predictive_interaction_policy(
+            history_target_values_affect_forecast=True,
+            public_prediction_interaction_applicability="available",
+        )
+    )
+    contract_path = _write_json(tmp_path / "execution-contract.json", contract)
+    recipe_path = _write_json(tmp_path / "preparation-recipe.json", _preparation_recipe_v2())
+    out_dir = tmp_path / "out"
+
+    derive(contract_path, out_dir, repo_root=REPO_ROOT, preparation_recipe_path=recipe_path)
+
+    public_contract = json.loads((out_dir / "public-contract.json").read_text())
+    assert public_contract["predictive_interaction"] == {
+        "history_target_values": {"affect_forecast": True},
+        "public_prediction": {"applicability": "available"},
+    }
+
+
+def test_v2_projection_predictive_interaction_never_exposes_refit_or_model_update_flags(tmp_path):
+    contract = _execution_contract_v2(
+        predictive_interaction_policy=_predictive_interaction_policy(
+            history_target_values_affect_forecast=True,
+            refit_on_input=True,
+            model_parameters_updated_on_input=True,
+            public_prediction_interaction_applicability="available",
+        )
+    )
+    contract_path = _write_json(tmp_path / "execution-contract.json", contract)
+    recipe_path = _write_json(tmp_path / "preparation-recipe.json", _preparation_recipe_v2())
+    out_dir = tmp_path / "out"
+
+    derive(contract_path, out_dir, repo_root=REPO_ROOT, preparation_recipe_path=recipe_path)
+
+    public_contract = json.loads((out_dir / "public-contract.json").read_text())
+    assert set(public_contract["predictive_interaction"]["public_prediction"].keys()) == {"applicability"}
+    assert set(public_contract["predictive_interaction"]["history_target_values"].keys()) == {"affect_forecast"}
+    serialized = json.dumps(public_contract["predictive_interaction"])
+    assert "refit_on_input" not in serialized
+    assert "model_parameters_updated_on_input" not in serialized
+
+
+def test_v2_projection_predictive_interaction_policy_unknown_schema_version_fails_closed(tmp_path):
+    contract = _execution_contract_v2(
+        predictive_interaction_policy=_predictive_interaction_policy(
+            schema_version="univariate-forecasting-predictive-interaction-policy.v2"
+        )
+    )
+    contract_path = _write_json(tmp_path / "execution-contract.json", contract)
+    recipe_path = _write_json(tmp_path / "preparation-recipe.json", _preparation_recipe_v2())
+    with pytest.raises(DerivationFailed):
+        derive(contract_path, tmp_path / "out", repo_root=REPO_ROOT, preparation_recipe_path=recipe_path)
+
+
+def test_v2_projection_predictive_interaction_policy_malformed_affect_forecast_fails_closed(tmp_path):
+    contract = _execution_contract_v2(
+        predictive_interaction_policy=_predictive_interaction_policy(
+            history_target_values_affect_forecast="false"
+        )
+    )
+    contract_path = _write_json(tmp_path / "execution-contract.json", contract)
+    recipe_path = _write_json(tmp_path / "preparation-recipe.json", _preparation_recipe_v2())
+    with pytest.raises(DerivationFailed):
+        derive(contract_path, tmp_path / "out", repo_root=REPO_ROOT, preparation_recipe_path=recipe_path)
+
+
+def test_v2_projection_predictive_interaction_policy_unknown_applicability_fails_closed(tmp_path):
+    contract = _execution_contract_v2(
+        predictive_interaction_policy=_predictive_interaction_policy(
+            public_prediction_interaction_applicability="sometimes"
+        )
+    )
+    contract_path = _write_json(tmp_path / "execution-contract.json", contract)
+    recipe_path = _write_json(tmp_path / "preparation-recipe.json", _preparation_recipe_v2())
+    with pytest.raises(DerivationFailed):
+        derive(contract_path, tmp_path / "out", repo_root=REPO_ROOT, preparation_recipe_path=recipe_path)
+
+
+def test_v2_projection_predictive_interaction_does_not_affect_runtime_contract(tmp_path):
+    contract = _execution_contract_v2(
+        predictive_interaction_policy=_predictive_interaction_policy(
+            history_target_values_affect_forecast=True,
+            public_prediction_interaction_applicability="available",
+        )
+    )
+    contract_path = _write_json(tmp_path / "execution-contract.json", contract)
+    recipe_path = _write_json(tmp_path / "preparation-recipe.json", _preparation_recipe_v2())
+    out_dir = tmp_path / "out"
+
+    derive(contract_path, out_dir, repo_root=REPO_ROOT, preparation_recipe_path=recipe_path)
+
+    baseline_contract_path = _write_json(
+        tmp_path / "baseline-execution-contract.json", _execution_contract_v2()
+    )
+    baseline_out_dir = tmp_path / "baseline-out"
+    derive(baseline_contract_path, baseline_out_dir, repo_root=REPO_ROOT, preparation_recipe_path=recipe_path)
+
+    runtime_contract = json.loads((out_dir / "runtime-contract.json").read_text())
+    baseline_runtime_contract = json.loads((baseline_out_dir / "runtime-contract.json").read_text())
+    assert runtime_contract == baseline_runtime_contract
+
+
 def test_historical_v1_projection_does_not_require_preparation_recipe(tmp_path):
     execution_contract_v1 = {
         "contract_version": "execution_contract.v1",

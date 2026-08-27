@@ -59,6 +59,9 @@
         },
         "forecast": {
           "$ref": "#/definitions/public_forecast_v2"
+        },
+        "predictive_interaction": {
+          "$ref": "#/definitions/public_predictive_interaction_v2"
         }
       }
     },
@@ -168,6 +171,37 @@
               "type": "string",
               "const": "required",
               "description": "Fixed: adjacent history values are expected to follow the declared step."
+            }
+          }
+        }
+      }
+    },
+    "public_predictive_interaction_v2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["history_target_values", "public_prediction"],
+      "description": "Project Spec S0269: optional, strict, bounded public projection of a governed release-bound predictive-interaction policy. Absent on historical public-contract 2.0.0 documents materialized before S0269. Never exposes refit_on_input, model_parameters_updated_on_input, review_status, review_notes, model family, training policy, history-input-policy source fields, Predict View binding, or Admin presentation state.",
+      "properties": {
+        "history_target_values": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["affect_forecast"],
+          "properties": {
+            "affect_forecast": {
+              "type": "boolean",
+              "description": "Whether supplied history target values affect the numeric forecast for the current governed release. Never exposes the target values themselves."
+            }
+          }
+        },
+        "public_prediction": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["applicability"],
+          "properties": {
+            "applicability": {
+              "type": "string",
+              "enum": ["available", "not_applicable"],
+              "description": "Reviewed, release-bound public prediction-interaction applicability. Never inferred from problem_type or model_family."
             }
           }
         }

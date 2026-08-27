@@ -548,6 +548,55 @@ def _derive_forecasting_projection(
                 "sequence": {"step_kind": "calendar_month", "continuity": "required"},
             }
 
+    # Project Spec S0269: an optional, newly governed predictive_interaction_policy
+    # authorizes a bounded, public-safe projection of only the two facts this
+    # projector is authorized to expose -- never refit_on_input,
+    # model_parameters_updated_on_input, review_status, review_notes, model
+    # family, training policy, history_input_policy source fields, Predict
+    # View/profile metadata, or the dataset slug. Historical execution
+    # contracts without the field emit no predictive_interaction, preserving
+    # the exact pre-S0269 public-contract shape. An unknown/malformed policy
+    # schema version fails projection closed rather than silently coercing a
+    # future policy version into v1 public semantics.
+    predictive_interaction_policy = contract.get("predictive_interaction_policy")
+    public_predictive_interaction: dict[str, Any] | None = None
+    if predictive_interaction_policy is not None:
+        if not isinstance(predictive_interaction_policy, dict):
+            raise DerivationFailed(
+                ["execution contract predictive_interaction_policy must be an object when present"]
+            )
+        if (
+            predictive_interaction_policy.get("schema_version")
+            != "univariate-forecasting-predictive-interaction-policy.v1"
+        ):
+            raise DerivationFailed(
+                [
+                    "execution contract predictive_interaction_policy.schema_version must be "
+                    "'univariate-forecasting-predictive-interaction-policy.v1'"
+                ]
+            )
+        affect_forecast = predictive_interaction_policy.get("history_target_values_affect_forecast")
+        if not isinstance(affect_forecast, bool):
+            raise DerivationFailed(
+                [
+                    "execution contract predictive_interaction_policy."
+                    "history_target_values_affect_forecast must be a strict boolean"
+                ]
+            )
+        applicability = predictive_interaction_policy.get("public_prediction_interaction_applicability")
+        if applicability not in ("available", "not_applicable"):
+            raise DerivationFailed(
+                [
+                    "execution contract predictive_interaction_policy."
+                    "public_prediction_interaction_applicability must be 'available' or "
+                    "'not_applicable'"
+                ]
+            )
+        public_predictive_interaction = {
+            "history_target_values": {"affect_forecast": affect_forecast},
+            "public_prediction": {"applicability": applicability},
+        }
+
     public_contract: dict[str, Any] = {
         "schema_version": FORECASTING_PUBLIC_CONTRACT_SCHEMA_VERSION,
         "problem_type": FORECASTING_PROBLEM_TYPE,
@@ -555,6 +604,8 @@ def _derive_forecasting_projection(
         "history_series": public_history_series,
         "forecast": public_forecast,
     }
+    if public_predictive_interaction is not None:
+        public_contract["predictive_interaction"] = public_predictive_interaction
 
     public_schema = _load_json(public_schema_path)
     public_validator = jsonschema.Draft7Validator(public_schema)

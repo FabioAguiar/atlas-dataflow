@@ -2,13 +2,14 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://atlas-dataflow.local/schemas/pipeline/analytical-visualizations.schema.json",
   "title": "Atlas DataFlow Analytical Visual Evidence",
-  "description": "Versioned analytical visual evidence contract. The legacy v1 predictive-classification artifact remains accepted unchanged; internal_v2 (Project Spec S0216) is the Atlas-native multiclass fixed-configuration training profile; continuous_regression_v3 (Project Spec S0228) is the Atlas-native continuous-regression fixed-configuration training profile; native_univariate_forecasting_v4 (Project Spec S0248) is the Atlas-native univariate-forecasting fixed-configuration training profile; native_binary_fixed_v5 (Project Spec S0258) is the Atlas-native binary fixed-configuration hist_gradient_boosting training profile, introduced because legacy_v1's closed feature_importance_method.model_family enum structurally excludes hist_gradient_boosting and carries no truthful permutation-importance method discriminator -- v5 is a strict independent branch that never widens or otherwise changes legacy_v1; governed_v2 governs capability-aware, integrity-bound visual collections without authorizing publication or release activation; external_fitted_model_v1/v2 are the validated-external-fitted-model profiles.",
+  "description": "Versioned analytical visual evidence contract. The legacy v1 predictive-classification artifact remains accepted unchanged; internal_v2 (Project Spec S0216) is the Atlas-native multiclass fixed-configuration training profile; continuous_regression_v3 (Project Spec S0228) is the Atlas-native continuous-regression fixed-configuration training profile; native_univariate_forecasting_v4 (Project Spec S0248) is the Atlas-native univariate-forecasting fixed-configuration training profile carrying bounded aggregate forecasting diagnostics only, preserved unchanged as historical forecasting evidence; native_binary_fixed_v5 (Project Spec S0258) is the Atlas-native binary fixed-configuration hist_gradient_boosting training profile, introduced because legacy_v1's closed feature_importance_method.model_family enum structurally excludes hist_gradient_boosting and carries no truthful permutation-importance method discriminator -- v5 is a strict independent branch that never widens or otherwise changes legacy_v1; native_univariate_forecasting_v6 (Project Spec S0270) is the governed native-univariate-forecasting final-holdout visual-evidence evolution of v4 -- it retains every v4 aggregate forecasting diagnostic and additionally requires exactly one bounded final_holdout_forecast_evaluation block carrying temporal context and the exact aligned sealed-final-holdout points (time_index + actual + forecast only), built from the already-computed one-pass holdout evaluation and never a development/history vector, feature/exogenous rows, or model internals; governed_v2 governs capability-aware, integrity-bound visual collections without authorizing publication or release activation; external_fitted_model_v1/v2 are the validated-external-fitted-model profiles.",
   "oneOf": [
     { "$ref": "#/$defs/legacy_v1" },
     { "$ref": "#/$defs/internal_v2" },
     { "$ref": "#/$defs/continuous_regression_v3" },
     { "$ref": "#/$defs/native_univariate_forecasting_v4" },
     { "$ref": "#/$defs/native_binary_fixed_v5" },
+    { "$ref": "#/$defs/native_univariate_forecasting_v6" },
     { "$ref": "#/$defs/governed_v2" },
     { "$ref": "#/$defs/external_fitted_model_v1" },
     { "$ref": "#/$defs/external_fitted_model_v2" }
@@ -487,6 +488,97 @@
         "horizon_step": { "type": "integer", "minimum": 1 },
         "mae": { "type": "number", "minimum": 0 },
         "observation_count": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "native_univariate_forecasting_v6": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "artifact_kind", "created_at", "training_run_identity", "forecasting_evidence", "dataset_statistics", "seasonal_profile", "backtesting_fold_metric", "horizon_mae", "final_holdout_forecast_evaluation", "evidence_policy"],
+      "description": "Project Spec S0270: governed native-univariate-forecasting final-holdout visual evidence, emitted alongside training-parameter-record.v4/training-metrics.v4 (both identities unchanged). Retains every native_univariate_forecasting_v4 aggregate diagnostic (created_at, training_run_identity, forecasting_evidence, dataset_statistics, seasonal_profile, backtesting_fold_metric, horizon_mae, evidence_policy) with the identical contracts, and additionally requires exactly one final_holdout_forecast_evaluation block. That block does NOT reuse the continuous-regression actual_vs_predicted definition (which is aggregate/bin-oriented and loses temporal identity): it carries bounded temporal context and the exact aligned points of the single sealed final holdout only -- each point is only a canonical time_index label plus finite actual and forecast values, its count is bounded by the governed forecast_horizon and a hard public-safety-compatible maximum of 64, it is derived from the one existing final evaluation (holdout_forecast_vector, y_true_holdout, authenticated row labels), and it is never a development/history vector, feature/exogenous rows, or model/runtime internals. Never contains classification_evidence, regression_evidence, confusion_matrix, charts, target_distribution_method, or feature_importance_method.",
+      "properties": {
+        "schema_version": { "const": "analytical-visualizations.v6" },
+        "artifact_kind": { "const": "analytical_visualizations" },
+        "created_at": { "type": "string", "format": "date-time" },
+        "training_run_identity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["dataset_slug", "run_id", "output_directory"],
+          "properties": {
+            "dataset_slug": { "type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$" },
+            "run_id": { "type": "string", "pattern": "^train-[0-9]{8}T[0-9]{6}Z$" },
+            "output_directory": { "type": "string", "pattern": "^pipeline/training-runs/[a-z0-9]+(?:-[a-z0-9]+)*/train-[0-9]{8}T[0-9]{6}Z/$" }
+          }
+        },
+        "forecasting_evidence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["problem_type", "result_semantics_schema_version", "training_metrics_schema_version", "forecast_horizon", "frequency", "seasonal_period"],
+          "properties": {
+            "problem_type": { "const": "univariate_forecasting" },
+            "result_semantics_schema_version": { "const": "univariate-forecasting-result-semantics.v1" },
+            "training_metrics_schema_version": { "const": "training-metrics.v4" },
+            "forecast_horizon": { "type": "integer", "minimum": 1 },
+            "frequency": { "type": "string", "minLength": 1 },
+            "seasonal_period": { "type": "integer", "minimum": 2 }
+          }
+        },
+        "dataset_statistics": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["instance_count", "development_observations", "final_holdout_observations"],
+          "properties": {
+            "instance_count": { "type": "integer", "minimum": 1 },
+            "development_observations": { "type": "integer", "minimum": 1 },
+            "final_holdout_observations": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "seasonal_profile": { "$ref": "#/$defs/forecasting_seasonal_profile" },
+        "backtesting_fold_metric": { "$ref": "#/$defs/forecasting_backtesting_fold_metric" },
+        "horizon_mae": { "$ref": "#/$defs/forecasting_horizon_mae" },
+        "final_holdout_forecast_evaluation": { "$ref": "#/$defs/forecasting_final_holdout_forecast_evaluation" },
+        "evidence_policy": { "$ref": "#/$defs/legacy_evidence_policy" }
+      }
+    },
+    "forecasting_final_holdout_forecast_evaluation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["partition_role", "evaluation_count", "model_frozen_before_open", "forecast_generated_before_target_open", "index_value_kind", "frequency", "development_boundary", "final_holdout_boundary", "points"],
+      "description": "Project Spec S0270: the strict internal bounded final-holdout forecast-evaluation block. Cross-field equality/ordering invariants JSON Schema cannot express (len(points) == final_holdout_boundary.observation_count == dataset_statistics.final_holdout_observations == forecasting_evidence.forecast_horizon; first/last point time_index == final_holdout_boundary.start_index/end_index; time_index labels unique and in authenticated source order; development_boundary counts agree with dataset_statistics.development_observations; boundary labels match the authenticated preparation-recipe values) are enforced by the producing/consuming code (pipeline/training.py, publisher/validate.py, api/public_visualizations_loader.py) and their tests -- mirroring the seasonal_profile/normalized_confusion_matrix row-sum conventions elsewhere in this file. No per-point residual/error field is permitted under S0270.",
+      "properties": {
+        "partition_role": { "const": "final_holdout" },
+        "evaluation_count": { "const": 1 },
+        "model_frozen_before_open": { "const": true },
+        "forecast_generated_before_target_open": { "const": true },
+        "index_value_kind": { "enum": ["calendar_period", "timestamp", "ordinal_time"] },
+        "frequency": { "type": "string", "minLength": 1 },
+        "development_boundary": { "$ref": "#/$defs/forecasting_evaluation_boundary" },
+        "final_holdout_boundary": { "$ref": "#/$defs/forecasting_evaluation_boundary" },
+        "points": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "items": { "$ref": "#/$defs/forecasting_final_holdout_point" }
+        }
+      }
+    },
+    "forecasting_evaluation_boundary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["start_index", "end_index", "observation_count"],
+      "properties": {
+        "start_index": { "type": "string", "minLength": 1 },
+        "end_index": { "type": "string", "minLength": 1 },
+        "observation_count": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "forecasting_final_holdout_point": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["time_index", "actual", "forecast"],
+      "properties": {
+        "time_index": { "type": "string", "minLength": 1 },
+        "actual": { "type": "number" },
+        "forecast": { "type": "number" }
       }
     },
     "native_binary_fixed_v5": {

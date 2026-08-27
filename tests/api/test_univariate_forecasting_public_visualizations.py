@@ -423,3 +423,151 @@ def test_v3_projection_never_carries_forecasting_diagnostics():
 
         assert "forecasting_diagnostics" not in projection
         assert projection["target_distribution_kind"] == "continuous_histogram"
+
+
+# ---------------------------------------------------------------------------
+# Project Spec S0270: analytical-visualizations.v6 bounded public
+# forecasting_evaluation projection
+# ---------------------------------------------------------------------------
+
+
+def _v6_final_holdout_evaluation(**overrides) -> dict:
+    block = {
+        "partition_role": "final_holdout",
+        "evaluation_count": 1,
+        "model_frozen_before_open": True,
+        "forecast_generated_before_target_open": True,
+        "index_value_kind": "calendar_period",
+        "frequency": "synthetic-step",
+        "development_boundary": {
+            "start_index": "1920-01", "end_index": "1938-12", "observation_count": 20,
+        },
+        "final_holdout_boundary": {
+            "start_index": "1939-01", "end_index": "1939-04", "observation_count": 4,
+        },
+        "points": [
+            {"time_index": "1939-01", "actual": 3.1, "forecast": 3.4},
+            {"time_index": "1939-02", "actual": 4.0, "forecast": 3.6},
+            {"time_index": "1939-03", "actual": 6.2, "forecast": 6.0},
+            {"time_index": "1939-04", "actual": 9.5, "forecast": 9.9},
+        ],
+    }
+    block.update(overrides)
+    return block
+
+
+def _valid_v6_artifact(**overrides) -> dict:
+    payload = _valid_v4_artifact()
+    payload["schema_version"] = "analytical-visualizations.v6"
+    payload["final_holdout_forecast_evaluation"] = _v6_final_holdout_evaluation()
+    payload.update(overrides)
+    return payload
+
+
+def test_v6_projection_contains_dataset_statistics_diagnostics_and_evaluation():
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        _write_release(releases_root, "release-v6-001", _valid_v6_artifact())
+
+        projection = loader.load_public_visualizations("release-v6-001", releases_root=releases_root)
+
+        assert projection["charts"] == []
+        assert projection["dataset_statistics"] == {"instance_count": 24}
+        assert projection["forecasting_diagnostics"]["forecast_horizon"] == 4
+        evaluation = projection["forecasting_evaluation"]
+        assert evaluation["index_value_kind"] == "calendar_period"
+        assert evaluation["frequency"] == "synthetic-step"
+        assert evaluation["development_boundary"] == {
+            "start_index": "1920-01", "end_index": "1938-12", "observation_count": 20,
+        }
+        assert evaluation["final_holdout_boundary"] == {
+            "start_index": "1939-01", "end_index": "1939-04", "observation_count": 4,
+        }
+        assert evaluation["evaluation"] == {
+            "split_name": "final_holdout",
+            "evaluation_count": 1,
+            "model_frozen_before_open": True,
+            "forecast_generated_before_target_open": True,
+        }
+        assert [point["time_index"] for point in evaluation["points"]] == [
+            "1939-01", "1939-02", "1939-03", "1939-04",
+        ]
+        assert [point["actual"] for point in evaluation["points"]] == [3.1, 4.0, 6.2, 9.5]
+        assert [point["forecast"] for point in evaluation["points"]] == [3.4, 3.6, 6.0, 9.9]
+        for point in evaluation["points"]:
+            assert set(point) == {"time_index", "actual", "forecast"}
+
+
+def test_v6_projection_never_duplicates_metric_values_or_leaks_internals():
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        _write_release(releases_root, "release-v6-002", _valid_v6_artifact())
+
+        projection = loader.load_public_visualizations("release-v6-002", releases_root=releases_root)
+        serialized = json.dumps(projection)
+        for forbidden in (
+            "training_run_identity", "output_directory", "run_id", "dataset_slug",
+            "result_semantics_schema_version", "training_metrics_schema_version",
+            "created_at", "evidence_policy", "final_holdout_forecast_evaluation",
+        ):
+            assert forbidden not in serialized
+
+        # The bounded forecasting_evaluation block itself never carries a
+        # scored metric value (MAE/RMSE/seasonal-MASE are owned by /metrics),
+        # internal artifact field names, paths, hashes, or model state.
+        evaluation_serialized = json.dumps(projection["forecasting_evaluation"])
+        for forbidden in (
+            "mae", "rmse", "seasonal_mase", "metrics", "partition_role",
+            "training_run_identity", "output_directory", "sha256", "path", "population_kind",
+        ):
+            assert forbidden not in evaluation_serialized
+
+
+def test_v4_projection_still_has_no_forecasting_evaluation():
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        _write_release(releases_root, "release-v4-nfe", _valid_v4_artifact())
+
+        projection = loader.load_public_visualizations("release-v4-nfe", releases_root=releases_root)
+
+        assert "forecasting_evaluation" not in projection
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda a: a["final_holdout_forecast_evaluation"].pop("points"),
+        lambda a: a["final_holdout_forecast_evaluation"].__setitem__("points", a["final_holdout_forecast_evaluation"]["points"][:3]),
+        lambda a: a["final_holdout_forecast_evaluation"]["points"][0].__setitem__("time_index", ""),
+        lambda a: a["final_holdout_forecast_evaluation"]["points"][1].__setitem__("time_index", "1939-01"),
+        lambda a: a["final_holdout_forecast_evaluation"]["points"][0].__setitem__("actual", True),
+        lambda a: a["final_holdout_forecast_evaluation"]["points"][0].__setitem__("forecast", float("inf")),
+        lambda a: a["final_holdout_forecast_evaluation"].__setitem__("partition_role", "test"),
+        lambda a: a["final_holdout_forecast_evaluation"].__setitem__("evaluation_count", 2),
+        lambda a: a["final_holdout_forecast_evaluation"].__setitem__("model_frozen_before_open", False),
+        lambda a: a["final_holdout_forecast_evaluation"].__setitem__("forecast_generated_before_target_open", False),
+        lambda a: a["final_holdout_forecast_evaluation"].__setitem__("index_value_kind", "slug_inferred"),
+        lambda a: a["final_holdout_forecast_evaluation"]["final_holdout_boundary"].__setitem__("end_index", "1999-12"),
+        lambda a: a["final_holdout_forecast_evaluation"]["final_holdout_boundary"].__setitem__("observation_count", 5),
+        lambda a: a["final_holdout_forecast_evaluation"]["development_boundary"].__setitem__("observation_count", 99),
+        lambda a: a.pop("final_holdout_forecast_evaluation"),
+    ],
+)
+def test_v6_malformed_evaluation_fails_closed(mutation):
+    artifact = _valid_v6_artifact()
+    mutation(artifact)
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        _write_release(releases_root, "release-v6-bad", artifact)
+        with pytest.raises(loader.PublicVisualizationsUnavailableError):
+            loader.load_public_visualizations("release-v6-bad", releases_root=releases_root)
+
+
+def test_v6_malformed_aggregate_diagnostic_still_fails_closed():
+    artifact = _valid_v6_artifact()
+    del artifact["seasonal_profile"]
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        _write_release(releases_root, "release-v6-aggbad", artifact)
+        with pytest.raises(loader.PublicVisualizationsUnavailableError):
+            loader.load_public_visualizations("release-v6-aggbad", releases_root=releases_root)

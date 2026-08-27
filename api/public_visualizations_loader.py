@@ -53,6 +53,18 @@ _ANALYTICAL_VISUALIZATIONS_INTERNAL_SCHEMA_VERSION_V3 = "analytical-visualizatio
 # it is handled by its own early branch in load_public_visualizations below,
 # never through _canonical_public_charts.
 _ANALYTICAL_VISUALIZATIONS_INTERNAL_SCHEMA_VERSION_V4 = "analytical-visualizations.v4"
+# Project Spec S0270: the governed native univariate-forecasting final-holdout
+# visual-evidence evolution of v4. v6 projects the same bounded
+# dataset_statistics/forecasting_diagnostics as v4 (identical shape and rules)
+# and additionally adds one bounded `forecasting_evaluation` projection
+# suitable for a later Forecast-vs-Actual renderer. It is handled by the same
+# early forecasting branch in load_public_visualizations below. A historical
+# v4 release is unchanged and never gains a `forecasting_evaluation` field.
+_ANALYTICAL_VISUALIZATIONS_INTERNAL_SCHEMA_VERSION_V6 = "analytical-visualizations.v6"
+_FORECASTING_SCHEMA_VERSIONS = (
+    _ANALYTICAL_VISUALIZATIONS_INTERNAL_SCHEMA_VERSION_V4,
+    _ANALYTICAL_VISUALIZATIONS_INTERNAL_SCHEMA_VERSION_V6,
+)
 _ACCEPTED_ANALYTICAL_VISUALIZATIONS_SCHEMA_VERSIONS = (
     _ANALYTICAL_VISUALIZATIONS_SCHEMA_VERSION,
     _ANALYTICAL_VISUALIZATIONS_EXTERNAL_SCHEMA_VERSION,
@@ -63,6 +75,8 @@ _ACCEPTED_ANALYTICAL_VISUALIZATIONS_SCHEMA_VERSIONS = (
 _MAX_FORECASTING_SEASONAL_POINTS = 64
 _MAX_FORECASTING_FOLD_POINTS = 64
 _MAX_FORECASTING_HORIZON_POINTS = 64
+_MAX_FORECASTING_FINAL_HOLDOUT_POINTS = 64
+_FORECASTING_INDEX_VALUE_KINDS = ("calendar_period", "timestamp", "ordinal_time")
 _CONFUSION_MATRIX_SCHEMA_VERSIONS = (
     _ANALYTICAL_VISUALIZATIONS_EXTERNAL_SCHEMA_VERSION_V2,
     _ANALYTICAL_VISUALIZATIONS_INTERNAL_SCHEMA_VERSION_V2,
@@ -594,6 +608,134 @@ def _bounded_forecasting_diagnostics(visualizations: dict[str, Any]) -> dict[str
     }
 
 
+def _bounded_public_evaluation_boundary(value: Any) -> dict[str, Any] | None:
+    """Project Spec S0270: bounded public projection of one temporal boundary
+    (development / final_holdout). Re-validates shape and bounds defensively
+    and returns only start_index/end_index/observation_count."""
+    if not isinstance(value, dict):
+        return None
+    start_index = value.get("start_index")
+    end_index = value.get("end_index")
+    observation_count = value.get("observation_count")
+    if not isinstance(start_index, str) or not start_index:
+        return None
+    if not isinstance(end_index, str) or not end_index:
+        return None
+    if not _is_positive_integer(observation_count):
+        return None
+    return {
+        "start_index": start_index,
+        "end_index": end_index,
+        "observation_count": observation_count,
+    }
+
+
+def _bounded_forecasting_evaluation(visualizations: dict[str, Any]) -> dict[str, Any] | None:
+    """Project Spec S0270: bounded public forecasting_evaluation projection
+    for a valid analytical-visualizations.v6 artifact. Independently
+    re-validates the final_holdout_forecast_evaluation block (never trusting
+    the producer's/publisher's own validation alone) and returns only
+    presentation-safe temporal context plus the exact aligned points --
+    time_index/actual/forecast. Returns None (fail-closed, never a partial
+    projection) on any violation. Never duplicates MAE/RMSE/seasonal-MASE, a
+    training-run path/hash, the preparation recipe, source column names, or
+    model state."""
+    forecasting_evidence = visualizations.get("forecasting_evidence")
+    if not isinstance(forecasting_evidence, dict):
+        return None
+    if forecasting_evidence.get("problem_type") != "univariate_forecasting":
+        return None
+    forecast_horizon = forecasting_evidence.get("forecast_horizon")
+    frequency = forecasting_evidence.get("frequency")
+    if not _is_positive_integer(forecast_horizon):
+        return None
+    if not isinstance(frequency, str) or not frequency:
+        return None
+
+    dataset_statistics = visualizations.get("dataset_statistics")
+    if not isinstance(dataset_statistics, dict):
+        return None
+    final_holdout_observations = dataset_statistics.get("final_holdout_observations")
+    development_observations = dataset_statistics.get("development_observations")
+    if not _is_positive_integer(final_holdout_observations) or not _is_positive_integer(development_observations):
+        return None
+
+    block = visualizations.get("final_holdout_forecast_evaluation")
+    if not isinstance(block, dict):
+        return None
+    if (
+        block.get("partition_role") != "final_holdout"
+        or block.get("evaluation_count") != 1
+        or block.get("model_frozen_before_open") is not True
+        or block.get("forecast_generated_before_target_open") is not True
+    ):
+        return None
+    index_value_kind = block.get("index_value_kind")
+    block_frequency = block.get("frequency")
+    if index_value_kind not in _FORECASTING_INDEX_VALUE_KINDS:
+        return None
+    if not isinstance(block_frequency, str) or not block_frequency or block_frequency != frequency:
+        return None
+
+    development_boundary = _bounded_public_evaluation_boundary(block.get("development_boundary"))
+    final_holdout_boundary = _bounded_public_evaluation_boundary(block.get("final_holdout_boundary"))
+    if development_boundary is None or final_holdout_boundary is None:
+        return None
+    if development_boundary["observation_count"] != development_observations:
+        return None
+    if final_holdout_boundary["observation_count"] != final_holdout_observations:
+        return None
+
+    points = block.get("points")
+    if (
+        not isinstance(points, list)
+        or not points
+        or len(points) > _MAX_FORECASTING_FINAL_HOLDOUT_POINTS
+    ):
+        return None
+    if not (len(points) == final_holdout_observations == forecast_horizon):
+        return None
+
+    bounded_points: list[dict[str, Any]] = []
+    seen_labels: set[str] = set()
+    for point in points:
+        if not isinstance(point, dict):
+            return None
+        time_index = point.get("time_index")
+        actual = point.get("actual")
+        forecast = point.get("forecast")
+        if not isinstance(time_index, str) or not time_index or time_index in seen_labels:
+            return None
+        seen_labels.add(time_index)
+        if not _is_finite_number(actual) or not _is_finite_number(forecast):
+            return None
+        bounded_points.append({
+            "time_index": time_index,
+            "actual": float(actual),
+            "forecast": float(forecast),
+        })
+
+    if (
+        bounded_points[0]["time_index"] != final_holdout_boundary["start_index"]
+        or bounded_points[-1]["time_index"] != final_holdout_boundary["end_index"]
+    ):
+        return None
+
+    return {
+        "index_value_kind": index_value_kind,
+        "frequency": frequency,
+        "development_boundary": development_boundary,
+        "final_holdout_boundary": final_holdout_boundary,
+        "evaluation": {
+            "split_name": "final_holdout",
+            "evaluation_count": 1,
+            "model_frozen_before_open": True,
+            "forecast_generated_before_target_open": True,
+        },
+        "points": bounded_points,
+    }
+
+
 def _safe_projection(value: Any) -> Any:
     if isinstance(value, dict):
         return {
@@ -647,15 +789,18 @@ def load_public_visualizations(
             "Visualizations are not available for this release."
         )
 
-    # Project Spec S0248: a v4 native forecasting artifact carries no
-    # charts/target_distribution_method/feature_importance_method at all, so
-    # it is handled by its own early branch here rather than through
-    # _canonical_public_charts below. A structurally invalid v4 document
-    # degrades to the same bounded unavailable response as a missing one.
+    # Project Spec S0248 / S0270: a v4 or v6 native forecasting artifact
+    # carries no charts/target_distribution_method/feature_importance_method
+    # at all, so it is handled by its own early branch here rather than
+    # through _canonical_public_charts below. A structurally invalid document
+    # degrades to the same bounded unavailable response as a missing one. v6
+    # additionally projects one bounded `forecasting_evaluation`; a historical
+    # v4 release is unchanged and never gains that field.
     if (
         isinstance(visualizations, dict)
-        and visualizations.get("schema_version") == _ANALYTICAL_VISUALIZATIONS_INTERNAL_SCHEMA_VERSION_V4
+        and visualizations.get("schema_version") in _FORECASTING_SCHEMA_VERSIONS
     ):
+        is_v6 = visualizations.get("schema_version") == _ANALYTICAL_VISUALIZATIONS_INTERNAL_SCHEMA_VERSION_V6
         if visualizations.get("artifact_kind") != _ANALYTICAL_VISUALIZATIONS_ARTIFACT_KIND:
             raise PublicVisualizationsUnavailableError(
                 "Visualizations are not available for this release."
@@ -675,6 +820,13 @@ def load_public_visualizations(
             "dataset_statistics": dataset_statistics,
             "forecasting_diagnostics": forecasting_diagnostics,
         }
+        if is_v6:
+            forecasting_evaluation = _bounded_forecasting_evaluation(visualizations)
+            if forecasting_evaluation is None:
+                raise PublicVisualizationsUnavailableError(
+                    "Visualizations are not available for this release."
+                )
+            payload["forecasting_evaluation"] = forecasting_evaluation
         projection = _safe_projection(payload)
         if not isinstance(projection, dict):
             raise PublicVisualizationsUnavailableError(

@@ -849,6 +849,149 @@ def test_v4_missing_seasonal_position_fails_closed(
     assert excinfo.value.code == "insufficient_development_observations"
 
 
+# ---------------------------------------------------------------------------
+# analytical-visualizations.v6 governed final-holdout evidence (Project Spec
+# S0270): the producer identity now emits v6, retaining every v4 aggregate
+# diagnostic and adding the bounded final_holdout_forecast_evaluation block
+# built from the one-pass sealed-holdout evaluation.
+# ---------------------------------------------------------------------------
+
+
+def test_v6_is_the_current_producer_identity_while_record_and_metrics_stay_v4(
+    fixed_training_environment: Path, tmp_path: Path,
+) -> None:
+    _result, output_directory = _run(fixed_training_environment, tmp_path)
+    visualizations_doc = _load_visualizations(output_directory)
+    metrics_doc = json.loads((output_directory / METRICS_ARTIFACT_FILENAME).read_text())
+    record_doc = json.loads((output_directory / TRAINING_PARAMETER_RECORD_FILENAME).read_text())
+
+    assert visualizations_doc["schema_version"] == "analytical-visualizations.v6"
+    assert NATIVE_UNIVARIATE_FORECASTING_ANALYTICAL_VISUALIZATIONS_VERSION == "analytical-visualizations.v6"
+    assert metrics_doc["schema_version"] == "training-metrics.v4"
+    assert NATIVE_UNIVARIATE_FORECASTING_TRAINING_METRICS_VERSION == "training-metrics.v4"
+    assert record_doc["schema_version"] == "training-parameter-record.v4"
+    assert NATIVE_UNIVARIATE_FORECASTING_TRAINING_PARAMETER_RECORD_VERSION == "training-parameter-record.v4"
+
+
+def test_v6_final_holdout_evaluation_uses_authenticated_labels_actuals_and_scored_forecasts(
+    fixed_training_environment: Path, tmp_path: Path,
+) -> None:
+    _result, output_directory = _run(fixed_training_environment, tmp_path)
+    visualizations_doc = _load_visualizations(output_directory)
+    metrics_doc = json.loads((output_directory / METRICS_ARTIFACT_FILENAME).read_text())
+
+    block = visualizations_doc["final_holdout_forecast_evaluation"]
+    assert block["partition_role"] == "final_holdout"
+    assert block["evaluation_count"] == 1
+    assert block["model_frozen_before_open"] is True
+    assert block["forecast_generated_before_target_open"] is True
+    # index_value_kind / frequency come from the execution contract, never a slug.
+    assert block["index_value_kind"] == "ordinal_time"
+    assert block["frequency"] == "synthetic-step"
+
+    points = block["points"]
+    assert len(points) == FORECAST_HORIZON == HOLDOUT_OBSERVATIONS
+
+    # Point labels equal the authenticated final-holdout row labels in source
+    # order -- the synthetic series' `period` column is "0".."23".
+    holdout_positions = list(range(DEV_OBSERVATIONS, DEV_OBSERVATIONS + HOLDOUT_OBSERVATIONS))
+    expected_labels = [str(position) for position in holdout_positions]
+    assert [point["time_index"] for point in points] == expected_labels
+    assert block["final_holdout_boundary"]["start_index"] == expected_labels[0] == "20"
+    assert block["final_holdout_boundary"]["end_index"] == expected_labels[-1] == "23"
+    assert block["final_holdout_boundary"]["observation_count"] == HOLDOUT_OBSERVATIONS
+    assert block["development_boundary"]["observation_count"] == DEV_OBSERVATIONS
+
+    # Actual values equal the exact final-holdout source targets.
+    expected_actuals = [_series_value(position) for position in holdout_positions]
+    assert [point["actual"] for point in points] == pytest.approx(expected_actuals)
+
+    # Forecast values equal the same already-computed final-holdout prediction
+    # vector used for scoring: recomputing MAE from the points reproduces the
+    # metrics artifact's final_holdout_evaluation MAE exactly.
+    metrics_holdout_mae = next(
+        entry["value"] for entry in metrics_doc["final_holdout_evaluation"]["metrics"] if entry["name"] == "mae"
+    )
+    points_mae = _forecast_mae(
+        [point["actual"] for point in points], [point["forecast"] for point in points]
+    )
+    assert points_mae == pytest.approx(metrics_holdout_mae)
+
+    import math
+
+    assert all(
+        math.isfinite(point["actual"]) and math.isfinite(point["forecast"]) for point in points
+    )
+    assert all(set(point) == {"time_index", "actual", "forecast"} for point in points)
+
+
+def test_v6_generation_introduces_no_second_fit_or_predict(
+    fixed_training_environment: Path, tmp_path: Path, monkeypatch,
+) -> None:
+    from sklearn.linear_model import LinearRegression
+
+    fit_calls = {"n": 0}
+    predict_calls = {"n": 0}
+    original_fit = LinearRegression.fit
+    original_predict = LinearRegression.predict
+
+    def _counting_fit(self, X, y):
+        fit_calls["n"] += 1
+        return original_fit(self, X, y)
+
+    def _counting_predict(self, X):
+        predict_calls["n"] += 1
+        return original_predict(self, X)
+
+    monkeypatch.setattr(LinearRegression, "fit", _counting_fit)
+    monkeypatch.setattr(LinearRegression, "predict", _counting_predict)
+    _result, output_directory = _run(fixed_training_environment, tmp_path)
+
+    assert (output_directory / ANALYTICAL_VISUALIZATIONS_FILENAME).exists()
+    # 2 backtesting folds + 1 final development fit == 3 fits; building the v6
+    # final_holdout_forecast_evaluation adds no fourth fit and no extra predict.
+    assert fit_calls["n"] == 3
+    # 2 fold forecast predicts + exactly 1 final-holdout predict.
+    assert predict_calls["n"] == 3
+
+
+def test_v6_predict_before_target_read_source_order_preserved() -> None:
+    source = inspect.getsource(training._train_native_univariate_forecasting_fixed_configuration)
+    predict_index = source.index("final_model.predict(holdout_design_matrix)")
+    y_true_index = source.index("y_true_holdout = [float(rows[i][target_column]) for i in holdout_positions]")
+    assert predict_index < y_true_index
+
+
+def test_v6_never_embeds_development_history_or_raw_dataset_structure(
+    fixed_training_environment: Path, tmp_path: Path,
+) -> None:
+    _result, output_directory = _run(fixed_training_environment, tmp_path)
+    visualizations_text = (output_directory / ANALYTICAL_VISUALIZATIONS_FILENAME).read_text()
+    for forbidden_key in (
+        "final_development_history", "y_true", "y_pred", "y_true_holdout", "y_pred_holdout",
+        "rows", "holdout_positions", "holdout_design_matrix", "development_history", "raw_values",
+    ):
+        assert forbidden_key not in visualizations_text
+    block = _load_visualizations(output_directory)["final_holdout_forecast_evaluation"]
+    # Only the bounded sealed-holdout points carry exact per-observation
+    # values -- never the 20-observation development history.
+    assert len(block["points"]) == HOLDOUT_OBSERVATIONS
+    development_only_value = _series_value(0)  # position 0 is development-only
+    carried_values = {v for point in block["points"] for v in (point["actual"], point["forecast"])}
+    assert development_only_value not in carried_values
+
+
+def test_v6_repeat_runs_produce_identical_final_holdout_evaluation(
+    fixed_training_environment: Path, tmp_path: Path,
+) -> None:
+    _a, output_a = _run(fixed_training_environment, tmp_path, run_id="train-20260101T000000Z")
+    _b, output_b = _run(fixed_training_environment, tmp_path, run_id="train-20260101T000001Z")
+    assert (
+        _load_visualizations(output_a)["final_holdout_forecast_evaluation"]
+        == _load_visualizations(output_b)["final_holdout_forecast_evaluation"]
+    )
+
+
 def test_no_external_study_access(fixed_training_environment: Path, tmp_path: Path) -> None:
     result, output_directory = _run(fixed_training_environment, tmp_path)
     record_text = (output_directory / TRAINING_PARAMETER_RECORD_FILENAME).read_text()

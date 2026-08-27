@@ -1,22 +1,32 @@
-"""Dedicated Project Spec S0248 tests for the Atlas-native univariate-
-forecasting `analytical-visualizations.v4` profile.
+"""Dedicated Project Spec S0248 / S0270 tests for the Atlas-native univariate-
+forecasting `analytical-visualizations.v4` (historical) and
+`analytical-visualizations.v6` (governed final-holdout evolution) profiles.
 
 Covers, using only synthetic Atlas-owned fixtures (never a real dataset/model
 file, never `dataset-study-*`, and never a write under the real repository
 `releases/`, `publisher/runs/`, or `pipeline/training-runs/` trees):
 
-  * `analytical-visualizations.v4` schema validity for a directly
-    constructed, fully-formed document, independent of a real training run;
-  * negative schema cases: wrong problem type, wrong result-semantics
-    version, wrong training-metrics version, non-positive forecast_horizon,
-    seasonal_period < 2, non-finite/negative values, invalid
-    dataset_statistics counts, and classification/regression-only field
-    injection (additionalProperties: false);
-  * `_native_forecasting_seasonal_profile` and
+  * `analytical-visualizations.v4` schema validity is preserved unchanged for
+    a directly constructed, fully-formed historical document -- v4 stays
+    aggregate-only and rejects the v6-only final-holdout block;
+  * `analytical-visualizations.v6` schema validity for a fully synthetic,
+    directly constructed document that retains every v4 aggregate diagnostic
+    and adds exactly one bounded `final_holdout_forecast_evaluation` block;
+  * negative schema cases for both branches: wrong problem type, wrong
+    result-semantics version, wrong training-metrics version, non-positive
+    forecast_horizon, seasonal_period < 2, non-finite/negative values,
+    invalid dataset_statistics counts, classification/regression-only field
+    injection (additionalProperties: false), and, for v6, wrong
+    partition/evaluation/freeze/pre-target flags plus invalid
+    boundary/count/point structures;
+  * `_native_forecasting_seasonal_profile`,
+    `_native_forecasting_final_holdout_forecast_evaluation`, and
     `_build_native_univariate_forecasting_analytical_visualizations_artifact`
     (pipeline/training.py) exercised directly, in isolation from
-    `train_from_paths`, proving deterministic construction and fail-closed
-    behavior on insufficient development history.
+    `train_from_paths`, proving the pure builder now emits v6 with exact
+    aligned synthetic evaluation points, never carries the development
+    history vector or unrelated row data, and is deterministic for identical
+    inputs.
 
 `tests/test_native_univariate_forecasting_training.py` covers the real,
 end-to-end `train_from_paths` generation path; this module never duplicates
@@ -37,8 +47,10 @@ sys.path.insert(0, str(REPO_ROOT))
 import pipeline.training as training  # noqa: E402
 from pipeline.training import (  # noqa: E402
     NATIVE_UNIVARIATE_FORECASTING_ANALYTICAL_VISUALIZATIONS_VERSION,
+    NATIVE_UNIVARIATE_FORECASTING_FINAL_HOLDOUT_MAX_POINTS,
     TrainingInputError,
     _build_native_univariate_forecasting_analytical_visualizations_artifact,
+    _native_forecasting_final_holdout_forecast_evaluation,
     _native_forecasting_seasonal_profile,
 )
 
@@ -119,6 +131,39 @@ def _valid_v4_document(**overrides) -> dict:
     return payload
 
 
+def _v6_final_holdout_evaluation(**overrides) -> dict:
+    block = {
+        "partition_role": "final_holdout",
+        "evaluation_count": 1,
+        "model_frozen_before_open": True,
+        "forecast_generated_before_target_open": True,
+        "index_value_kind": "ordinal_time",
+        "frequency": "synthetic-step",
+        "development_boundary": {
+            "start_index": "0", "end_index": "19", "observation_count": 20,
+        },
+        "final_holdout_boundary": {
+            "start_index": "20", "end_index": "23", "observation_count": 4,
+        },
+        "points": [
+            {"time_index": "20", "actual": 14.0, "forecast": 13.6},
+            {"time_index": "21", "actual": 12.0, "forecast": 12.3},
+            {"time_index": "22", "actual": 9.5, "forecast": 9.9},
+            {"time_index": "23", "actual": 15.0, "forecast": 14.4},
+        ],
+    }
+    block.update(overrides)
+    return block
+
+
+def _valid_v6_document(**overrides) -> dict:
+    payload = _valid_v4_document()
+    payload["schema_version"] = "analytical-visualizations.v6"
+    payload["final_holdout_forecast_evaluation"] = _v6_final_holdout_evaluation()
+    payload.update(overrides)
+    return payload
+
+
 # ---------------------------------------------------------------------------
 # Direct schema validity
 # ---------------------------------------------------------------------------
@@ -130,11 +175,102 @@ def test_directly_constructed_v4_document_validates():
     _schema_validator().validate(_valid_v4_document())
 
 
-def test_v4_document_is_the_only_branch_that_matches_its_own_schema_version():
+def test_directly_constructed_v6_document_validates():
+    if jsonschema is None:
+        pytest.skip("jsonschema not installed")
+    _schema_validator().validate(_valid_v6_document())
+
+
+def test_producer_identity_is_now_v6_and_v4_remains_its_own_historical_branch():
+    if jsonschema is None:
+        pytest.skip("jsonschema not installed")
+    assert NATIVE_UNIVARIATE_FORECASTING_ANALYTICAL_VISUALIZATIONS_VERSION == "analytical-visualizations.v6"
+    # v4 stays accepted, unchanged, as historical aggregate forecasting evidence.
+    _schema_validator().validate(_valid_v4_document())
+    assert _valid_v6_document()["schema_version"] == NATIVE_UNIVARIATE_FORECASTING_ANALYTICAL_VISUALIZATIONS_VERSION
+
+
+def test_v4_remains_aggregate_only_and_rejects_the_v6_only_final_holdout_block():
     if jsonschema is None:
         pytest.skip("jsonschema not installed")
     document = _valid_v4_document()
-    assert document["schema_version"] == NATIVE_UNIVARIATE_FORECASTING_ANALYTICAL_VISUALIZATIONS_VERSION
+    document["final_holdout_forecast_evaluation"] = _v6_final_holdout_evaluation()
+    with pytest.raises(jsonschema.ValidationError):
+        _schema_validator().validate(document)
+
+
+def test_v6_requires_the_final_holdout_forecast_evaluation_block():
+    if jsonschema is None:
+        pytest.skip("jsonschema not installed")
+    document = _valid_v6_document()
+    del document["final_holdout_forecast_evaluation"]
+    with pytest.raises(jsonschema.ValidationError):
+        _schema_validator().validate(document)
+
+
+def test_v6_retains_every_v4_aggregate_diagnostic():
+    document = _valid_v6_document()
+    for key in ("forecasting_evidence", "dataset_statistics", "seasonal_profile",
+                "backtesting_fold_metric", "horizon_mae", "evidence_policy"):
+        assert key in document
+    assert document["forecasting_evidence"] == _valid_v4_document()["forecasting_evidence"]
+
+
+@pytest.mark.parametrize(
+    "field,bad_value",
+    [
+        ("partition_role", "test"),
+        ("partition_role", "development"),
+        ("evaluation_count", 0),
+        ("evaluation_count", 2),
+        ("model_frozen_before_open", False),
+        ("forecast_generated_before_target_open", False),
+        ("index_value_kind", "slug_inferred"),
+        ("frequency", ""),
+    ],
+)
+def test_v6_rejects_wrong_partition_evaluation_freeze_or_pre_target_flags(field, bad_value):
+    if jsonschema is None:
+        pytest.skip("jsonschema not installed")
+    document = _valid_v6_document(
+        final_holdout_forecast_evaluation=_v6_final_holdout_evaluation(**{field: bad_value})
+    )
+    with pytest.raises(jsonschema.ValidationError):
+        _schema_validator().validate(document)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda b: b.__setitem__("points", []),
+        lambda b: b["points"].append({"time_index": "24", "actual": 1.0, "forecast": 2.0, "residual": -1.0}),
+        lambda b: b["points"][0].__setitem__("actual", True),
+        lambda b: b["points"][0].__setitem__("time_index", ""),
+        lambda b: b["points"][0].pop("forecast"),
+        lambda b: b["development_boundary"].__setitem__("observation_count", 0),
+        lambda b: b["final_holdout_boundary"].pop("end_index"),
+        lambda b: b.__setitem__("unexpected_field", "x"),
+    ],
+)
+def test_v6_rejects_invalid_boundary_count_or_point_structures(mutation):
+    if jsonschema is None:
+        pytest.skip("jsonschema not installed")
+    block = _v6_final_holdout_evaluation()
+    mutation(block)
+    document = _valid_v6_document(final_holdout_forecast_evaluation=block)
+    with pytest.raises(jsonschema.ValidationError):
+        _schema_validator().validate(document)
+
+
+def test_v6_document_is_the_only_branch_that_matches_its_own_schema_version():
+    if jsonschema is None:
+        pytest.skip("jsonschema not installed")
+    for other_version in ("analytical-visualizations.v1", "analytical-visualizations.v2",
+                          "analytical-visualizations.v3", "analytical-visualizations.v4",
+                          "analytical-visualizations.v5"):
+        document = _valid_v6_document(schema_version=other_version)
+        with pytest.raises(jsonschema.ValidationError):
+            _schema_validator().validate(document)
 
 
 # ---------------------------------------------------------------------------
@@ -319,6 +455,14 @@ def _build_artifact(**overrides) -> dict:
         fold_summaries=_synthetic_fold_summaries(),
         horizon_mae=_synthetic_horizon_mae(),
         primary_metric_id="mae",
+        final_holdout_labels=["20", "21", "22", "23"],
+        y_true_holdout=[14.0, 12.0, 9.5, 15.0],
+        holdout_forecast_vector=[13.6, 12.3, 9.9, 14.4],
+        index_value_kind="ordinal_time",
+        development_start_label="0",
+        development_end_label="19",
+        final_holdout_start_label="20",
+        final_holdout_end_label="23",
         output_directory=Path(f"pipeline/training-runs/{DATASET_SLUG}/train-20260823T000000Z"),
         training_timestamp="2026-08-23T00:00:00Z",
     )
@@ -326,11 +470,71 @@ def _build_artifact(**overrides) -> dict:
     return _build_native_univariate_forecasting_analytical_visualizations_artifact(**kwargs)
 
 
-def test_builder_output_validates_against_real_schema():
+def test_builder_emits_v6_and_validates_against_real_schema():
     if jsonschema is None:
         pytest.skip("jsonschema not installed")
     artifact = _build_artifact()
+    assert artifact["schema_version"] == "analytical-visualizations.v6"
     _schema_validator().validate(artifact)
+
+
+def test_builder_emits_exact_aligned_synthetic_evaluation_points():
+    artifact = _build_artifact()
+    block = artifact["final_holdout_forecast_evaluation"]
+    assert block["partition_role"] == "final_holdout"
+    assert block["evaluation_count"] == 1
+    assert block["model_frozen_before_open"] is True
+    assert block["forecast_generated_before_target_open"] is True
+    assert block["index_value_kind"] == "ordinal_time"
+    assert [point["time_index"] for point in block["points"]] == ["20", "21", "22", "23"]
+    assert [point["actual"] for point in block["points"]] == [14.0, 12.0, 9.5, 15.0]
+    assert [point["forecast"] for point in block["points"]] == [13.6, 12.3, 9.9, 14.4]
+    assert block["final_holdout_boundary"] == {"start_index": "20", "end_index": "23", "observation_count": 4}
+    assert block["development_boundary"] == {"start_index": "0", "end_index": "19", "observation_count": 20}
+    for point in block["points"]:
+        assert set(point) == {"time_index", "actual", "forecast"}
+
+
+def test_builder_final_holdout_block_is_deterministic_for_identical_inputs():
+    assert _build_artifact()["final_holdout_forecast_evaluation"] == (
+        _build_artifact()["final_holdout_forecast_evaluation"]
+    )
+
+
+@pytest.mark.parametrize(
+    "overrides,expected_code",
+    [
+        ({"final_holdout_labels": ["20", "21", "22"]}, "invalid_preparation_recipe"),
+        ({"y_true_holdout": [1.0, 2.0, 3.0]}, "invalid_preparation_recipe"),
+        ({"holdout_forecast_vector": [1.0, 2.0, 3.0, 4.0, 5.0]}, "invalid_preparation_recipe"),
+        ({"final_holdout_labels": ["20", "20", "22", "23"]}, "invalid_prepared_dataset"),
+        ({"final_holdout_start_label": "99"}, "invalid_prepared_dataset"),
+        ({"final_holdout_end_label": "99"}, "invalid_prepared_dataset"),
+    ],
+)
+def test_builder_fails_closed_on_inconsistent_final_holdout_inputs(overrides, expected_code):
+    with pytest.raises(TrainingInputError) as excinfo:
+        _build_artifact(**overrides)
+    assert excinfo.value.code == expected_code
+
+
+def test_final_holdout_evaluation_helper_rejects_more_than_max_points():
+    n = NATIVE_UNIVARIATE_FORECASTING_FINAL_HOLDOUT_MAX_POINTS + 1
+    with pytest.raises(TrainingInputError):
+        _native_forecasting_final_holdout_forecast_evaluation(
+            final_holdout_labels=[str(i) for i in range(n)],
+            y_true_holdout=[float(i) for i in range(n)],
+            holdout_forecast_vector=[float(i) for i in range(n)],
+            forecast_horizon=n,
+            development_observation_count=10,
+            final_holdout_observation_count=n,
+            index_value_kind="ordinal_time",
+            frequency="synthetic-step",
+            development_start_label="a",
+            development_end_label="b",
+            final_holdout_start_label="0",
+            final_holdout_end_label=str(n - 1),
+        )
 
 
 def test_builder_output_dataset_statistics_arithmetic():
@@ -375,9 +579,20 @@ def test_builder_output_evidence_policy_matches_legacy_shape():
     }
 
 
-def test_builder_never_embeds_raw_development_history_or_holdout_values():
+def test_builder_never_embeds_raw_development_history_or_unrelated_row_data():
     artifact = _build_artifact()
     serialized = json.dumps(artifact)
-    assert "final_development_history" not in serialized
-    assert "y_true" not in serialized
-    assert "y_pred" not in serialized
+    for forbidden_key in (
+        "final_development_history", "y_true", "y_pred", "y_true_holdout", "y_pred_holdout",
+        "rows", "holdout_positions", "holdout_design_matrix", "preparation_recipe", "contract",
+    ):
+        assert forbidden_key not in serialized
+    # The only exact per-observation values v6 carries are the bounded
+    # final-holdout points -- never the full development history vector.
+    block = artifact["final_holdout_forecast_evaluation"]
+    assert len(block["points"]) == 4
+    # A development-history-only value (10.5, present in the
+    # final_development_history fixture but never in the holdout
+    # actual/forecast vectors) must not leak into the bounded points.
+    point_values = {v for point in block["points"] for v in (point["actual"], point["forecast"])}
+    assert 10.5 not in point_values

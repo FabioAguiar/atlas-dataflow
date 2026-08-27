@@ -1861,6 +1861,22 @@ _INTERNAL_FORECASTING_RESULT_SEMANTICS_SCHEMA_VERSION = "univariate-forecasting-
 _INTERNAL_FORECASTING_RESULT_SCHEMA_VERSION = "univariate-forecasting-result.v1"
 _INTERNAL_FORECASTING_METRICS_SCHEMA_VERSION = "training-metrics.v4"
 _INTERNAL_FORECASTING_VISUALIZATIONS_SCHEMA_VERSION_V4 = "analytical-visualizations.v4"
+# Project Spec S0270: analytical-visualizations.v6 is the governed native
+# forecasting final-holdout visual-evidence evolution of v4. A native
+# forecasting candidate may carry a coherent historical v4 artifact OR a
+# coherent v6 artifact -- and no other visualization version. All existing v4
+# aggregate cross-checks apply identically to v6; v6 additionally carries a
+# required final_holdout_forecast_evaluation block that is cross-checked
+# against the already-governed bundle/metrics evidence, never recomputed.
+_INTERNAL_FORECASTING_VISUALIZATIONS_SCHEMA_VERSION_V6 = "analytical-visualizations.v6"
+_INTERNAL_FORECASTING_VISUALIZATIONS_ACCEPTED_SCHEMA_VERSIONS = (
+    _INTERNAL_FORECASTING_VISUALIZATIONS_SCHEMA_VERSION_V4,
+    _INTERNAL_FORECASTING_VISUALIZATIONS_SCHEMA_VERSION_V6,
+)
+# Project Spec S0270: hard public-safety-compatible maximum number of exact
+# final-holdout evaluation points (matches the public forecasting horizon-
+# point bound in api/public_visualizations_loader.py).
+_INTERNAL_FORECASTING_FINAL_HOLDOUT_MAX_POINTS = 64
 # Project Spec S0247 Desired Change E: the exact, bounded classification/
 # regression-only result_semantics keys that must never appear on a
 # forecasting bundle -- their presence (regardless of value) is rejected.
@@ -2075,6 +2091,113 @@ def _internal_native_forecasting_metrics_public_projection_check(
     return []
 
 
+def _internal_native_forecasting_v6_final_holdout_evaluation_checks(
+    visualizations_data: dict,
+    *,
+    forecast_horizon: int,
+    development_observations: int,
+    final_holdout_observations: int,
+    metrics_data: dict | None,
+) -> list[dict]:
+    """Project Spec S0270: fail-closed validation of the v6
+    final_holdout_forecast_evaluation block. Every cross-field
+    equality/ordering invariant is enforced; any violation rejects the whole
+    candidate rather than partially accepting the visualization. Publisher
+    validation never recomputes predictions or metrics -- it only cross-checks
+    the already-governed declarations for agreement."""
+    def _reject(safe_detail: str) -> list[dict]:
+        return [_safe_rejection_reason(
+            "contradictory_candidate_artifact",
+            "Native forecasting v6 final_holdout_forecast_evaluation is malformed or "
+            "inconsistent with the governed bundle/metrics evidence.",
+            "visualizations",
+            safe_detail,
+        )]
+
+    block = visualizations_data.get("final_holdout_forecast_evaluation")
+    if not isinstance(block, dict):
+        return _reject("native_forecasting_v6_final_holdout_evaluation_missing")
+    if (
+        block.get("partition_role") != "final_holdout"
+        or block.get("evaluation_count") != 1
+        or block.get("model_frozen_before_open") is not True
+        or block.get("forecast_generated_before_target_open") is not True
+    ):
+        return _reject("native_forecasting_v6_final_holdout_evaluation_policy_violation")
+    if block.get("index_value_kind") not in ("calendar_period", "timestamp", "ordinal_time"):
+        return _reject("native_forecasting_v6_final_holdout_evaluation_index_kind_invalid")
+    frequency = block.get("frequency")
+    if not isinstance(frequency, str) or not frequency:
+        return _reject("native_forecasting_v6_final_holdout_evaluation_frequency_invalid")
+
+    def _valid_boundary(value) -> bool:
+        if not isinstance(value, dict):
+            return False
+        start_index = value.get("start_index")
+        end_index = value.get("end_index")
+        observation_count = value.get("observation_count")
+        return (
+            isinstance(start_index, str) and bool(start_index)
+            and isinstance(end_index, str) and bool(end_index)
+            and isinstance(observation_count, int) and not isinstance(observation_count, bool)
+            and observation_count >= 1
+        )
+
+    development_boundary = block.get("development_boundary")
+    final_holdout_boundary = block.get("final_holdout_boundary")
+    if not _valid_boundary(development_boundary) or not _valid_boundary(final_holdout_boundary):
+        return _reject("native_forecasting_v6_final_holdout_evaluation_boundary_invalid")
+    if development_boundary["observation_count"] != development_observations:
+        return _reject("native_forecasting_v6_final_holdout_evaluation_development_count_mismatch")
+    if final_holdout_boundary["observation_count"] != final_holdout_observations:
+        return _reject("native_forecasting_v6_final_holdout_evaluation_holdout_count_mismatch")
+
+    points = block.get("points")
+    if (
+        not isinstance(points, list)
+        or not points
+        or len(points) > _INTERNAL_FORECASTING_FINAL_HOLDOUT_MAX_POINTS
+    ):
+        return _reject("native_forecasting_v6_final_holdout_evaluation_points_invalid")
+    if not (len(points) == final_holdout_observations == forecast_horizon):
+        return _reject("native_forecasting_v6_final_holdout_evaluation_point_count_mismatch")
+
+    labels: list[str] = []
+    for point in points:
+        if not isinstance(point, dict):
+            return _reject("native_forecasting_v6_final_holdout_evaluation_points_invalid")
+        time_index = point.get("time_index")
+        actual = point.get("actual")
+        forecast = point.get("forecast")
+        if not isinstance(time_index, str) or not time_index:
+            return _reject("native_forecasting_v6_final_holdout_evaluation_time_index_invalid")
+        if not _is_finite_numeric(actual) or not _is_finite_numeric(forecast):
+            return _reject("native_forecasting_v6_final_holdout_evaluation_point_value_invalid")
+        labels.append(time_index)
+    if len(set(labels)) != len(labels):
+        return _reject("native_forecasting_v6_final_holdout_evaluation_time_index_not_unique")
+    if (
+        labels[0] != final_holdout_boundary["start_index"]
+        or labels[-1] != final_holdout_boundary["end_index"]
+    ):
+        return _reject("native_forecasting_v6_final_holdout_evaluation_boundary_label_mismatch")
+
+    if isinstance(metrics_data, dict) and metrics_data.get("schema_version") == _INTERNAL_FORECASTING_METRICS_SCHEMA_VERSION:
+        metrics_final_holdout = metrics_data.get("final_holdout_evaluation")
+        if isinstance(metrics_final_holdout, dict):
+            metrics_count = metrics_final_holdout.get("observation_count")
+            if (
+                isinstance(metrics_count, int)
+                and not isinstance(metrics_count, bool)
+                and metrics_count != len(points)
+            ):
+                return _reject("native_forecasting_v6_final_holdout_evaluation_metrics_count_mismatch")
+            if metrics_final_holdout.get("evaluation_count") != 1:
+                return _reject("native_forecasting_v6_final_holdout_evaluation_metrics_evaluation_count_mismatch")
+
+    return []
+
+
 def _internal_native_forecasting_visualizations_compatibility(
     visualizations_data: dict | None,
     predictive_bundle_data: dict | None,
@@ -2088,7 +2211,10 @@ def _internal_native_forecasting_visualizations_compatibility(
     cross-checks the already-governed declarations for agreement."""
     if not isinstance(visualizations_data, dict) or not isinstance(predictive_bundle_data, dict):
         return []
-    if visualizations_data.get("schema_version") != _INTERNAL_FORECASTING_VISUALIZATIONS_SCHEMA_VERSION_V4:
+    if (
+        visualizations_data.get("schema_version")
+        not in _INTERNAL_FORECASTING_VISUALIZATIONS_ACCEPTED_SCHEMA_VERSIONS
+    ):
         return [_safe_rejection_reason(
             "visualizations_provenance_mismatch",
             "Native forecasting visualizations schema profile does not match the predictive "
@@ -2155,6 +2281,24 @@ def _internal_native_forecasting_visualizations_compatibility(
             "visualizations",
             "native_forecasting_visualizations_dataset_statistics_incoherent",
         )]
+
+    # Project Spec S0270: a v6 artifact additionally carries a bounded
+    # final_holdout_forecast_evaluation block. Apply all v4 aggregate checks
+    # above identically, then validate the v6 block fail-closed and
+    # cross-check its final-holdout count/horizon/evaluation identity against
+    # the already-governed bundle horizon, visualizations dataset_statistics,
+    # and (when present) the metrics artifact. Never recompute predictions or
+    # metrics.
+    if visualizations_data.get("schema_version") == _INTERNAL_FORECASTING_VISUALIZATIONS_SCHEMA_VERSION_V6:
+        v6_reasons = _internal_native_forecasting_v6_final_holdout_evaluation_checks(
+            visualizations_data,
+            forecast_horizon=visualizations_horizon,
+            development_observations=development_observations,
+            final_holdout_observations=final_holdout_observations,
+            metrics_data=metrics_data,
+        )
+        if v6_reasons:
+            return v6_reasons
 
     if not isinstance(metrics_data, dict) or metrics_data.get("schema_version") != _INTERNAL_FORECASTING_METRICS_SCHEMA_VERSION:
         return []

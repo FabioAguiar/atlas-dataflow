@@ -238,11 +238,43 @@ def test_v4_record_requires_paired_v4_metrics_cross_version_pairing_rejects(tmp_
 
 @pytest.mark.parametrize(
     "visualizations_version",
-    ["analytical-visualizations.v1", "analytical-visualizations.v2", "analytical-visualizations.v3"],
+    [
+        "analytical-visualizations.v1",
+        "analytical-visualizations.v2",
+        "analytical-visualizations.v3",
+        "analytical-visualizations.v5",
+    ],
 )
 def test_v4_visualization_reservation_fails_closed_against_substitution(tmp_path, visualizations_version):
     with pytest.raises(ValueError, match="visualizations"):
         _build_v4_candidate_input(tmp_path, visualizations_version=visualizations_version)
+
+
+def test_native_forecasting_record_v4_metrics_v4_accepts_visualizations_v6(tmp_path):
+    # Project Spec S0270: record v4 + metrics v4 native forecasting provenance
+    # explicitly recognizes analytical-visualizations.v6 (the governed
+    # final-holdout evolution), carried forward verbatim.
+    candidate_input = _build_v4_candidate_input(
+        tmp_path, visualizations_version="analytical-visualizations.v6"
+    )
+    assert (
+        candidate_input["artifact_inputs"]["visualizations"]["contract_version"]
+        == "analytical-visualizations.v6"
+    )
+    assert candidate_input["artifact_inputs"]["training_parameter_record"]["contract_version"] == (
+        "training-parameter-record.v4"
+    )
+    assert candidate_input["artifact_inputs"]["visualizations"]["source_stage"] == "M24"
+
+
+def test_native_forecasting_v4_visualizations_remains_accepted_as_historical_compatibility(tmp_path):
+    candidate_input = _build_v4_candidate_input(
+        tmp_path, visualizations_version="analytical-visualizations.v4"
+    )
+    assert (
+        candidate_input["artifact_inputs"]["visualizations"]["contract_version"]
+        == "analytical-visualizations.v4"
+    )
 
 
 def test_legacy_internal_v1_provenance_remains_unchanged(tmp_path):
@@ -395,7 +427,10 @@ def test_schema_does_not_remove_or_expand_external_fitted_model_vocabulary():
     assert "training-metrics.external-fitted-model.v2" not in metrics_enum
 
 
-def test_schema_reserves_analytical_visualizations_v4_vocabulary_only():
+def test_schema_admits_analytical_visualizations_v4_and_v6_vocabulary_only():
+    # Project Spec S0270: v6 is additively admitted alongside v4 (historical).
+    # v5 (native binary fixed-configuration) is intentionally NOT part of the
+    # forecasting visualizations enum.
     schema = json.loads(RELEASE_CANDIDATE_INPUT_SCHEMA_PATH.read_text())
     visualizations_prop = schema["properties"]["artifact_inputs"]["properties"]["visualizations"][
         "allOf"
@@ -405,7 +440,9 @@ def test_schema_reserves_analytical_visualizations_v4_vocabulary_only():
         "analytical-visualizations.v2",
         "analytical-visualizations.v3",
         "analytical-visualizations.v4",
+        "analytical-visualizations.v6",
     ]
+    assert "analytical-visualizations.v5" not in visualizations_prop["enum"]
 
 
 def test_real_v4_visualization_schema_content_is_now_defined():
@@ -862,6 +899,72 @@ def _valid_v4_visualizations_document(
     return document
 
 
+def _v6_final_holdout_evaluation(
+    *,
+    forecast_horizon: int = 6,
+    development_observations: int = 20,
+    labels: list[str] | None = None,
+    overrides: dict | None = None,
+) -> dict:
+    if labels is None:
+        labels = [f"1939-{month:02d}" for month in range(1, forecast_horizon + 1)]
+    block = {
+        "partition_role": "final_holdout",
+        "evaluation_count": 1,
+        "model_frozen_before_open": True,
+        "forecast_generated_before_target_open": True,
+        "index_value_kind": "calendar_period",
+        "frequency": "synthetic-step",
+        "development_boundary": {
+            "start_index": "1920-01", "end_index": "1938-12",
+            "observation_count": development_observations,
+        },
+        "final_holdout_boundary": {
+            "start_index": labels[0], "end_index": labels[-1],
+            "observation_count": forecast_horizon,
+        },
+        "points": [
+            {"time_index": label, "actual": 10.0 + index, "forecast": 10.0 + index + 0.25}
+            for index, label in enumerate(labels)
+        ],
+    }
+    block.update(overrides or {})
+    return block
+
+
+def _valid_v6_visualizations_document(
+    *,
+    forecast_horizon: int = 6,
+    development_observations: int = 20,
+    final_holdout_evaluation_overrides: dict | None = None,
+    **v4_kwargs,
+) -> dict:
+    """Project Spec S0270: a fully valid, schema-conformant
+    analytical-visualizations.v6 document -- every v4 aggregate diagnostic
+    plus a coherent bounded final_holdout_forecast_evaluation block whose
+    counts match forecast_horizon and the default metrics fixture's
+    final_holdout_evaluation.observation_count."""
+    document = _valid_v4_visualizations_document(
+        forecast_horizon=forecast_horizon,
+        development_observations=development_observations,
+        final_holdout_observations=forecast_horizon,
+        **v4_kwargs,
+    )
+    document["schema_version"] = "analytical-visualizations.v6"
+    document["final_holdout_forecast_evaluation"] = _v6_final_holdout_evaluation(
+        forecast_horizon=forecast_horizon,
+        development_observations=development_observations,
+        overrides=final_holdout_evaluation_overrides,
+    )
+    return document
+
+
+def _v6_metrics(*, forecast_horizon: int = 6, **kwargs) -> dict:
+    kwargs.setdefault("final_holdout_overrides", {})
+    kwargs["final_holdout_overrides"].setdefault("observation_count", forecast_horizon)
+    return _forecasting_metrics_overrides(forecast_horizon=forecast_horizon, **kwargs)
+
+
 def _safe_details(reasons: list[dict]) -> set:
     return {reason["safe_detail"] for reason in reasons if "safe_detail" in reason}
 
@@ -1148,6 +1251,150 @@ def test_native_forecasting_visualizations_dataset_statistics_incoherent_rejects
         document, _forecasting_predictive_bundle_overrides(),
     )
     assert "native_forecasting_visualizations_dataset_statistics_incoherent" in _safe_details(reasons)
+
+
+# ---------------------------------------------------------------------------
+# Project Spec S0270: analytical-visualizations.v6 publisher compatibility
+# ---------------------------------------------------------------------------
+
+
+def test_native_forecasting_visualizations_accepts_full_coherent_v6_document():
+    reasons = validate._internal_native_forecasting_visualizations_compatibility(
+        _valid_v6_visualizations_document(),
+        _forecasting_predictive_bundle_overrides(),
+        _v6_metrics(),
+    )
+    assert reasons == []
+
+
+def test_native_forecasting_visualizations_v6_document_validates_against_schema():
+    jsonschema = pytest.importorskip("jsonschema")
+    schema = json.loads(ANALYTICAL_VISUALIZATIONS_SCHEMA_PATH.read_text())
+    validator_cls = jsonschema.validators.validator_for(schema, default=jsonschema.Draft202012Validator)
+    validator_cls(schema).validate(_valid_v6_visualizations_document())
+
+
+def test_native_forecasting_visualizations_v6_still_applies_v4_aggregate_cross_checks():
+    # A v4 aggregate contradiction (horizon vs bundle) is rejected on a v6
+    # document exactly as it is on a v4 document.
+    document = _valid_v6_visualizations_document(forecast_horizon=6)
+    reasons = validate._internal_native_forecasting_visualizations_compatibility(
+        document, _forecasting_predictive_bundle_overrides(forecast_horizon=12),
+    )
+    assert "native_forecasting_visualizations_horizon_mismatch" in _safe_details(reasons)
+
+
+@pytest.mark.parametrize(
+    "block_overrides,expected_detail",
+    [
+        ({"partition_role": "test"}, "native_forecasting_v6_final_holdout_evaluation_policy_violation"),
+        ({"evaluation_count": 2}, "native_forecasting_v6_final_holdout_evaluation_policy_violation"),
+        ({"model_frozen_before_open": False}, "native_forecasting_v6_final_holdout_evaluation_policy_violation"),
+        ({"forecast_generated_before_target_open": False}, "native_forecasting_v6_final_holdout_evaluation_policy_violation"),
+        ({"index_value_kind": "slug_inferred"}, "native_forecasting_v6_final_holdout_evaluation_index_kind_invalid"),
+    ],
+)
+def test_native_forecasting_v6_final_holdout_flag_violations_reject(block_overrides, expected_detail):
+    document = _valid_v6_visualizations_document(final_holdout_evaluation_overrides=block_overrides)
+    reasons = validate._internal_native_forecasting_visualizations_compatibility(
+        document, _forecasting_predictive_bundle_overrides(), _v6_metrics(),
+    )
+    assert expected_detail in _safe_details(reasons)
+
+
+def test_native_forecasting_v6_missing_final_holdout_block_rejects():
+    document = _valid_v6_visualizations_document()
+    del document["final_holdout_forecast_evaluation"]
+    reasons = validate._internal_native_forecasting_visualizations_compatibility(
+        document, _forecasting_predictive_bundle_overrides(), _v6_metrics(),
+    )
+    assert "native_forecasting_v6_final_holdout_evaluation_missing" in _safe_details(reasons)
+
+
+def test_native_forecasting_v6_point_count_contradiction_rejects():
+    block = _v6_final_holdout_evaluation(forecast_horizon=6)
+    block["points"] = block["points"][:5]  # 5 points vs horizon 6
+    document = _valid_v6_visualizations_document(final_holdout_evaluation_overrides=block)
+    reasons = validate._internal_native_forecasting_visualizations_compatibility(
+        document, _forecasting_predictive_bundle_overrides(), _v6_metrics(),
+    )
+    assert "native_forecasting_v6_final_holdout_evaluation_point_count_mismatch" in _safe_details(reasons)
+
+
+def test_native_forecasting_v6_boundary_label_contradiction_rejects():
+    block = _v6_final_holdout_evaluation(forecast_horizon=6)
+    block["final_holdout_boundary"]["end_index"] = "1999-12"
+    document = _valid_v6_visualizations_document(final_holdout_evaluation_overrides=block)
+    reasons = validate._internal_native_forecasting_visualizations_compatibility(
+        document, _forecasting_predictive_bundle_overrides(), _v6_metrics(),
+    )
+    assert "native_forecasting_v6_final_holdout_evaluation_boundary_label_mismatch" in _safe_details(reasons)
+
+
+def test_native_forecasting_v6_development_count_contradiction_rejects():
+    block = _v6_final_holdout_evaluation(forecast_horizon=6, development_observations=99)
+    document = _valid_v6_visualizations_document(final_holdout_evaluation_overrides=block)
+    reasons = validate._internal_native_forecasting_visualizations_compatibility(
+        document, _forecasting_predictive_bundle_overrides(), _v6_metrics(),
+    )
+    assert "native_forecasting_v6_final_holdout_evaluation_development_count_mismatch" in _safe_details(reasons)
+
+
+def test_native_forecasting_v6_non_finite_or_boolean_point_value_rejects():
+    block = _v6_final_holdout_evaluation(forecast_horizon=6)
+    block["points"][0]["actual"] = True
+    document = _valid_v6_visualizations_document(final_holdout_evaluation_overrides=block)
+    reasons = validate._internal_native_forecasting_visualizations_compatibility(
+        document, _forecasting_predictive_bundle_overrides(), _v6_metrics(),
+    )
+    assert "native_forecasting_v6_final_holdout_evaluation_point_value_invalid" in _safe_details(reasons)
+
+
+def test_native_forecasting_v6_duplicate_time_index_rejects():
+    block = _v6_final_holdout_evaluation(forecast_horizon=6)
+    block["points"][1]["time_index"] = block["points"][0]["time_index"]
+    document = _valid_v6_visualizations_document(final_holdout_evaluation_overrides=block)
+    reasons = validate._internal_native_forecasting_visualizations_compatibility(
+        document, _forecasting_predictive_bundle_overrides(), _v6_metrics(),
+    )
+    assert "native_forecasting_v6_final_holdout_evaluation_time_index_not_unique" in _safe_details(reasons)
+
+
+def test_native_forecasting_v6_metrics_holdout_count_contradiction_rejects():
+    reasons = validate._internal_native_forecasting_visualizations_compatibility(
+        _valid_v6_visualizations_document(forecast_horizon=6),
+        _forecasting_predictive_bundle_overrides(forecast_horizon=6),
+        _forecasting_metrics_overrides(forecast_horizon=6, final_holdout_overrides={"observation_count": 6, "evaluation_count": 1}),
+    )
+    # baseline coherent
+    assert reasons == []
+    bad = validate._internal_native_forecasting_visualizations_compatibility(
+        _valid_v6_visualizations_document(forecast_horizon=6),
+        _forecasting_predictive_bundle_overrides(forecast_horizon=6),
+        # metrics observation_count disagrees with the 6 v6 points; the v4
+        # dataset_statistics cross-check catches the same contradiction first.
+        _forecasting_metrics_overrides(forecast_horizon=6, final_holdout_overrides={"observation_count": 5}),
+    )
+    assert bad != []
+
+
+def test_native_forecasting_v6_never_routed_as_binary_v5():
+    # A v6 forecasting document is never accepted by the native binary v5
+    # visualizations compatibility path.
+    reasons = validate._internal_native_binary_v5_visualizations_compatibility(
+        _valid_v6_visualizations_document(),
+        {"result_semantics": {"problem_type": "binary_classification"}},
+        {"schema_version": "training-metrics.v5"},
+    )
+    assert reasons != []
+
+
+def test_native_forecasting_visualizations_rejects_v5_substitution_on_forecasting_candidate():
+    reasons = validate._internal_native_forecasting_visualizations_compatibility(
+        {"schema_version": "analytical-visualizations.v5"},
+        _forecasting_predictive_bundle_overrides(),
+    )
+    assert "native_forecasting_visualizations_version_mismatch" in _safe_details(reasons)
 
 
 def test_native_forecasting_never_confused_with_external_or_other_native_provenance_checks():

@@ -532,6 +532,19 @@ _ANALYTICAL_VISUALIZATIONS_INTERNAL_VERSION_V3 = "analytical-visualizations.v3"
 _TRAINING_PARAMETER_RECORD_INTERNAL_VERSION_V4 = "training-parameter-record.v4"
 _TRAINING_METRICS_INTERNAL_VERSION_V4 = "training-metrics.v4"
 _ANALYTICAL_VISUALIZATIONS_INTERNAL_VERSION_V4 = "analytical-visualizations.v4"
+# Project Spec S0270: the governed native univariate-forecasting final-holdout
+# visual-evidence evolution of v4. A training-parameter-record.v4 +
+# training-metrics.v4 native forecasting provenance may carry EITHER the
+# historical aggregate analytical-visualizations.v4 evidence OR the current
+# analytical-visualizations.v6 final-holdout evidence -- and no other
+# visualization version. This is an explicit, declared contract-version rule;
+# it is never inferred from dataset slug, artifact path, or current date, and
+# it does not change the v2/v3/v5 provenance mappings.
+_ANALYTICAL_VISUALIZATIONS_INTERNAL_VERSION_V6 = "analytical-visualizations.v6"
+_FORECASTING_V4_COMPATIBLE_VISUALIZATIONS_VERSIONS = (
+    _ANALYTICAL_VISUALIZATIONS_INTERNAL_VERSION_V4,
+    _ANALYTICAL_VISUALIZATIONS_INTERNAL_VERSION_V6,
+)
 # Project Spec S0259: the v5 (native binary fixed-configuration) INTERNAL
 # Atlas-native training-record profile -- mirrors the v2 (multiclass), v3
 # (continuous-regression), and v4 (forecasting) recognition above exactly:
@@ -664,10 +677,10 @@ def _resolve_training_provenance(
             )
         visualizations_path = repo_root / artifact_references["visualizations"]
         visualizations_version = _read_declared_contract_version(visualizations_path)
-        if visualizations_version != _ANALYTICAL_VISUALIZATIONS_INTERNAL_VERSION_V4:
+        if visualizations_version not in _FORECASTING_V4_COMPATIBLE_VISUALIZATIONS_VERSIONS:
             raise ValueError(
                 "visualizations contract_version does not agree with training_parameter_record "
-                f"provenance: expected {_ANALYTICAL_VISUALIZATIONS_INTERNAL_VERSION_V4!r}, got "
+                f"provenance: expected one of {list(_FORECASTING_V4_COMPATIBLE_VISUALIZATIONS_VERSIONS)!r}, got "
                 f"{visualizations_version!r}"
             )
         return "M24", False, record_version, metrics_version, visualizations_version

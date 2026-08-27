@@ -115,13 +115,25 @@ NATIVE_UNIVARIATE_FORECASTING_MODEL_FAMILY = "deterministic_seasonal_trend_ols"
 NATIVE_UNIVARIATE_FORECASTING_METRIC_NAMES = ("mae", "rmse", "seasonal_mase")
 NATIVE_UNIVARIATE_FORECASTING_BACKTESTING_MODE = "expanding_window"
 
-# Project Spec S0248: the strict native univariate-forecasting analytical
-# visualizations profile -- a bounded seasonal profile, per-fold backtesting
-# primary-metric diagnostic, and per-horizon-step MAE diagnostic, all sourced
-# from the S0244 backtesting/holdout evidence already computed above. Never a
-# raw history vector or raw holdout actual/predicted pair.
-NATIVE_UNIVARIATE_FORECASTING_ANALYTICAL_VISUALIZATIONS_VERSION = "analytical-visualizations.v4"
+# Project Spec S0248 / S0270: the strict native univariate-forecasting
+# analytical visualizations profile -- a bounded seasonal profile, per-fold
+# backtesting primary-metric diagnostic, and per-horizon-step MAE diagnostic,
+# all sourced from the S0244 backtesting/holdout evidence already computed
+# above. Project Spec S0270 advances the producer identity from
+# analytical-visualizations.v4 to analytical-visualizations.v6, which retains
+# every v4 aggregate diagnostic and additionally carries exactly one bounded
+# final_holdout_forecast_evaluation block built from the already-computed
+# one-pass sealed-final-holdout evaluation (holdout_forecast_vector,
+# y_true_holdout, authenticated row labels). It is never a raw development
+# history vector, raw feature/exogenous rows, or model internals. The
+# training-parameter-record.v4 and training-metrics.v4 identities are
+# deliberately unchanged.
+NATIVE_UNIVARIATE_FORECASTING_ANALYTICAL_VISUALIZATIONS_VERSION = "analytical-visualizations.v6"
 NATIVE_UNIVARIATE_FORECASTING_SEASONAL_POPULATION_KIND = "full_development"
+# Project Spec S0270: hard public-safety-compatible maximum number of exact
+# final-holdout evaluation points (matches the forecasting public horizon-
+# point bound in api/public_visualizations_loader.py).
+NATIVE_UNIVARIATE_FORECASTING_FINAL_HOLDOUT_MAX_POINTS = 64
 
 # Project Spec S0244: closed list of execution_contract.v2 fields the
 # forecasting training entrypoint may consume. Deliberately excludes every
@@ -6299,6 +6311,99 @@ def _native_forecasting_seasonal_profile(
     return points
 
 
+def _native_forecasting_final_holdout_forecast_evaluation(
+    *,
+    final_holdout_labels: list[str],
+    y_true_holdout: list[float],
+    holdout_forecast_vector: list[float],
+    forecast_horizon: int,
+    development_observation_count: int,
+    final_holdout_observation_count: int,
+    index_value_kind: str,
+    frequency: str,
+    development_start_label: str,
+    development_end_label: str,
+    final_holdout_start_label: str,
+    final_holdout_end_label: str,
+) -> dict[str, Any]:
+    """Project Spec S0270: builds the strict bounded
+    final_holdout_forecast_evaluation block from the already-computed one-pass
+    sealed-final-holdout evaluation -- the exact ordered
+    holdout_forecast_vector used for scoring, the exact already-read
+    y_true_holdout actual values, and the authenticated final-holdout row
+    labels in source order. Performs no additional fit, forecast, or
+    evaluation. Every cross-field equality/ordering invariant JSON Schema
+    cannot express is enforced here and fails closed."""
+    point_count = len(final_holdout_labels)
+    if not (
+        point_count
+        == len(y_true_holdout)
+        == len(holdout_forecast_vector)
+        == final_holdout_observation_count
+        == forecast_horizon
+    ):
+        raise TrainingInputError(
+            "invalid_preparation_recipe",
+            "final-holdout forecast-evaluation point count does not equal the sealed "
+            "final-holdout observation count and forecast_horizon.",
+            field="preparation_recipe_path",
+        )
+    if point_count > NATIVE_UNIVARIATE_FORECASTING_FINAL_HOLDOUT_MAX_POINTS:
+        raise TrainingInputError(
+            "invalid_preparation_recipe",
+            "final-holdout forecast-evaluation exceeds the hard public-safety-compatible "
+            f"maximum of {NATIVE_UNIVARIATE_FORECASTING_FINAL_HOLDOUT_MAX_POINTS} points.",
+            field="preparation_recipe_path",
+        )
+    if len(set(final_holdout_labels)) != point_count:
+        raise TrainingInputError(
+            "invalid_prepared_dataset",
+            "final-holdout time_index labels are not unique.",
+            field="dataset_path",
+        )
+    if not all(isinstance(label, str) and label for label in final_holdout_labels):
+        raise TrainingInputError(
+            "invalid_prepared_dataset",
+            "final-holdout time_index labels must be non-empty strings.",
+            field="dataset_path",
+        )
+    if final_holdout_labels[0] != final_holdout_start_label or final_holdout_labels[-1] != final_holdout_end_label:
+        raise TrainingInputError(
+            "invalid_prepared_dataset",
+            "final-holdout first/last time_index labels do not match the authenticated "
+            "preparation-recipe sealed-final-holdout boundary labels.",
+            field="dataset_path",
+        )
+
+    points: list[dict[str, Any]] = []
+    for label, actual, forecast in zip(final_holdout_labels, y_true_holdout, holdout_forecast_vector):
+        points.append({
+            "time_index": label,
+            "actual": _finite_metric_value("final_holdout_actual", float(actual)),
+            "forecast": _finite_metric_value("final_holdout_forecast", float(forecast)),
+        })
+
+    return {
+        "partition_role": "final_holdout",
+        "evaluation_count": 1,
+        "model_frozen_before_open": True,
+        "forecast_generated_before_target_open": True,
+        "index_value_kind": index_value_kind,
+        "frequency": frequency,
+        "development_boundary": {
+            "start_index": development_start_label,
+            "end_index": development_end_label,
+            "observation_count": development_observation_count,
+        },
+        "final_holdout_boundary": {
+            "start_index": final_holdout_start_label,
+            "end_index": final_holdout_end_label,
+            "observation_count": final_holdout_observation_count,
+        },
+        "points": points,
+    }
+
+
 def _build_native_univariate_forecasting_analytical_visualizations_artifact(
     *,
     final_development_history: list[float],
@@ -6310,13 +6415,23 @@ def _build_native_univariate_forecasting_analytical_visualizations_artifact(
     fold_summaries: list[dict[str, Any]],
     horizon_mae: list[dict[str, Any]],
     primary_metric_id: str,
+    final_holdout_labels: list[str],
+    y_true_holdout: list[float],
+    holdout_forecast_vector: list[float],
+    index_value_kind: str,
+    development_start_label: str,
+    development_end_label: str,
+    final_holdout_start_label: str,
+    final_holdout_end_label: str,
     output_directory: Path,
     training_timestamp: str,
 ) -> dict[str, Any]:
-    """Project Spec S0248: builds the strict analytical-visualizations.v4
-    artifact from evidence the S0244 backtest/final-fit above already
-    computed in memory -- never a second fold prediction pass, a second
-    final-holdout prediction pass, or another model fit."""
+    """Project Spec S0248 / S0270: builds the strict
+    analytical-visualizations.v6 artifact from evidence the S0244
+    backtest/final-fit above already computed in memory -- never a second fold
+    prediction pass, a second final-holdout prediction pass, or another model
+    fit. v6 retains every v4 aggregate diagnostic and additionally carries the
+    bounded final_holdout_forecast_evaluation block."""
     seasonal_points = _native_forecasting_seasonal_profile(final_development_history, seasonal_period)
 
     fold_points: list[dict[str, Any]] = []
@@ -6375,6 +6490,20 @@ def _build_native_univariate_forecasting_analytical_visualizations_artifact(
         "horizon_mae": {
             "points": [dict(entry) for entry in horizon_mae],
         },
+        "final_holdout_forecast_evaluation": _native_forecasting_final_holdout_forecast_evaluation(
+            final_holdout_labels=final_holdout_labels,
+            y_true_holdout=y_true_holdout,
+            holdout_forecast_vector=holdout_forecast_vector,
+            forecast_horizon=forecast_horizon,
+            development_observation_count=development_observation_count,
+            final_holdout_observation_count=final_holdout_observation_count,
+            index_value_kind=index_value_kind,
+            frequency=frequency,
+            development_start_label=development_start_label,
+            development_end_label=development_end_label,
+            final_holdout_start_label=final_holdout_start_label,
+            final_holdout_end_label=final_holdout_end_label,
+        ),
         "evidence_policy": {
             "raw_logs_prohibited": True,
             "raw_runtime_prohibited": True,
@@ -6549,6 +6678,21 @@ def _train_native_univariate_forecasting_fixed_configuration(
     y_true_holdout = [float(rows[i][target_column]) for i in holdout_positions]
     y_pred_holdout = holdout_forecast_vector
 
+    # Project Spec S0270: the authenticated final-holdout row labels in the
+    # supplied (never re-sorted) source order, derived through the same
+    # canonical row-label helper the series authentication above already
+    # used. The development/final-holdout boundary labels come from the
+    # preparation recipe partitions that _load_and_authenticate_forecasting_
+    # series already cross-checked against these exact rows.
+    final_holdout_labels = [
+        _forecasting_row_time_index_label(rows[i], time_index_column) for i in holdout_positions
+    ]
+    _recipe_partitions = preparation_recipe["partitions"]
+    development_start_label = str(_recipe_partitions["development"]["start_index_value"])
+    development_end_label = str(_recipe_partitions["development"]["end_index_value"])
+    final_holdout_start_label = str(_recipe_partitions["sealed_final_holdout"]["start_index_value"])
+    final_holdout_end_label = str(_recipe_partitions["sealed_final_holdout"]["end_index_value"])
+
     holdout_metric_values, _holdout_scales = _compute_fold_forecast_metrics(
         y_true_holdout, y_pred_holdout, final_development_history, requested_metric_entries
     )
@@ -6646,6 +6790,14 @@ def _train_native_univariate_forecasting_fixed_configuration(
         fold_summaries=fold_summaries,
         horizon_mae=horizon_mae,
         primary_metric_id=contract["evaluation_policy"]["primary_metric"]["metric_id"],
+        final_holdout_labels=final_holdout_labels,
+        y_true_holdout=y_true_holdout,
+        holdout_forecast_vector=holdout_forecast_vector,
+        index_value_kind=str(contract["index_value_kind"]),
+        development_start_label=development_start_label,
+        development_end_label=development_end_label,
+        final_holdout_start_label=final_holdout_start_label,
+        final_holdout_end_label=final_holdout_end_label,
         output_directory=output_directory,
         training_timestamp=training_timestamp,
     )

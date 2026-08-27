@@ -637,10 +637,33 @@ def test_notebook_asserts_frozen_forecasting_training_result_identity():
 def test_notebook_validates_native_forecasting_evidence_versions():
     code = _source("code")
     assert 'assert training_metrics["schema_version"] == "training-metrics.v4"' in code
-    assert 'assert analytical_visualizations["schema_version"] == "analytical-visualizations.v4"' in code
+    # Project Spec S0270: training metrics/parameter record identities stay v4;
+    # the analytical-visualizations producer identity advances to v6.
+    assert 'assert analytical_visualizations["schema_version"] == "analytical-visualizations.v6"' in code
+    assert '"analytical-visualizations.v4"' not in code
     assert 'assert training_metrics["forecasting_evidence"]["problem_type"] == "univariate_forecasting"' in code
     assert 'assert training_metrics["final_holdout_evaluation"]["model_frozen_before_open"] is True' in code
     assert 'assert training_metrics["final_holdout_evaluation"]["used_for_model_selection"] is False' in code
+
+
+def test_notebook_asserts_v6_bounded_final_holdout_forecast_evaluation():
+    # Project Spec S0270: the notebook expects the governed v6 bounded
+    # final-holdout evaluation on the next governed training run, asserting the
+    # point count, the known governed holdout boundary labels, and finite
+    # actual/forecast values -- never hand-authoring the forecast outputs.
+    code = _source("code")
+    assert 'final_holdout_forecast_evaluation = analytical_visualizations["final_holdout_forecast_evaluation"]' in code
+    assert 'assert final_holdout_forecast_evaluation["partition_role"] == "final_holdout"' in code
+    assert 'assert final_holdout_forecast_evaluation["evaluation_count"] == 1' in code
+    assert 'assert final_holdout_forecast_evaluation["forecast_generated_before_target_open"] is True' in code
+    assert 'assert len(evaluation_points) == SEALED_HOLDOUT_OBSERVATIONS == FORECAST_HORIZON' in code
+    assert 'holdout_boundary["start_index_value"] == "1939-01"' in code
+    assert 'holdout_boundary["end_index_value"] == "1939-12"' in code
+    assert 'math.isfinite(point["actual"]) and math.isfinite(point["forecast"]) for point in evaluation_points' in code
+    # The forecast values are never hand-authored into the notebook.
+    forecast_evaluation_start = code.index("final_holdout_forecast_evaluation = analytical_visualizations")
+    forecast_evaluation_block = code[forecast_evaluation_start:forecast_evaluation_start + 2000]
+    assert '"forecast":' not in forecast_evaluation_block
 
 
 def test_notebook_checks_scientific_continuity_without_hardcoding_into_evidence():

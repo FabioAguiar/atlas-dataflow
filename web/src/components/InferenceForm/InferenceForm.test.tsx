@@ -2381,3 +2381,119 @@ describe("InferenceForm forecasting minimum-history contract-derived error messa
     );
   });
 });
+
+// Project Spec S0268: guided contract-driven history-builder submission
+// through the existing InferenceForm boundary. Exercised independently of
+// the S0250 legacy forecasting submission coverage above, which remains
+// unchanged in meaning -- calendar arithmetic stays inside
+// HistorySeriesInput.tsx; InferenceForm still just reads the reported rows
+// and serializes them exactly once via the existing governed field names.
+describe("InferenceForm guided history-builder submission (Project Spec S0268)", () => {
+  const guidedForecastingContract: ForecastingContractPayload = {
+    schema_version: "2.0.0",
+    problem_type: "univariate_forecasting",
+    input_kind: "history_series",
+    history_series: {
+      time_index_field: { name: "period", label: "Period", value_kind: "calendar_period", display_order: 1 },
+      target_field: { name: "passengers", label: "Passengers", value_kind: "number", display_order: 2 },
+      frequency: "Monthly",
+      temporal_interaction: {
+        control_kind: "month",
+        required_anchor: { value: "1938-12", inclusion: "required" },
+        sequence: { step_kind: "calendar_month", continuity: "required" },
+      },
+    },
+    forecast: {
+      forecast_horizon: 3,
+      horizon_user_editable: false,
+      origin_behavior: "starts_after_last_history_observation",
+    },
+  };
+
+  const availableForecastingResultContract: ResultContract = {
+    status: "available",
+    semantics: {
+      schema_version: "univariate-forecasting-result-semantics.v1",
+      problem_type: "univariate_forecasting",
+      result_schema_version: "univariate-forecasting-result.v1",
+      primary_output: "forecast_series",
+      output_structure: "ordered_forecast_points",
+      forecast_value_kind: "continuous_numeric",
+      forecast_count_source: "forecast_horizon",
+      model_descriptor: { model_family: "deterministic_seasonal_trend_ols", display_name: "Seasonal Trend" },
+    },
+  };
+
+  const forecastingPresentation: UnivariateForecastingResultPresentation = {
+    schema_version: "univariate-forecasting-result-presentation.v1",
+    forecast_series_label: "Forecast",
+    future_time_index_label: "Period",
+    forecast_value_label: "Passengers",
+    model_section_label: "Model",
+    decimal_places: 1,
+  };
+
+  it("submits the generated guided range in chronological order using exactly the governed field names, with no horizon/frequency/interaction/browser-range-state leaked", async () => {
+    const executeInference = vi.fn(
+      async (): Promise<InferenceExecutionResult> => ({
+        ok: true,
+        result: {
+          schema_version: "univariate-forecasting-result.v1",
+          problem_type: "univariate_forecasting",
+          forecast_origin: "1939-02",
+          frequency: "Monthly",
+          forecast_horizon: 3,
+          forecast_points: [
+            { horizon_step: 1, future_time_index: "1939-03", forecast: 1.0 },
+            { horizon_step: 2, future_time_index: "1939-04", forecast: 2.0 },
+            { horizon_step: 3, future_time_index: "1939-05", forecast: 3.0 },
+          ],
+          model_descriptor: { model_family: "deterministic_seasonal_trend_ols", display_name: "Seasonal Trend" },
+        },
+      }),
+    );
+
+    render(
+      <InferenceForm
+        contract={guidedForecastingContract}
+        slug={slug}
+        resultContract={availableForecastingResultContract}
+        resultPresentation={forecastingPresentation}
+        executeInference={executeInference}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText("Passengers"), { target: { value: "42.2" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add next observation" }));
+    fireEvent.change(screen.getAllByLabelText("Passengers")[1], { target: { value: "39.4" } });
+
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+
+    await waitFor(() => expect(executeInference).toHaveBeenCalledTimes(1));
+    // toHaveBeenCalledWith performs a deep-equality match, so any extra key
+    // (forecast_horizon, frequency, temporal_interaction, or browser-only
+    // range-control state) would fail this assertion.
+    expect(executeInference).toHaveBeenCalledWith(slug, {
+      history: [
+        { period: "1938-12", passengers: 42.2 },
+        { period: "1939-01", passengers: 39.4 },
+      ],
+    });
+  });
+
+  it("never exposes Add row or arbitrary per-row Remove row for a guided contract rendered through InferenceForm", () => {
+    render(
+      <InferenceForm
+        contract={guidedForecastingContract}
+        slug={slug}
+        resultContract={availableForecastingResultContract}
+        resultPresentation={forecastingPresentation}
+      />,
+    );
+
+    expect(screen.queryByRole("button", { name: "Add row" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Remove row" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add previous observation" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add next observation" })).toBeInTheDocument();
+  });
+});

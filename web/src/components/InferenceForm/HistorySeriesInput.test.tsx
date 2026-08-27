@@ -6,6 +6,7 @@ import HistorySeriesInput, {
   type ForecastGuidance,
   type HistoryInputGuidance,
   type HistorySeriesGuidance,
+  type HistoryTemporalInteraction,
 } from "./HistorySeriesInput";
 import type { FieldHint } from "./InferenceForm";
 
@@ -467,5 +468,417 @@ describe("HistorySeriesInput history-input guidance (Project Spec S0266)", () =>
     // Exactly two inputs exist for the single initial row -- time index and
     // target -- guidance never adds an editable/validating control.
     expect(document.querySelectorAll("input")).toHaveLength(2);
+  });
+});
+
+// Project Spec S0268: contract-driven guided month-range builder, active
+// only for a coherent S0267 month profile. Exercised independently of the
+// S0250/S0266 coverage above, which must remain unaffected -- a legacy
+// contract without temporal_interaction (or one with an
+// unsupported/incoherent profile) keeps the exact historical free-form row
+// UX.
+describe("HistorySeriesInput guided month-range builder (Project Spec S0268)", () => {
+  const temporalInteraction: HistoryTemporalInteraction = {
+    control_kind: "month",
+    required_anchor: { value: "1938-12", inclusion: "required" },
+    sequence: { step_kind: "calendar_month", continuity: "required" },
+  };
+
+  const guidedHistorySeries: HistorySeriesGuidance = {
+    ...historySeries,
+    temporal_interaction: temporalInteraction,
+  };
+
+  const forecastWithOrigin: ForecastGuidance = {
+    forecast_horizon: 3,
+    horizon_user_editable: false,
+    origin_behavior: "starts_after_last_history_observation",
+  };
+
+  it("keeps a legacy contract without temporal_interaction on the historical free-form row UX", () => {
+    const onRowsChange = vi.fn();
+    render(
+      <HistorySeriesInput
+        historySeries={historySeries}
+        forecast={forecast}
+        hintMap={emptyHintMap()}
+        onRowsChange={onRowsChange}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Add row" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("History from")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("History through")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add previous observation" })).not.toBeInTheDocument();
+    expect(onRowsChange).toHaveBeenLastCalledWith([{ timeIndexValue: "", targetValue: "" }]);
+  });
+
+  it("activates guided mode and initializes exactly at the machine anchor with an empty target", () => {
+    const onRowsChange = vi.fn();
+    render(
+      <HistorySeriesInput
+        historySeries={guidedHistorySeries}
+        forecast={forecast}
+        hintMap={emptyHintMap()}
+        onRowsChange={onRowsChange}
+      />,
+    );
+
+    expect(screen.queryByRole("button", { name: "Add row" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Remove row" })).not.toBeInTheDocument();
+    expect((screen.getByLabelText("History from") as HTMLInputElement).value).toBe("1938-12");
+    expect((screen.getByLabelText("History through") as HTMLInputElement).value).toBe("1938-12");
+    expect(screen.getAllByLabelText("Passengers")).toHaveLength(1);
+    expect(onRowsChange).toHaveBeenLastCalledWith([{ timeIndexValue: "1938-12", targetValue: "" }]);
+  });
+
+  it("renders History from and History through as native month inputs with no fabricated global min/max, and rejects a move past the anchor", () => {
+    render(
+      <HistorySeriesInput
+        historySeries={guidedHistorySeries}
+        forecast={forecast}
+        hintMap={emptyHintMap()}
+        onRowsChange={vi.fn()}
+      />,
+    );
+
+    const historyFrom = screen.getByLabelText("History from") as HTMLInputElement;
+    const historyThrough = screen.getByLabelText("History through") as HTMLInputElement;
+
+    expect(historyFrom.type).toBe("month");
+    expect(historyThrough.type).toBe("month");
+    expect(historyFrom.min).toBe("");
+    expect(historyThrough.max).toBe("");
+
+    fireEvent.change(historyFrom, { target: { value: "1939-01" } });
+    expect(historyFrom.value).toBe("1938-12");
+
+    fireEvent.change(historyThrough, { target: { value: "1938-11" } });
+    expect(historyThrough.value).toBe("1938-12");
+  });
+
+  it("supports periods earlier than the anchor through History from", () => {
+    render(
+      <HistorySeriesInput
+        historySeries={guidedHistorySeries}
+        forecast={forecast}
+        hintMap={emptyHintMap()}
+        onRowsChange={vi.fn()}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText("History from"), { target: { value: "1938-10" } });
+
+    expect(screen.getByText("1938-10")).toBeInTheDocument();
+    expect(screen.getByText("1938-11")).toBeInTheDocument();
+    expect(screen.getByText("1938-12")).toBeInTheDocument();
+    expect(screen.getAllByLabelText("Passengers")).toHaveLength(3);
+  });
+
+  it("supports periods later than the anchor through History through, crossing December into January", () => {
+    const onRowsChange = vi.fn();
+    render(
+      <HistorySeriesInput
+        historySeries={guidedHistorySeries}
+        forecast={forecast}
+        hintMap={emptyHintMap()}
+        onRowsChange={onRowsChange}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText("History through"), { target: { value: "1939-02" } });
+
+    expect(onRowsChange).toHaveBeenLastCalledWith([
+      { timeIndexValue: "1938-12", targetValue: "" },
+      { timeIndexValue: "1939-01", targetValue: "" },
+      { timeIndexValue: "1939-02", targetValue: "" },
+    ]);
+  });
+
+  it("Add previous observation moves the start back exactly one calendar month, crossing a year boundary", () => {
+    render(
+      <HistorySeriesInput
+        historySeries={guidedHistorySeries}
+        forecast={forecast}
+        hintMap={emptyHintMap()}
+        onRowsChange={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Add previous observation" }));
+
+    expect((screen.getByLabelText("History from") as HTMLInputElement).value).toBe("1938-11");
+    expect(screen.getAllByLabelText("Passengers")).toHaveLength(2);
+  });
+
+  it("Add next observation moves the end forward exactly one calendar month, crossing a year boundary", () => {
+    render(
+      <HistorySeriesInput
+        historySeries={guidedHistorySeries}
+        forecast={forecast}
+        hintMap={emptyHintMap()}
+        onRowsChange={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Add next observation" }));
+
+    expect((screen.getByLabelText("History through") as HTMLInputElement).value).toBe("1939-01");
+    expect(screen.getAllByLabelText("Passengers")).toHaveLength(2);
+  });
+
+  it("renders generated period values as read-only presentation, never an editable per-row time-index control", () => {
+    render(
+      <HistorySeriesInput
+        historySeries={guidedHistorySeries}
+        forecast={forecast}
+        hintMap={emptyHintMap()}
+        onRowsChange={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Add next observation" }));
+
+    // History from, History through, and one target input per generated
+    // period (two periods) -- never a third per-row input for the period
+    // itself.
+    expect(document.querySelectorAll("input")).toHaveLength(4);
+    expect(screen.getAllByLabelText("Passengers")).toHaveLength(2);
+  });
+
+  it("preserves existing target values for periods that remain in range and leaves newly generated periods empty", () => {
+    const onRowsChange = vi.fn();
+    render(
+      <HistorySeriesInput
+        historySeries={guidedHistorySeries}
+        forecast={forecast}
+        hintMap={emptyHintMap()}
+        onRowsChange={onRowsChange}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText("Passengers"), { target: { value: "42.2" } });
+    fireEvent.change(screen.getByLabelText("History through"), { target: { value: "1939-01" } });
+
+    expect(onRowsChange).toHaveBeenLastCalledWith([
+      { timeIndexValue: "1938-12", targetValue: "42.2" },
+      { timeIndexValue: "1939-01", targetValue: "" },
+    ]);
+  });
+
+  it("keeps the required anchor present after a supported range change on either boundary", () => {
+    render(
+      <HistorySeriesInput
+        historySeries={guidedHistorySeries}
+        forecast={forecast}
+        hintMap={emptyHintMap()}
+        onRowsChange={vi.fn()}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText("History from"), { target: { value: "1938-09" } });
+    fireEvent.change(screen.getByLabelText("History through"), { target: { value: "1939-03" } });
+
+    expect(screen.getByText("1938-12")).toBeInTheDocument();
+  });
+
+  it("reports onRowsChange in strict chronological order after both boundaries move", () => {
+    const onRowsChange = vi.fn();
+    render(
+      <HistorySeriesInput
+        historySeries={guidedHistorySeries}
+        forecast={forecast}
+        hintMap={emptyHintMap()}
+        onRowsChange={onRowsChange}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText("History from"), { target: { value: "1938-10" } });
+    fireEvent.change(screen.getByLabelText("History through"), { target: { value: "1939-02" } });
+
+    const lastRows = onRowsChange.mock.calls[onRowsChange.mock.calls.length - 1][0] as Array<{ timeIndexValue: string }>;
+    expect(lastRows.map((row) => row.timeIndexValue)).toEqual([
+      "1938-10",
+      "1938-11",
+      "1938-12",
+      "1939-01",
+      "1939-02",
+    ]);
+  });
+
+  it("initializes guided mode from temporal_interaction.required_anchor.value, never input_guidance.required_anchor.display_value", () => {
+    const historySeriesWithDivergingGuidance: HistorySeriesGuidance = {
+      ...guidedHistorySeries,
+      input_guidance: {
+        minimum_observation_count: 1,
+        required_anchor: { display_value: "December 1938" },
+        continuity: "consecutive_by_frequency",
+      },
+    };
+
+    render(
+      <HistorySeriesInput
+        historySeries={historySeriesWithDivergingGuidance}
+        forecast={forecast}
+        hintMap={emptyHintMap()}
+        onRowsChange={vi.fn()}
+      />,
+    );
+
+    expect((screen.getByLabelText("History from") as HTMLInputElement).value).toBe("1938-12");
+    expect((screen.getByLabelText("History through") as HTMLInputElement).value).toBe("1938-12");
+    expect(screen.getAllByLabelText("Passengers")).toHaveLength(1);
+  });
+
+  it("never uses input_guidance.minimum_observation_count to auto-create additional guided rows", () => {
+    const historySeriesWithHighMinimum: HistorySeriesGuidance = {
+      ...guidedHistorySeries,
+      input_guidance: {
+        minimum_observation_count: 6,
+        required_anchor: { display_value: "1938-12" },
+        continuity: "consecutive_by_frequency",
+      },
+    };
+
+    render(
+      <HistorySeriesInput
+        historySeries={historySeriesWithHighMinimum}
+        forecast={forecast}
+        hintMap={emptyHintMap()}
+        onRowsChange={vi.fn()}
+      />,
+    );
+
+    expect(screen.getAllByLabelText("Passengers")).toHaveLength(1);
+  });
+
+  it("activates guided stepping without parsing free-form frequency text", () => {
+    const historySeriesWithOddFrequency: HistorySeriesGuidance = {
+      ...guidedHistorySeries,
+      frequency: "Some Unusual Frequency Description",
+    };
+
+    render(
+      <HistorySeriesInput
+        historySeries={historySeriesWithOddFrequency}
+        forecast={forecast}
+        hintMap={emptyHintMap()}
+        onRowsChange={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByLabelText("History from")).toBeInTheDocument();
+    expect(screen.getAllByLabelText("Passengers")).toHaveLength(1);
+  });
+
+  it("shows a bounded forecast-range preview only for the declared starts-after-last-history-observation origin behavior, updating as History through changes and crossing a year boundary", () => {
+    render(
+      <HistorySeriesInput
+        historySeries={guidedHistorySeries}
+        forecast={forecastWithOrigin}
+        hintMap={emptyHintMap()}
+        onRowsChange={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Forecast range: 1939-01 → 1939-03")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("History through"), { target: { value: "1939-03" } });
+
+    expect(screen.getByText("Forecast range: 1939-04 → 1939-06")).toBeInTheDocument();
+  });
+
+  it("omits the forecast-range preview when origin_behavior is absent", () => {
+    render(
+      <HistorySeriesInput
+        historySeries={guidedHistorySeries}
+        forecast={forecast}
+        hintMap={emptyHintMap()}
+        onRowsChange={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByText(/Forecast range:/)).not.toBeInTheDocument();
+  });
+
+  it("falls back to the legacy free-form row UX for a non-calendar_period time-index field", () => {
+    const timestampGuided: HistorySeriesGuidance = {
+      ...guidedHistorySeries,
+      time_index_field: { ...historySeries.time_index_field, value_kind: "timestamp" },
+    };
+
+    render(
+      <HistorySeriesInput
+        historySeries={timestampGuided}
+        forecast={forecast}
+        hintMap={emptyHintMap()}
+        onRowsChange={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Add row" })).toBeInTheDocument();
+  });
+
+  it("falls back to the legacy free-form row UX for an unsupported control_kind", () => {
+    const unsupportedControlKind: HistorySeriesGuidance = {
+      ...guidedHistorySeries,
+      temporal_interaction: {
+        ...temporalInteraction,
+        control_kind: "week" as unknown as "month",
+      },
+    };
+
+    render(
+      <HistorySeriesInput
+        historySeries={unsupportedControlKind}
+        forecast={forecast}
+        hintMap={emptyHintMap()}
+        onRowsChange={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Add row" })).toBeInTheDocument();
+  });
+
+  it("falls back to the legacy free-form row UX for a malformed machine anchor value", () => {
+    const malformedAnchor: HistorySeriesGuidance = {
+      ...guidedHistorySeries,
+      temporal_interaction: {
+        ...temporalInteraction,
+        required_anchor: { value: "December 1938", inclusion: "required" },
+      },
+    };
+
+    render(
+      <HistorySeriesInput
+        historySeries={malformedAnchor}
+        forecast={forecast}
+        hintMap={emptyHintMap()}
+        onRowsChange={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Add row" })).toBeInTheDocument();
+  });
+
+  it("falls back to the legacy free-form row UX when sequence continuity is not required", () => {
+    const incoherentSequence: HistorySeriesGuidance = {
+      ...guidedHistorySeries,
+      temporal_interaction: {
+        ...temporalInteraction,
+        sequence: { step_kind: "calendar_month", continuity: "optional" as unknown as "required" },
+      },
+    };
+
+    render(
+      <HistorySeriesInput
+        historySeries={incoherentSequence}
+        forecast={forecast}
+        hintMap={emptyHintMap()}
+        onRowsChange={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Add row" })).toBeInTheDocument();
   });
 });

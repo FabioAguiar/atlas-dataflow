@@ -1,13 +1,12 @@
 {
   "schema_version": "1.0.0",
   "dataset_slug": "nottem",
-  "published_at": "2026-08-26T12:35:34Z",
-  "active_release_at_publish_time": "release-20260826t123355z",
+  "published_at": "2026-08-26T19:03:39Z",
+  "active_release_at_publish_time": "release-20260826t190239z",
   "profile": {
     "display": {
       "title": "Nottingham Monthly Temperatures",
       "release_date_label": "2026-08-25",
-      "date_format": "dd/mm/yyyy",
       "canonical_name_fallback": true
     },
     "home_card": {

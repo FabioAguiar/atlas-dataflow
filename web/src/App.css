@@ -1988,6 +1988,63 @@ h1 {
 }
 
 /*
+ * Project Spec S0268: contract-driven guided month-range builder controls.
+ * Dataset-neutral -- no Nottingham-specific class name or value, and no
+ * hardcoded color bypassing the existing Atlas theme tokens.
+ */
+.history-series-input__guided-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--atlas-space-3);
+}
+
+.history-series-input__range-field {
+  display: grid;
+  gap: var(--atlas-space-1);
+  flex: 1 1 12rem;
+  min-width: 10rem;
+}
+
+.history-series-input__range-label {
+  font-size: var(--atlas-text-sm);
+  font-weight: 600;
+  color: var(--atlas-color-text-muted);
+}
+
+.history-series-input__range-input {
+  min-height: 2.6rem;
+}
+
+.history-series-input__range-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--atlas-space-2);
+}
+
+.history-series-input__range-action {
+  border: 1px solid var(--atlas-color-border-strong);
+  border-radius: var(--atlas-radius-md);
+  background: var(--atlas-color-accent-muted);
+  color: var(--atlas-color-accent-strong);
+  padding: var(--atlas-space-2) var(--atlas-space-3);
+  font-size: var(--atlas-text-sm);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.history-series-input__period-value {
+  display: inline-block;
+  padding: 0 var(--atlas-space-1);
+  color: var(--atlas-color-text);
+}
+
+.history-series-input__forecast-preview {
+  margin: 0;
+  color: var(--atlas-color-text-subtle);
+  font-size: var(--atlas-text-sm);
+}
+
+/*
  * Narrow-screen layout: the table already scrolls horizontally within
  * .history-series-input__table-scroll, so no separate breakpoint override
  * is needed beyond a slightly tighter cell minimum width.
@@ -1995,6 +2052,10 @@ h1 {
 @media (max-width: 640px) {
   .history-series-input__cell {
     min-width: 6.5rem;
+  }
+
+  .history-series-input__range-field {
+    flex-basis: 100%;
   }
 }
 

@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0.0",
   "dataset_slug": "nottem",
-  "published_at": "2026-08-28T19:31:28Z",
+  "published_at": "2026-08-28T20:29:51Z",
   "active_release_at_publish_time": "release-20260828t102855z",
   "profile": {
     "display": {
@@ -20,26 +20,26 @@
     },
     "performance_focus": {
       "focus_id": "forecasting_performance",
-      "highlighted_score_id": "rmse",
+      "highlighted_score_id": "mae",
       "visible_scores": [
         {
           "score_id": "mae",
           "display_label": "MAE",
-          "value": "0",
+          "value": "1.5266",
           "value_source": "manual",
           "order": 0
         },
         {
           "score_id": "rmse",
           "display_label": "RMSE",
-          "value": "0",
+          "value": "1.8600",
           "value_source": "manual",
           "order": 1
         },
         {
           "score_id": "seasonal_mase",
           "display_label": "Seasonal MASE",
-          "value": "0",
+          "value": "0.5555",
           "value_source": "manual",
           "order": 2
         }

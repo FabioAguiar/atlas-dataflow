@@ -1834,6 +1834,39 @@ function profileFromForm(form: DraftForm, datasetSlug: string): ProfileDraft {
   return profile;
 }
 
+// Project Spec S0276: the profile body an unrelated publication actually
+// sends. While prediction authoring is available this is exactly
+// profileFromForm(...) -- historical behavior unchanged. While prediction
+// authoring is dormant the hidden Inference Form / Result Card controls are
+// no longer publication authority: the form-derived inference_presentation /
+// result_card sections are dropped, and any section the already-hydrated
+// source profile carried is copied through byte-for-byte (never
+// round-tripped through formFromProfile/profileFromForm or regenerated from
+// Result Card defaults, so a hidden authoring surface can never
+// normalize/deprecate/rewrite stored presentation data). A fresh baseline
+// with neither section keeps neither section -- no {bound_predict_view_id:
+// null} block and no generic Result Card are fabricated.
+function profileForPublication(
+  form: DraftForm,
+  datasetSlug: string,
+  predictionAuthoringAvailable: boolean,
+  hydratedSourceProfile: ProfileDraft | null,
+): ProfileDraft {
+  const profile = profileFromForm(form, datasetSlug);
+  if (predictionAuthoringAvailable) {
+    return profile;
+  }
+  const { inference_presentation: _inferencePresentation, result_card: _resultCard, ...rest } = profile;
+  const dormantProfile: ProfileDraft = { ...rest };
+  if (hydratedSourceProfile?.inference_presentation) {
+    dormantProfile.inference_presentation = hydratedSourceProfile.inference_presentation;
+  }
+  if (hydratedSourceProfile?.result_card) {
+    dormantProfile.result_card = hydratedSourceProfile.result_card;
+  }
+  return dormantProfile;
+}
+
 function stableJson(value: unknown): string {
   if (Array.isArray(value)) {
     return `[${value.map((item) => stableJson(item)).join(",")}]`;
@@ -1903,8 +1936,21 @@ type WorkspacePublishFields = Pick<
   | "documentation"
 >;
 
-function workspacePublishFields(form: DraftForm): WorkspacePublishFields {
-  return {
+// Project Spec S0276: the prediction-presentation authoring fields (the
+// bound Predict View id plus every binary/multiclass/continuous-regression/
+// univariate-forecasting Result Card field) participate in the workspace
+// dirty comparison only while prediction authoring is an active
+// responsibility for the current active-release contract. When prediction
+// authoring is dormant (explicit not_applicable / malformed ready contract),
+// they are excluded so a stale in-memory draft left over from an earlier
+// active state can never keep the shared Publish changes toolbar dirty. The
+// underlying DraftForm is never mutated -- only what participates in this
+// comparison changes.
+function workspacePublishFields(
+  form: DraftForm,
+  includePredictionAuthoring = true,
+): Partial<WorkspacePublishFields> {
+  const fields: Partial<WorkspacePublishFields> = {
     display_title: form.display_title,
     display_subtitle: form.display_subtitle,
     problem_summary_title: form.problem_summary_title,
@@ -1922,29 +1968,39 @@ function workspacePublishFields(form: DraftForm): WorkspacePublishFields {
     theme_preset: isDatasetThemePresetId(form.theme_preset)
       ? form.theme_preset
       : DEFAULT_DATASET_THEME_PRESET,
-    bound_predict_view_id: form.bound_predict_view_id,
-    positive_class_probability_label: form.positive_class_probability_label,
-    predicted_outcome_label: form.predicted_outcome_label,
-    positive_outcome_copy: form.positive_outcome_copy,
-    negative_outcome_copy: form.negative_outcome_copy,
-    predicted_class_label: form.predicted_class_label,
-    class_probability_distribution_label: form.class_probability_distribution_label,
-    predicted_value_label: form.predicted_value_label,
-    decimal_places: form.decimal_places,
-    value_unit_label: form.value_unit_label,
-    forecast_series_label: form.forecast_series_label,
-    future_time_index_label: form.future_time_index_label,
-    forecast_value_label: form.forecast_value_label,
-    interpretation_preset: form.interpretation_preset,
-    interpretation_high: form.interpretation_high,
-    interpretation_medium: form.interpretation_medium,
-    interpretation_low: form.interpretation_low,
     documentation: form.documentation,
   };
+  if (includePredictionAuthoring) {
+    fields.bound_predict_view_id = form.bound_predict_view_id;
+    fields.positive_class_probability_label = form.positive_class_probability_label;
+    fields.predicted_outcome_label = form.predicted_outcome_label;
+    fields.positive_outcome_copy = form.positive_outcome_copy;
+    fields.negative_outcome_copy = form.negative_outcome_copy;
+    fields.predicted_class_label = form.predicted_class_label;
+    fields.class_probability_distribution_label = form.class_probability_distribution_label;
+    fields.predicted_value_label = form.predicted_value_label;
+    fields.decimal_places = form.decimal_places;
+    fields.value_unit_label = form.value_unit_label;
+    fields.forecast_series_label = form.forecast_series_label;
+    fields.future_time_index_label = form.future_time_index_label;
+    fields.forecast_value_label = form.forecast_value_label;
+    fields.interpretation_preset = form.interpretation_preset;
+    fields.interpretation_high = form.interpretation_high;
+    fields.interpretation_medium = form.interpretation_medium;
+    fields.interpretation_low = form.interpretation_low;
+  }
+  return fields;
 }
 
-function sameWorkspacePublishFields(left: DraftForm, right: DraftForm): boolean {
-  return stableJson(workspacePublishFields(left)) === stableJson(workspacePublishFields(right));
+function sameWorkspacePublishFields(
+  left: DraftForm,
+  right: DraftForm,
+  includePredictionAuthoring = true,
+): boolean {
+  return (
+    stableJson(workspacePublishFields(left, includePredictionAuthoring)) ===
+    stableJson(workspacePublishFields(right, includePredictionAuthoring))
+  );
 }
 
 function backendDraftProfile(draftState: DraftState): ProfileDraft | null {
@@ -5788,6 +5844,46 @@ export default function DatasetAdminPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [readOnlyData.resultContract, draftForm.performance_focus.focus_id]);
 
+  // Project Spec S0276: one bounded Dataset Admin prediction-authoring
+  // availability state, derived from the same active-release public contract
+  // and the same bounded helper the public Dataset Detail surface and the
+  // S0271 Live Preview already use -- never a second local
+  // predictive_interaction parser and never a dataset/model/problem-type
+  // branch. Only a fully resolved ("ready") contract can turn authoring
+  // dormant; while the contract is still idle/loading/unavailable, authoring
+  // stays available so historical behavior is preserved.
+  const predictionAuthoringAvailable =
+    readOnlyData.contract.status === "ready"
+      ? isPublicPredictionSurfaceAvailable(readOnlyData.contract.data)
+      : true;
+
+  // Project Spec S0276: the visible top-level Admin tab sequence. The static
+  // adminTabs definitions keep their identity; when prediction authoring is
+  // dormant, exactly the Inference Form and Result Card tabs are filtered
+  // out, leaving Public Content / Metadata & Card / Theme Preset /
+  // Documentation / Publishing / Live Preview. When available, the historical
+  // eight-tab sequence is preserved exactly.
+  const visibleAdminTabs = predictionAuthoringAvailable
+    ? adminTabs
+    : adminTabs.filter((tab) => tab.id !== "inference-form" && tab.id !== "result-card");
+
+  // Project Spec S0276: deterministic selected-tab reconciliation, the same
+  // class S0271's public Dataset Detail tabs use. The contract can resolve
+  // after the operator has already selected Inference Form or Result Card;
+  // when authoring then becomes dormant, the effective selection immediately
+  // becomes Public Content (so the hidden tab panel is never rendered on the
+  // transitional render) and the committed selectedTab converges to it.
+  // Unrelated selected tabs are never reset.
+  const effectiveSelectedTab =
+    !predictionAuthoringAvailable && (selectedTab === "inference-form" || selectedTab === "result-card")
+      ? "public-content"
+      : selectedTab;
+  useEffect(() => {
+    if (effectiveSelectedTab !== selectedTab) {
+      setSelectedTab(effectiveSelectedTab);
+    }
+  }, [effectiveSelectedTab, selectedTab]);
+
   // Project Spec S0098: deterministic Dataset Admin authoring rebinding.
   // Runs only after hydration has resolved bound_predict_view_id from the
   // real profile (draftState.status === "ready", set by the effect above)
@@ -5819,6 +5915,14 @@ export default function DatasetAdminPage() {
   // current selectedSlug is what actually distinguishes current data from
   // same-status residue.
   useEffect(() => {
+    // Project Spec S0276: while prediction authoring is dormant the
+    // deterministic rebind must not run its binding mutation. It returns
+    // before predictViewRebindAppliedSlugRef is consumed, so an existing
+    // bound_predict_view_id is never cleared and a later available state for
+    // the same identity can still perform its normal one-shot rebind.
+    if (!predictionAuthoringAvailable) {
+      return;
+    }
     if (!selectedSlug || draftState.status !== "ready" || draftState.datasetSlug !== selectedSlug) {
       return;
     }
@@ -5849,7 +5953,7 @@ export default function DatasetAdminPage() {
       }
       return { ...current, bound_predict_view_id: nextBinding };
     });
-  }, [selectedSlug, draftState, readOnlyData.views, readOnlyData.dataset]);
+  }, [predictionAuthoringAvailable, selectedSlug, draftState, readOnlyData.views, readOnlyData.dataset]);
 
   const datasets = state.status === "ready" ? state.datasets : [];
   const selectedDataset = useMemo(
@@ -5934,15 +6038,27 @@ export default function DatasetAdminPage() {
           release_date_label: lastUpdatedDate,
           bound_predict_view_id: resolvedBoundPredictViewIdDefault(""),
         };
+  // Project Spec S0276: when prediction authoring is dormant the
+  // prediction-presentation fields are excluded from the active workspace
+  // dirty comparison; every non-prediction field keeps its exact existing
+  // dirty behavior.
   const hasUnpublishedWorkspaceChanges =
-    Boolean(selectedSlug) && !sameWorkspacePublishFields(draftForm, workspacePublishSnapshotForm);
+    Boolean(selectedSlug) &&
+    !sameWorkspacePublishFields(draftForm, workspacePublishSnapshotForm, predictionAuthoringAvailable);
   // Project Spec S0103: the Inference Form customization now participates in
   // the same shared workspace dirty-state as every other Dataset Detail tab.
-  const hasUnpublishedCustomizationChanges = isCustomizationRecordDirty(customizationEditorState, customizationBaseline);
+  // Project Spec S0276: but only while prediction authoring is an active
+  // responsibility -- a stale in-memory customization draft from an earlier
+  // active state never keeps the shared toolbar dirty once the contract is
+  // dormant.
+  const hasUnpublishedCustomizationChanges =
+    predictionAuthoringAvailable && isCustomizationRecordDirty(customizationEditorState, customizationBaseline);
   const toolbarPublishBusy =
     draftState.status === "loading" ||
     publicationState.status === "publishing" ||
-    customizationEditorState.status === "saving";
+    // Project Spec S0276: a superseded customization "saving" state cannot
+    // keep the shared toolbar busy once authoring is dormant.
+    (predictionAuthoringAvailable && customizationEditorState.status === "saving");
   const toolbarPublishDisabled =
     !selectedSlug || (!hasUnpublishedWorkspaceChanges && !hasUnpublishedCustomizationChanges) || toolbarPublishBusy;
   // Progress/result feedback beside the shared Publish changes button:
@@ -6114,14 +6230,39 @@ export default function DatasetAdminPage() {
     }
 
     const customizationDraft = customizationDraftOf(customizationEditorState);
-    const customizationDirty = isCustomizationRecordDirty(customizationEditorState, customizationBaseline);
+    // Project Spec S0276: while prediction authoring is dormant the
+    // customization resource is no longer an authoring responsibility for
+    // this contract identity -- customizationDirty / migrationMustPersistFirst
+    // are forced false so the customization validation/persist path is
+    // bypassed entirely and an unrelated profile publish goes straight
+    // through the existing profile publish boundary. No hidden "Inference
+    // Form could not be saved" error can block that publication.
+    const customizationDirty =
+      predictionAuthoringAvailable && isCustomizationRecordDirty(customizationEditorState, customizationBaseline);
     // Project Spec S0110: a pending legacy submit-label migration forces the
     // same "customization persists before profile" ordering as an explicit
     // customization edit whenever a profile publish is about to happen --
     // otherwise the about-to-be-dropped legacy value would be lost with
-    // nowhere it was ever actually persisted to.
-    const migrationMustPersistFirst = submitLabelMigrationPending && profileDirty && !customizationDirty;
-    const currentProfileForPublish = profileFromForm(draftForm, selectedSlug);
+    // nowhere it was ever actually persisted to. Project Spec S0276: never
+    // forced while prediction authoring is dormant.
+    const migrationMustPersistFirst =
+      predictionAuthoringAvailable && submitLabelMigrationPending && profileDirty && !customizationDirty;
+    // Project Spec S0276: the hydrated profile authority for the selected
+    // dataset (the same draft/current-release profile state the workspace
+    // already loaded), used only to copy dormant presentation sections
+    // through unchanged. The published-snapshot fallback is applied only
+    // under an explicit same-dataset identity guard.
+    const hydratedSourceProfile =
+      backendDraftProfile(draftState) ??
+      (publicationState.publishedProfile && publicationState.publishedProfile.dataset_slug === selectedSlug
+        ? publicationState.publishedProfile
+        : null);
+    const currentProfileForPublish = profileForPublication(
+      draftForm,
+      selectedSlug,
+      predictionAuthoringAvailable,
+      hydratedSourceProfile,
+    );
 
     if (!customizationDirty && !migrationMustPersistFirst && !profileDirty) {
       return;
@@ -6354,6 +6495,21 @@ export default function DatasetAdminPage() {
     const requestId = customizationRequestRef.current + 1;
     customizationRequestRef.current = requestId;
 
+    // Project Spec S0276: before the customization GET path can start,
+    // recognize dormant prediction authoring. The request identity was
+    // already bumped above, so any older in-flight customization response is
+    // invalidated and can never re-enable dirty state after dormancy. No
+    // customization GET is started, no DELETE/PUT touches the persisted
+    // record, and the active state settles to a neutral non-dirty baseline.
+    // When the contract later becomes available the normal bootstrap runs
+    // again.
+    if (!predictionAuthoringAvailable) {
+      setCustomizationEditorState(emptyCustomizationEditorState);
+      setCustomizationBaseline(null);
+      setSubmitLabelMigrationPending(false);
+      return;
+    }
+
     if (!selectedSlug || !boundPredictViewId) {
       setCustomizationEditorState({ status: "no_view_bound" });
       setCustomizationBaseline(null);
@@ -6475,7 +6631,7 @@ export default function DatasetAdminPage() {
       });
 
     return () => controller.abort();
-  }, [selectedSlug, boundPredictViewId, readOnlyData.contract, customizationRetryNonce]);
+  }, [predictionAuthoringAvailable, selectedSlug, boundPredictViewId, readOnlyData.contract, customizationRetryNonce]);
 
   // Shown only by CustomizationStatusPanel's "unavailable" branch (an actual
   // load failure) -- never a required normal-path action.
@@ -6739,14 +6895,19 @@ export default function DatasetAdminPage() {
           </p>
         ) : null}
         <DraftStatusPanel draftState={draftState} />
-        <Tabs ariaLabel="Dataset admin tabs" items={adminTabs} onSelect={setSelectedTab} selectedId={selectedTab} />
+        <Tabs
+          ariaLabel="Dataset admin tabs"
+          items={visibleAdminTabs}
+          onSelect={setSelectedTab}
+          selectedId={effectiveSelectedTab}
+        />
         <div
-          aria-label={`${adminTabs.find((tab) => tab.id === selectedTab)?.label ?? "Selected"} tab panel`}
+          aria-label={`${visibleAdminTabs.find((tab) => tab.id === effectiveSelectedTab)?.label ?? "Selected"} tab panel`}
           role="tabpanel"
           style={tabPanelStyle}
         >
           {renderSelectedTab(
-            selectedTab,
+            effectiveSelectedTab,
             selectedDataset,
             draftForm,
             setField,

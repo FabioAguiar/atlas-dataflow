@@ -5526,7 +5526,13 @@ describe("DatasetAdminPage", () => {
       expect(await detailTabs.findByRole("tab", { name: "Inference" })).toBeInTheDocument();
     });
 
-    it("keeps Predict View authoring state loadable even when the public Inference tab is omitted", async () => {
+    // Project Spec S0276 supersedes the earlier S0271 assertion that private
+    // Inference Form authoring stays loadable under not_applicable: the
+    // top-level Inference Form and Result Card authoring tabs are now
+    // capability-driven and removed from the workspace entirely when the
+    // active-release contract is dormant, alongside the unchanged Live
+    // Preview omission.
+    it("omits the top-level Inference Form and Result Card authoring tabs when the active-release contract is not_applicable (Project Spec S0276)", async () => {
       installFetchMock({
         contractOverride: notApplicableContract,
         resultContractOverride: forecastingResultContract,
@@ -5535,17 +5541,308 @@ describe("DatasetAdminPage", () => {
       renderAdminPage();
       await loadDraftOnly();
 
-      // The private authoring Inference Form editor still bootstraps from the
-      // same contract, independently of the public preview tab omission.
-      fireEvent.click(screen.getByRole("tab", { name: "Inference Form" }));
-      expect(await screen.findByLabelText("History-series field customization")).toBeInTheDocument();
-      expect(screen.getByLabelText("Period display label")).toBeInTheDocument();
+      await waitFor(() => {
+        expect(screen.queryByRole("tab", { name: "Inference Form" })).not.toBeInTheDocument();
+      });
+      expect(screen.queryByRole("tab", { name: "Result Card" })).not.toBeInTheDocument();
 
       // And the Live Preview still omits the public Inference tab.
       const detailTabs = livePreviewDetailTabs();
       await waitFor(() => {
         expect(detailTabs.queryByRole("tab", { name: "Inference" })).not.toBeInTheDocument();
       });
+    });
+  });
+
+  // Project Spec S0276: Dataset Admin prediction-presentation authoring is
+  // capability-driven. A not_applicable active-release contract omits the
+  // top-level Inference Form and Result Card tabs, reconciles a hidden
+  // selected tab to Public Content, suspends the S0098 auto-rebind and S0099
+  // customization bootstrap, removes the dormant prediction fields from the
+  // workspace dirty comparison, and preserves (never fabricates or
+  // normalizes) persisted inference_presentation / result_card during an
+  // unrelated publication. available / historical / non-forecasting
+  // contracts keep every historical tab and behavior.
+  describe("Dataset Admin capability-driven prediction authoring (Project Spec S0276)", () => {
+    const forecastingContractBase = {
+      schema_version: "2.0.0",
+      problem_type: "univariate_forecasting",
+      input_kind: "history_series",
+      history_series: {
+        time_index_field: { name: "period", label: "Period", value_kind: "calendar_period", display_order: 1 },
+        target_field: { name: "passengers", label: "Passengers", value_kind: "number", display_order: 2 },
+        frequency: "Monthly",
+      },
+      forecast: { forecast_horizon: 3, horizon_user_editable: false },
+    };
+    const historicalForecastingContract = { ...forecastingContractBase };
+    const availableForecastingContract = {
+      ...forecastingContractBase,
+      predictive_interaction: {
+        history_target_values: { affect_forecast: false },
+        public_prediction: { applicability: "available" },
+      },
+    };
+    const notApplicableForecastingContract = {
+      ...forecastingContractBase,
+      predictive_interaction: {
+        history_target_values: { affect_forecast: false },
+        public_prediction: { applicability: "not_applicable" },
+      },
+    };
+    const forecastingResultContract = {
+      status: "available",
+      semantics: {
+        schema_version: "univariate-forecasting-result-semantics.v1",
+        problem_type: "univariate_forecasting",
+        result_schema_version: "univariate-forecasting-result.v1",
+        primary_output: "forecast_series",
+        output_structure: "ordered_forecast_points",
+        forecast_value_kind: "continuous_numeric",
+        forecast_count_source: "forecast_horizon",
+        model_descriptor: { model_family: "deterministic_seasonal_trend_ols", display_name: "Seasonal Trend" },
+      },
+    };
+    const HISTORICAL_EIGHT_TABS = [
+      "Public Content",
+      "Metadata & Card",
+      "Theme Preset",
+      "Inference Form",
+      "Result Card",
+      "Documentation",
+      "Publishing",
+      "Live Preview",
+    ];
+    const DORMANT_SIX_TABS = [
+      "Public Content",
+      "Metadata & Card",
+      "Theme Preset",
+      "Documentation",
+      "Publishing",
+      "Live Preview",
+    ];
+
+    function topLevelAdminTabLabels() {
+      return within(screen.getByRole("tablist", { name: "Dataset admin tabs" }))
+        .getAllByRole("tab")
+        .map((tab) => tab.textContent);
+    }
+
+    function publishBodyFor(fetchMock: ReturnType<typeof installFetchMock>): Record<string, unknown> {
+      const calls = fetchMock.mock.calls.filter(
+        (entry) =>
+          String(entry[0]).endsWith(`/admin/datasets/${datasetSlug}/publish`) &&
+          (entry[1] as RequestInit | undefined)?.method === "PUT",
+      );
+      const call = calls[calls.length - 1];
+      if (!call) {
+        throw new Error("No publish PUT was issued");
+      }
+      return JSON.parse(String((call[1] as RequestInit).body));
+    }
+
+    function customizationGetCount(fetchMock: ReturnType<typeof installFetchMock>): number {
+      return fetchMock.mock.calls.filter(
+        (entry) =>
+          String(entry[0]).endsWith("/customization") &&
+          (entry[1] as RequestInit | undefined)?.method !== "PUT",
+      ).length;
+    }
+
+    async function editDisplayTitleAndPublish(nextTitle: string) {
+      fireEvent.click(screen.getByRole("tab", { name: "Public Content" }));
+      const titleInput = await screen.findByLabelText("Display title");
+      fireEvent.change(titleInput, { target: { value: nextTitle } });
+      const publishButton = within(
+        screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" }),
+      ).getByRole("button", { name: "Publish changes" });
+      await waitFor(() => expect(publishButton).toBeEnabled());
+      fireEvent.click(publishButton);
+      await screen.findByText("Changes saved.");
+    }
+
+    it("omits the Inference Form and Result Card tabs for a not_applicable forecasting contract, keeping the other six ordered", async () => {
+      installFetchMock({
+        contractOverride: notApplicableForecastingContract,
+        resultContractOverride: forecastingResultContract,
+      });
+      renderAdminPage();
+      await loadDraftOnly();
+
+      await waitFor(() => expect(topLevelAdminTabLabels()).toEqual(DORMANT_SIX_TABS));
+    });
+
+    it("retains all eight historical tabs for an available forecasting contract", async () => {
+      installFetchMock({
+        contractOverride: availableForecastingContract,
+        resultContractOverride: forecastingResultContract,
+      });
+      renderAdminPage();
+      await loadDraftOnly();
+
+      await waitFor(() => expect(topLevelAdminTabLabels()).toEqual(HISTORICAL_EIGHT_TABS));
+    });
+
+    it("retains all eight historical tabs for a historical forecasting contract without predictive_interaction", async () => {
+      installFetchMock({
+        contractOverride: historicalForecastingContract,
+        resultContractOverride: forecastingResultContract,
+      });
+      renderAdminPage();
+      await loadDraftOnly();
+
+      await waitFor(() => expect(topLevelAdminTabLabels()).toEqual(HISTORICAL_EIGHT_TABS));
+    });
+
+    it("retains all eight historical tabs for a non-forecasting contract", async () => {
+      installFetchMock();
+      renderAdminPage();
+      await loadDraftOnly();
+
+      await waitFor(() => expect(topLevelAdminTabLabels()).toEqual(HISTORICAL_EIGHT_TABS));
+    });
+
+    it("reconciles a selected Inference Form tab to Public Content once the deferred contract resolves not_applicable", async () => {
+      const fetchMock = installFetchMock({
+        contractOverride: notApplicableForecastingContract,
+        resultContractOverride: forecastingResultContract,
+        authoringContextDeferredOnce: true,
+      });
+      renderAdminPage();
+      await loadDraftOnly();
+
+      // The contract has not resolved yet -- authoring stays available, so the
+      // operator can still select the Inference Form tab.
+      fireEvent.click(screen.getByRole("tab", { name: "Inference Form" }));
+      expect(screen.getByRole("tab", { name: "Inference Form", selected: true })).toBeInTheDocument();
+
+      fetchMock.releaseDeferredAuthoringContext();
+
+      await waitFor(() => {
+        expect(screen.queryByRole("tab", { name: "Inference Form" })).not.toBeInTheDocument();
+      });
+      expect(screen.getByRole("tab", { name: "Public Content", selected: true })).toBeInTheDocument();
+      expect(screen.getByRole("tabpanel", { name: "Public Content tab panel" })).toBeInTheDocument();
+      expect(screen.queryByLabelText("History-series field customization")).not.toBeInTheDocument();
+    });
+
+    it("reconciles a selected Result Card tab to Public Content once the deferred contract resolves not_applicable", async () => {
+      const fetchMock = installFetchMock({
+        contractOverride: notApplicableForecastingContract,
+        resultContractOverride: forecastingResultContract,
+        authoringContextDeferredOnce: true,
+      });
+      renderAdminPage();
+      await loadDraftOnly();
+
+      fireEvent.click(screen.getByRole("tab", { name: "Result Card" }));
+      expect(screen.getByRole("tab", { name: "Result Card", selected: true })).toBeInTheDocument();
+
+      fetchMock.releaseDeferredAuthoringContext();
+
+      await waitFor(() => {
+        expect(screen.queryByRole("tab", { name: "Result Card" })).not.toBeInTheDocument();
+      });
+      expect(screen.getByRole("tab", { name: "Public Content", selected: true })).toBeInTheDocument();
+    });
+
+    it("does not auto-bind a Predict View or issue a customization GET while dormant, and an unrelated publish fabricates no inference_presentation", async () => {
+      const fetchMock = installFetchMock({
+        contractOverride: notApplicableForecastingContract,
+        resultContractOverride: forecastingResultContract,
+        viewsOverride: [{ view_id: "sole-eligible-view", display: { title: "Sole eligible view" } }],
+        noExistingDraft: true,
+      });
+      renderAdminPage();
+      await loadDraftOnly();
+      await waitFor(() => expect(topLevelAdminTabLabels()).toEqual(DORMANT_SIX_TABS));
+
+      await editDisplayTitleAndPublish("Dormant sole-view title");
+
+      expect(customizationGetCount(fetchMock)).toBe(0);
+      const body = publishBodyFor(fetchMock);
+      expect(body).not.toHaveProperty("inference_presentation");
+      expect(body).not.toHaveProperty("result_card");
+    });
+
+    it("preserves an existing bound Predict View and issues no customization GET while dormant", async () => {
+      const fetchMock = installFetchMock({
+        contractOverride: notApplicableForecastingContract,
+        resultContractOverride: forecastingResultContract,
+      });
+      renderAdminPage();
+      await loadDraftOnly();
+      await waitFor(() => expect(topLevelAdminTabLabels()).toEqual(DORMANT_SIX_TABS));
+
+      await editDisplayTitleAndPublish("Dormant bound-view title");
+
+      expect(customizationGetCount(fetchMock)).toBe(0);
+      expect(publishBodyFor(fetchMock).inference_presentation).toEqual({ bound_predict_view_id: viewId });
+    });
+
+    it("preserves a hydrated inference_presentation and result_card unchanged through an unrelated dormant publication, sending no customization PUT", async () => {
+      const syntheticResultCard = {
+        schema_version: "univariate-forecasting-result-presentation.v1",
+        forecast_series_label: "S0276 preserved forecast label",
+        future_time_index_label: "S0276 preserved period label",
+        forecast_value_label: "S0276 preserved value label",
+        model_section_label: "S0276 preserved model heading",
+        decimal_places: 4,
+        value_unit_label: "S0276 units",
+      };
+      const fetchMock = installFetchMock({
+        contractOverride: notApplicableForecastingContract,
+        resultContractOverride: forecastingResultContract,
+        boundPredictViewIdOverride: "s0276-preserved-view",
+        resultCardProfileOverride: syntheticResultCard,
+      });
+      renderAdminPage();
+      await loadDraftOnly();
+      await waitFor(() => expect(topLevelAdminTabLabels()).toEqual(DORMANT_SIX_TABS));
+
+      await editDisplayTitleAndPublish("Dormant preservation title");
+
+      const body = publishBodyFor(fetchMock);
+      expect(body.inference_presentation).toEqual({ bound_predict_view_id: "s0276-preserved-view" });
+      expect(body.result_card).toEqual(syntheticResultCard);
+      expect(
+        fetchMock.mock.calls.some(
+          (entry) =>
+            String(entry[0]).endsWith("/customization") &&
+            (entry[1] as RequestInit | undefined)?.method === "PUT",
+        ),
+      ).toBe(false);
+    });
+
+    it("omits both optional sections when a fresh not_applicable profile carries neither", async () => {
+      const fetchMock = installFetchMock({
+        contractOverride: notApplicableForecastingContract,
+        resultContractOverride: forecastingResultContract,
+        noExistingDraft: true,
+      });
+      renderAdminPage();
+      await loadDraftOnly();
+      await waitFor(() => expect(topLevelAdminTabLabels()).toEqual(DORMANT_SIX_TABS));
+
+      await editDisplayTitleAndPublish("Fresh dormant title");
+
+      const body = publishBodyFor(fetchMock);
+      expect(body).not.toHaveProperty("inference_presentation");
+      expect(body).not.toHaveProperty("result_card");
+    });
+
+    it("keeps available prediction authoring bootstrapping the customization builder from the same contract", async () => {
+      installFetchMock({
+        contractOverride: availableForecastingContract,
+        resultContractOverride: forecastingResultContract,
+        customizationAbsent: true,
+      });
+      renderAdminPage();
+      await loadDraftOnly();
+
+      fireEvent.click(screen.getByRole("tab", { name: "Inference Form" }));
+      expect(await screen.findByLabelText("History-series field customization")).toBeInTheDocument();
+      expect(screen.getByLabelText("Period display label")).toBeInTheDocument();
     });
   });
 

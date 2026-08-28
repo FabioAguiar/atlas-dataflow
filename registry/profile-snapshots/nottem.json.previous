@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0.0",
   "dataset_slug": "nottem",
-  "published_at": "2026-08-28T19:31:09Z",
+  "published_at": "2026-08-28T20:29:37Z",
   "active_release_at_publish_time": "release-20260828t102855z",
   "profile": {
     "display": {
@@ -14,7 +14,7 @@
       "canonical_name_fallback": true
     },
     "home_card": {
-      "background_image_ref": null,
+      "background_image_ref": "/media/home-cards/258d883064c940b6a8f14f15abc0930b.jpg",
       "short_description": "Explore 20 years of Nottingham monthly average air temperatures and a governed univariate forecasting model that predicts the next 12 months in degrees Fahrenheit.",
       "primary_metric_key": null
     },
@@ -25,21 +25,21 @@
         {
           "score_id": "mae",
           "display_label": "MAE",
-          "value": "0",
+          "value": "1.5266",
           "value_source": "manual",
           "order": 0
         },
         {
           "score_id": "rmse",
           "display_label": "RMSE",
-          "value": "0",
+          "value": "1.8600",
           "value_source": "manual",
           "order": 1
         },
         {
           "score_id": "seasonal_mase",
           "display_label": "Seasonal MASE",
-          "value": "0",
+          "value": "0.5555",
           "value_source": "manual",
           "order": 2
         }

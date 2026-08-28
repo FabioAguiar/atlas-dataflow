@@ -961,12 +961,13 @@ h1 {
 }
 
 /*
- * Project Spec S0248: the univariate-forecasting diagnostics section
- * (Seasonal Profile, Backtesting by Origin, Horizon MAE) renders below the
- * primary analytics grid and stacks to a single column on mobile, matching
- * S0228's regression-diagnostics layout rule above -- Confusion Matrix,
- * regression diagnostics, and forecasting diagnostics never render on the
- * same release.
+ * Project Spec S0248/S0273: the univariate-forecasting diagnostics section
+ * (Backtesting by Origin, Horizon MAE, Seasonal Profile) participates in the
+ * shared analytics grid alongside Performance Summary under the
+ * `--forecasting` grid modifier below -- this wrapper's own box is
+ * suppressed there so its three cards become direct grid items rather than
+ * a second below-grid section. Confusion Matrix, regression diagnostics,
+ * and forecasting diagnostics never render on the same release.
  */
 .dataset-detail-overview__forecasting-diagnostics {
   display: grid;
@@ -978,13 +979,18 @@ h1 {
   min-width: 0;
 }
 
+.dataset-detail-overview__analytics--forecasting > .dataset-detail-overview__forecasting-diagnostics {
+  display: contents;
+}
+
 /*
- * Project Spec S0272: the final-holdout forecast-evaluation overview renders
- * after Problem summary and before the primary analytics grid for a valid
- * analytical-visualizations.v6 forecasting release only. It is a single
- * full-width column at every breakpoint -- the Forecast vs Actual chart needs
- * the width, and classification/regression and historical v4 layouts never
- * render this wrapper at all. All colors trace back to dataset theme tokens.
+ * Project Spec S0272/S0273: the final-holdout forecast-evaluation overview
+ * renders after Problem summary and before the primary analytics grid for a
+ * valid analytical-visualizations.v6 forecasting release only. It is a
+ * single full-width column at every breakpoint -- the Forecast vs Actual
+ * chart needs the width, and classification/regression and historical v4
+ * layouts never render this wrapper at all. All colors trace back to
+ * dataset theme tokens.
  */
 .dataset-detail-overview__forecasting-evaluation {
   display: grid;
@@ -999,80 +1005,6 @@ h1 {
 .dataset-detail-forecasting-evaluation {
   display: grid;
   gap: var(--atlas-space-4);
-}
-
-.dataset-detail-forecasting-evaluation__statement {
-  margin: 0;
-  color: var(--atlas-color-text-muted);
-  line-height: var(--atlas-line-relaxed);
-}
-
-.dataset-detail-forecasting-evaluation__context {
-  display: grid;
-  gap: var(--atlas-space-2);
-  margin: 0;
-  grid-template-columns: minmax(0, 1fr);
-}
-
-.dataset-detail-forecasting-evaluation__context-row {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--atlas-space-4);
-}
-
-.dataset-detail-forecasting-evaluation__context-row dt {
-  margin: 0;
-  color: var(--atlas-color-text-muted);
-  font-size: var(--atlas-text-sm);
-}
-
-.dataset-detail-forecasting-evaluation__context-row dd {
-  margin: 0;
-  color: var(--atlas-color-text);
-  font-weight: 700;
-  text-align: right;
-  overflow-wrap: anywhere;
-}
-
-.dataset-detail-forecasting-evaluation__boundary {
-  display: grid;
-  gap: var(--atlas-space-2);
-  grid-template-columns: minmax(0, 1fr);
-}
-
-.dataset-detail-forecasting-evaluation__boundary-segment {
-  display: grid;
-  gap: var(--atlas-space-1);
-  padding: var(--atlas-space-3);
-  border: 1px solid var(--dataset-theme-chart-grid);
-  border-left: 4px solid var(--dataset-theme-chart-primary);
-  border-radius: var(--atlas-radius-sm);
-  background: color-mix(in srgb, var(--dataset-theme-chart-primary) 8%, transparent);
-}
-
-.dataset-detail-forecasting-evaluation__boundary-segment--final-holdout {
-  border-left-color: var(--dataset-theme-accent);
-  background: color-mix(in srgb, var(--dataset-theme-accent) 10%, transparent);
-}
-
-.dataset-detail-forecasting-evaluation__boundary-title {
-  color: var(--atlas-color-text);
-  font-weight: 700;
-  font-size: var(--atlas-text-sm);
-}
-
-.dataset-detail-forecasting-evaluation__boundary-range,
-.dataset-detail-forecasting-evaluation__boundary-count {
-  color: var(--atlas-color-text-muted);
-  font-size: var(--atlas-text-sm);
-  overflow-wrap: anywhere;
-}
-
-.dataset-detail-forecasting-evaluation__chart-title {
-  margin: 0;
-  color: var(--atlas-color-text);
-  font-size: var(--atlas-text-md);
 }
 
 .dataset-detail-forecasting-evaluation__chart-layout {
@@ -2688,30 +2620,6 @@ h1 {
   }
 
   /*
-   * Project Spec S0248: three cards, so a fixed 2-column grid (like
-   * regression-diagnostics above) would leave the third card stranded --
-   * auto-fit adapts across tablet/desktop widths without overflow.
-   */
-  .dataset-detail-overview__forecasting-diagnostics {
-    grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
-  }
-
-  /*
-   * Project Spec S0272: from tablet up, the evaluation context and the
-   * development/final-holdout boundary sit side by side; the Forecast vs
-   * Actual chart stays full width below them. Narrow screens keep the
-   * single-column stack defined above.
-   */
-  .dataset-detail-forecasting-evaluation__context {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    column-gap: var(--atlas-space-6);
-  }
-
-  .dataset-detail-forecasting-evaluation__boundary {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  /*
    * Project Spec S0124: desktop/tablet separate the title (left) from the
    * single analysis badge (right) instead of a generic wrapping row.
    */
@@ -2777,6 +2685,21 @@ h1 {
 
   .dataset-detail-overview__analytics > :last-child:nth-child(3) {
     grid-column: auto;
+  }
+
+  /*
+   * Project Spec S0273: wide desktop forecasting analytical layout -- first
+   * row is Performance Summary, Backtesting by Origin, and Horizon MAE in
+   * three equal columns; Seasonal Profile follows as secondary evidence and
+   * spans the full analytical width on the second row. Narrower breakpoints
+   * keep the shared `.dataset-detail-overview__analytics` reflow above.
+   */
+  .dataset-detail-overview__analytics--forecasting {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .dataset-detail-overview__analytics--forecasting .dataset-detail-visualization--seasonal-profile {
+    grid-column: 1 / -1;
   }
 
   .public-inference-surface {

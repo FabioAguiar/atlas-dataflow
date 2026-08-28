@@ -4483,7 +4483,9 @@ describe("DatasetAdminPage", () => {
       },
     };
 
-    it("renders Seasonal Profile, Backtesting by Origin, and Horizon MAE for a forecasting release", async () => {
+    // Project Spec S0273: the three diagnostics join the shared forecasting
+    // analytics grid alongside Performance Summary in Live Preview too.
+    it("joins Backtesting by Origin, Horizon MAE, and Seasonal Profile into the shared forecasting analytics grid for a forecasting release", async () => {
       installFetchMock({
         resultContractOverride: forecastingResultContract,
         visualizationsOverride: forecastingVisualizations,
@@ -4492,12 +4494,15 @@ describe("DatasetAdminPage", () => {
       await loadDraftOnly();
 
       fireEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
-      expect(await screen.findByRole("heading", { name: "Seasonal Profile" })).toBeInTheDocument();
-      expect(screen.getByRole("heading", { name: "Backtesting by Origin" })).toBeInTheDocument();
+      expect(await screen.findByRole("heading", { name: "Backtesting by Origin" })).toBeInTheDocument();
       expect(screen.getByRole("heading", { name: "Horizon MAE" })).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "Seasonal Profile" })).toBeInTheDocument();
 
       const overviewPanel = container.querySelector(".dataset-detail-tabs__panel:not([hidden])")!;
-      expect(overviewPanel.querySelector(".dataset-detail-overview__forecasting-diagnostics")).toBeInTheDocument();
+      const analytics = overviewPanel.querySelector(".dataset-detail-overview__analytics--forecasting");
+      expect(analytics).toBeInTheDocument();
+      expect(analytics?.querySelector(".performance-summary")).toBeInTheDocument();
+      expect(analytics?.querySelector(".dataset-detail-overview__forecasting-diagnostics")).toBeInTheDocument();
     });
 
     it("omits Target Distribution and Feature Importance for a forecasting release in Live Preview", async () => {
@@ -4628,7 +4633,10 @@ describe("DatasetAdminPage", () => {
       forecasting_diagnostics: forecastingDiagnostics,
     };
 
-    it("renders the same evaluation title/context/chart semantics as the public Dataset Detail", async () => {
+    // Project Spec S0273: the removed evaluation copy/context/boundary is
+    // also absent in Live Preview, and the diagnostics join the shared
+    // forecasting analytics layout exactly as the public route does.
+    it("renders the simplified evaluation and shared forecasting analytics layout, matching the public Dataset Detail", async () => {
       installFetchMock({
         resultContractOverride: forecastingResultContract,
         visualizationsOverride: v6ForecastingVisualizations,
@@ -4639,21 +4647,30 @@ describe("DatasetAdminPage", () => {
 
       fireEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
 
-      expect(await screen.findByRole("heading", { name: "Forecast Evaluation Overview" })).toBeInTheDocument();
-      expect(screen.getByRole("heading", { name: "Forecast vs Actual — Final Holdout" })).toBeInTheDocument();
-      expect(screen.getByText(/frozen before the final holdout was opened/i)).toBeInTheDocument();
-      expect(screen.getAllByText("T-024 → T-001").length).toBeGreaterThanOrEqual(1);
-      expect(screen.getAllByText("H-01 → H-04").length).toBeGreaterThanOrEqual(1);
+      expect(await screen.findByRole("heading", { name: "Forecast vs Actual — Final Holdout" })).toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: "Forecast Evaluation Overview" })).not.toBeInTheDocument();
+      expect(screen.queryByText(/frozen before the final holdout was opened/i)).not.toBeInTheDocument();
+      expect(screen.queryByText("Development / training evidence range")).not.toBeInTheDocument();
+      expect(screen.queryByText("Final holdout range")).not.toBeInTheDocument();
+      expect(screen.queryByText("Frequency")).not.toBeInTheDocument();
+      expect(screen.queryAllByText("T-024 → T-001")).toHaveLength(0);
+      expect(screen.queryAllByText("H-01 → H-04")).toHaveLength(0);
 
       const overviewPanel = container.querySelector(".dataset-detail-tabs__panel:not([hidden])")!;
       const evaluationWrapper = overviewPanel.querySelector(".dataset-detail-overview__forecasting-evaluation")!;
-      const analytics = overviewPanel.querySelector(".dataset-detail-overview__analytics")!;
+      const analytics = overviewPanel.querySelector(".dataset-detail-overview__analytics--forecasting")!;
+      expect(analytics).toBeInTheDocument();
       expect(
         evaluationWrapper.compareDocumentPosition(analytics) & Node.DOCUMENT_POSITION_FOLLOWING,
       ).toBeTruthy();
 
-      // Performance and the three secondary diagnostics remain present.
-      expect(overviewPanel.querySelector(".performance-summary")).toBeInTheDocument();
+      // Performance and the three secondary diagnostics remain present,
+      // sharing the forecasting analytics row/diagnostics wrapper.
+      expect(analytics.querySelector(".performance-summary")).toBeInTheDocument();
+      const forecastingDiagnosticsWrapper = analytics.querySelector(
+        ".dataset-detail-overview__forecasting-diagnostics",
+      )!;
+      expect(forecastingDiagnosticsWrapper).toBeInTheDocument();
       expect(screen.getByRole("heading", { name: "Seasonal Profile" })).toBeInTheDocument();
       expect(screen.getByRole("heading", { name: "Backtesting by Origin" })).toBeInTheDocument();
       expect(screen.getByRole("heading", { name: "Horizon MAE" })).toBeInTheDocument();
@@ -4706,7 +4723,7 @@ describe("DatasetAdminPage", () => {
       await loadDraftOnly();
 
       fireEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
-      await screen.findByRole("heading", { name: "Forecast Evaluation Overview" });
+      await screen.findByRole("heading", { name: "Forecast vs Actual — Final Holdout" });
 
       // The default forecasting contract has no predictive_interaction, so the
       // Inference tab stays available -- the evaluation section neither adds

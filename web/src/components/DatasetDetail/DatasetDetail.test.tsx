@@ -1183,13 +1183,15 @@ describe("DatasetDetailSurface exact tab card ownership (S0138)", () => {
   });
 });
 
-// Project Spec S0272: DatasetDetailSurface gains one optional, bounded
+// Project Spec S0272/S0273: DatasetDetailSurface gains one optional, bounded
 // forecasting-evaluation content slot placed after Problem summary and before
-// the analytics grid. These tests exercise only the shared surface's DOM
-// composition with synthetic nodes -- the real renderer's v4/v6 data
+// the analytics grid, and (S0273) joins forecastingDiagnosticsContent into
+// that same shared analytics grid alongside performanceContent rather than a
+// second below-grid section. These tests exercise only the shared surface's
+// DOM composition with synthetic nodes -- the real renderer's v4/v6 data
 // validation is covered by the DatasetPage / Admin Live Preview integration
 // tests using the actual shared component.
-describe("DatasetDetailSurface forecasting-evaluation slot (Project Spec S0272)", () => {
+describe("DatasetDetailSurface forecasting-evaluation slot (Project Spec S0272/S0273)", () => {
   const metadata: DatasetDetailMetadataItem[] = [
     { label: "Source", value: "Example Org", href: "https://example.org/data" },
     { label: "Release", value: "01/07/2026", hint: "Format: dd/mm/yyyy" },
@@ -1239,7 +1241,7 @@ describe("DatasetDetailSurface forecasting-evaluation slot (Project Spec S0272)"
     ).toBe(true);
   });
 
-  it("keeps the forecasting diagnostics node below the analytics grid", () => {
+  it("joins forecastingDiagnosticsContent into the shared analytics grid rather than a second below-grid section", () => {
     renderSurface({
       forecastingEvaluationContent: <div data-testid="evaluation-slot">Evaluation content</div>,
       forecastingDiagnosticsContent: <div data-testid="diagnostics-slot">Diagnostics content</div>,
@@ -1247,12 +1249,66 @@ describe("DatasetDetailSurface forecasting-evaluation slot (Project Spec S0272)"
 
     const analytics = document.querySelector(".dataset-detail-overview__analytics")!;
     const diagnosticsSlot = screen.getByTestId("diagnostics-slot");
-    expect(
-      analytics.compareDocumentPosition(diagnosticsSlot) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
+    expect(analytics.contains(diagnosticsSlot)).toBe(true);
     expect(
       document.querySelector(".dataset-detail-overview__forecasting-diagnostics")!.contains(diagnosticsSlot),
     ).toBe(true);
+  });
+
+  it("keeps performanceContent as the first item in the forecasting analytics composition", () => {
+    renderSurface({
+      forecastingDiagnosticsContent: <div data-testid="diagnostics-slot">Diagnostics content</div>,
+    });
+
+    const analytics = document.querySelector(".dataset-detail-overview__analytics")!;
+    expect(analytics.firstElementChild).toHaveAttribute("data-testid", "performance-slot");
+  });
+
+  it("applies the forecasting analytics modifier only when forecastingDiagnosticsContent is present", () => {
+    const { container: withDiagnostics } = renderSurface({
+      forecastingDiagnosticsContent: <div data-testid="diagnostics-slot">Diagnostics content</div>,
+    });
+    expect(withDiagnostics.querySelector(".dataset-detail-overview__analytics--forecasting")).toBeInTheDocument();
+
+    const { container: withoutDiagnostics } = renderSurface();
+    expect(
+      withoutDiagnostics.querySelector(".dataset-detail-overview__analytics--forecasting"),
+    ).not.toBeInTheDocument();
+    expect(withoutDiagnostics.querySelector(".dataset-detail-overview__analytics")).toBeInTheDocument();
+  });
+
+  it("never renders forecastingDiagnosticsContent twice", () => {
+    renderSurface({
+      forecastingDiagnosticsContent: <div data-testid="diagnostics-slot">Diagnostics content</div>,
+    });
+    expect(screen.getAllByTestId("diagnostics-slot")).toHaveLength(1);
+  });
+
+  it("classification/regression callers without forecastingDiagnosticsContent retain the historical analytics DOM behavior", () => {
+    const { container } = render(
+      <MemoryRouter>
+        <DatasetDetailSurface
+          analysisType="Binary Classification"
+          datasetSubtitle="Synthetic surface subtitle"
+          datasetTitle="Synthetic Surface Dataset"
+          featureImportanceContent={<div data-testid="feature-importance-slot">Feature importance content</div>}
+          inferenceContent={<div data-testid="inference-slot">Inference content</div>}
+          metadata={metadata}
+          performanceContent={<div data-testid="performance-slot">Performance content</div>}
+          problemSummaryBody="Synthetic problem summary body."
+          problemSummaryTitle="Problem summary"
+          targetDistributionContent={<div data-testid="target-distribution-slot">Target distribution content</div>}
+          themePresetId="ocean-blue"
+        />
+      </MemoryRouter>,
+    );
+
+    const analytics = container.querySelector(".dataset-detail-overview__analytics")!;
+    expect(analytics).not.toHaveClass("dataset-detail-overview__analytics--forecasting");
+    expect(container.querySelectorAll(".dataset-detail-overview__forecasting-diagnostics")).toHaveLength(0);
+    expect(within(analytics as HTMLElement).getByTestId("performance-slot")).toBeInTheDocument();
+    expect(within(analytics as HTMLElement).getByTestId("target-distribution-slot")).toBeInTheDocument();
+    expect(within(analytics as HTMLElement).getByTestId("feature-importance-slot")).toBeInTheDocument();
   });
 
   it("omitting forecastingEvaluationContent preserves the historical Overview DOM composition", () => {

@@ -1,0 +1,59 @@
+{
+  "schema_version": "1.0.0",
+  "dataset_slug": "nottem",
+  "published_at": "2026-08-28T14:49:47Z",
+  "active_release_at_publish_time": "release-20260828t102855z",
+  "profile": {
+    "display": {
+      "title": "Nottingham Monthly Temperatures",
+      "release_date_label": "2026-08-27",
+      "canonical_name_fallback": true
+    },
+    "home_card": {
+      "background_image_ref": null,
+      "primary_metric_key": null
+    },
+    "performance_focus": {
+      "focus_id": "forecasting_performance",
+      "highlighted_score_id": "rmse",
+      "visible_scores": [
+        {
+          "score_id": "mae",
+          "display_label": "MAE",
+          "value": "0",
+          "value_source": "manual",
+          "order": 0
+        },
+        {
+          "score_id": "rmse",
+          "display_label": "RMSE",
+          "value": "0",
+          "value_source": "manual",
+          "order": 1
+        },
+        {
+          "score_id": "seasonal_mase",
+          "display_label": "Seasonal MASE",
+          "value": "0",
+          "value_source": "manual",
+          "order": 2
+        }
+      ]
+    },
+    "theme": {
+      "preset": "atlas-green"
+    },
+    "inference_presentation": {
+      "bound_predict_view_id": "nottem-temperature-forecast"
+    },
+    "result_card": {
+      "schema_version": "univariate-forecasting-result-presentation.v1",
+      "forecast_series_label": "Forecast",
+      "future_time_index_label": "Period",
+      "forecast_value_label": "Forecast",
+      "model_section_label": "Model",
+      "decimal_places": 2
+    }
+  },
+  "source_draft_schema_version": "1.0.0"
+}

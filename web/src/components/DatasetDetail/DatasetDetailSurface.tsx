@@ -30,14 +30,16 @@ export type DatasetDetailSurfaceProps = {
   // Detail layouts, including S0221's full-width Confusion Matrix, visually
   // unchanged.
   regressionDiagnosticsContent?: ReactNode;
-  // Project Spec S0248: an optional, bounded univariate-forecasting
-  // diagnostics section (Seasonal Profile + Backtesting by Origin + Horizon
-  // MAE), rendered below the primary analytics grid for a forecasting
-  // release -- omitted entirely (never a placeholder) keeps classification/
-  // regression Dataset Detail layouts visually unchanged. A forecasting
-  // release never renders regressionDiagnosticsContent/confusionMatrixContent
-  // alongside this, and its own targetDistributionContent/
-  // featureImportanceContent are omitted by the caller.
+  // Project Spec S0248/S0273: an optional, bounded univariate-forecasting
+  // diagnostics section (Backtesting by Origin + Horizon MAE + Seasonal
+  // Profile), joined into the primary analytics grid alongside
+  // performanceContent under the forecasting layout modifier for a
+  // forecasting release -- omitted entirely (never a placeholder) keeps
+  // classification/regression Dataset Detail layouts visually unchanged. A
+  // forecasting release never renders regressionDiagnosticsContent/
+  // confusionMatrixContent alongside this, and its own
+  // targetDistributionContent/featureImportanceContent are omitted by the
+  // caller.
   forecastingDiagnosticsContent?: ReactNode;
   // Project Spec S0272: an optional, bounded final-holdout forecast-evaluation
   // section (evaluation context + development/final-holdout boundary +
@@ -101,19 +103,24 @@ export default function DatasetDetailSurface({
         <div className="dataset-detail-overview__forecasting-evaluation">{forecastingEvaluationContent}</div>
       )}
 
-      <div className="dataset-detail-overview__analytics">
+      <div
+        className={
+          forecastingDiagnosticsContent
+            ? "dataset-detail-overview__analytics dataset-detail-overview__analytics--forecasting"
+            : "dataset-detail-overview__analytics"
+        }
+      >
         {performanceContent}
         {targetDistributionContent}
         {featureImportanceContent}
         {confusionMatrixContent}
+        {forecastingDiagnosticsContent && (
+          <div className="dataset-detail-overview__forecasting-diagnostics">{forecastingDiagnosticsContent}</div>
+        )}
       </div>
 
       {regressionDiagnosticsContent && (
         <div className="dataset-detail-overview__regression-diagnostics">{regressionDiagnosticsContent}</div>
-      )}
-
-      {forecastingDiagnosticsContent && (
-        <div className="dataset-detail-overview__forecasting-diagnostics">{forecastingDiagnosticsContent}</div>
       )}
     </div>
   );

@@ -2908,16 +2908,23 @@ describe("DatasetPage univariate-forecasting diagnostics (Project Spec S0248)", 
     return fetchMock;
   }
 
-  it("renders Seasonal Profile, Backtesting by Origin, and Horizon MAE below the primary analytics grid for a forecasting release", async () => {
+  // Project Spec S0273: Backtesting by Origin, Horizon MAE, and Seasonal
+  // Profile now join the shared forecasting analytics grid alongside
+  // Performance Summary rather than rendering as a separate below-grid
+  // section.
+  it("joins Backtesting by Origin, Horizon MAE, and Seasonal Profile into the shared forecasting analytics grid alongside Performance Summary", async () => {
     installForecastingFetchMock();
     const { container } = renderDatasetPage();
 
     await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
-    expect(await screen.findByRole("heading", { name: "Seasonal Profile" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Backtesting by Origin" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Backtesting by Origin" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Horizon MAE" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Seasonal Profile" })).toBeInTheDocument();
 
-    const forecastingSection = container.querySelector(".dataset-detail-overview__forecasting-diagnostics");
+    const analytics = container.querySelector(".dataset-detail-overview__analytics--forecasting");
+    expect(analytics).toBeInTheDocument();
+
+    const forecastingSection = analytics?.querySelector(".dataset-detail-overview__forecasting-diagnostics");
     expect(forecastingSection).toBeInTheDocument();
     expect(forecastingSection?.querySelector(".dataset-detail-visualization--seasonal-profile")).toBeInTheDocument();
     expect(
@@ -3086,25 +3093,35 @@ describe("DatasetPage forecasting final-holdout evaluation overview (Project Spe
     return fetchMock;
   }
 
-  it("renders the full evaluation story before Performance for a valid v6 projection", async () => {
+  // Project Spec S0273: the evaluation card is simplified to the single
+  // Forecast vs Actual — Final Holdout chart (no frozen-model statement,
+  // development/final-holdout context rows, Frequency, or segmented
+  // boundary visualization), and Performance Summary, Backtesting by
+  // Origin, and Horizon MAE now share one forecasting analytics row with
+  // Seasonal Profile as the secondary card below.
+  it("renders the simplified final-holdout evaluation and joins diagnostics into the shared forecasting analytics layout for a valid v6 projection", async () => {
     const fetchMock = installForecastingEvaluationFetchMock(v6VisualizationsPayload);
     const { container } = renderDatasetPage();
 
     await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
-    expect(await screen.findByRole("heading", { name: "Forecast Evaluation Overview" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Forecast vs Actual — Final Holdout" })).toBeInTheDocument();
 
-    // Governed frozen/pre-target-open semantics communicated (not overgeneralized).
-    expect(
-      screen.getByText(/frozen before the final holdout was opened/i),
-    ).toBeInTheDocument();
-
-    // Development + final-holdout boundary context, straight from the projection.
-    expect(screen.getAllByText("T-024 → T-001").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText("H-01 → H-04").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText("synthetic-step")).toBeInTheDocument();
+    // The redundant overview heading, frozen-model statement, development/
+    // final-holdout context rows, and Frequency context are gone.
+    expect(screen.queryByRole("heading", { name: "Forecast Evaluation Overview" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/frozen before the final holdout was opened/i)).not.toBeInTheDocument();
+    expect(screen.queryByText("Development / training evidence range")).not.toBeInTheDocument();
+    expect(screen.queryByText("Development observations")).not.toBeInTheDocument();
+    expect(screen.queryByText("Final holdout range")).not.toBeInTheDocument();
+    expect(screen.queryByText("Final holdout observations / forecast horizon")).not.toBeInTheDocument();
+    expect(screen.queryByText("Final holdout observations")).not.toBeInTheDocument();
+    expect(screen.queryByText("Frequency")).not.toBeInTheDocument();
+    expect(screen.queryAllByText("T-024 → T-001")).toHaveLength(0);
+    expect(screen.queryAllByText("H-01 → H-04")).toHaveLength(0);
+    // The segmented development/final-holdout boundary visualization is gone.
+    expect(container.querySelector(".dataset-detail-forecasting-evaluation__boundary")).not.toBeInTheDocument();
 
     // Forecast vs Actual final-holdout chart + both series identified.
-    expect(screen.getByRole("heading", { name: "Forecast vs Actual — Final Holdout" })).toBeInTheDocument();
     const chartLayout = screen.getByLabelText("Forecast vs Actual — Final Holdout");
     const seriesLegend = chartLayout.querySelector(".dataset-detail-forecasting-evaluation__series-legend")!;
     expect(within(seriesLegend as HTMLElement).getByText("Actual", { exact: true })).toBeInTheDocument();
@@ -3120,19 +3137,29 @@ describe("DatasetPage forecasting final-holdout evaluation overview (Project Spe
 
     // Evaluation slot sits before the analytics grid / Performance.
     const evaluationWrapper = container.querySelector(".dataset-detail-overview__forecasting-evaluation")!;
-    const analytics = container.querySelector(".dataset-detail-overview__analytics")!;
+    const analytics = container.querySelector(".dataset-detail-overview__analytics--forecasting")!;
+    expect(analytics).toBeInTheDocument();
     expect(
       evaluationWrapper.compareDocumentPosition(analytics) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
 
-    // Performance Summary still comes from the metrics response.
-    expect(container.querySelector(".performance-summary")).toBeInTheDocument();
+    // Performance Summary still comes from the metrics response and now
+    // shares the primary forecasting analytics row with Backtesting by
+    // Origin and Horizon MAE.
+    expect(analytics.querySelector(".performance-summary")).toBeInTheDocument();
     expect(screen.getByText("MAE")).toBeInTheDocument();
-
-    // The three secondary diagnostics still render.
-    expect(screen.getByRole("heading", { name: "Seasonal Profile" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Backtesting by Origin" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Horizon MAE" })).toBeInTheDocument();
+
+    // Seasonal Profile still renders as the later secondary diagnostic,
+    // inside the same forecasting-diagnostics wrapper.
+    const forecastingDiagnosticsWrapper = analytics.querySelector(
+      ".dataset-detail-overview__forecasting-diagnostics",
+    )!;
+    expect(forecastingDiagnosticsWrapper).toBeInTheDocument();
+    expect(
+      within(forecastingDiagnosticsWrapper as HTMLElement).getByRole("heading", { name: "Seasonal Profile" }),
+    ).toBeInTheDocument();
 
     // No inference POST and a single /visualizations request.
     expect(fetchMock.mock.calls.some((call) => String(call[0]).endsWith("/inference"))).toBe(false);
@@ -3167,11 +3194,17 @@ describe("DatasetPage forecasting final-holdout evaluation overview (Project Spe
         frequency: "synthetic-step",
       },
     });
-    renderDatasetPage();
+    const { container } = renderDatasetPage();
 
     await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
     expect(await screen.findByRole("heading", { name: "Evaluation unavailable" })).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Forecast vs Actual — Final Holdout" })).not.toBeInTheDocument();
+    // Project Spec S0273: the unavailable state reuses the single
+    // Forecast vs Actual — Final Holdout card heading rather than
+    // reintroducing the removed "Forecast Evaluation Overview" heading, but
+    // renders no chart/series/points evidence.
+    expect(screen.getByRole("heading", { name: "Forecast vs Actual — Final Holdout" })).toBeInTheDocument();
+    expect(container.querySelector(".dataset-detail-forecasting-evaluation__series-legend")).not.toBeInTheDocument();
+    expect(container.querySelector(".dataset-detail-forecasting-evaluation__chart")).not.toBeInTheDocument();
     // Secondary diagnostics still render.
     expect(screen.getByRole("heading", { name: "Seasonal Profile" })).toBeInTheDocument();
   });
@@ -3185,11 +3218,12 @@ describe("DatasetPage forecasting final-holdout evaluation overview (Project Spe
         points: v6VisualizationsPayload.forecasting_evaluation.points.slice(0, 3),
       },
     });
-    renderDatasetPage();
+    const { container } = renderDatasetPage();
 
     await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
     expect(await screen.findByRole("heading", { name: "Evaluation unavailable" })).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Forecast vs Actual — Final Holdout" })).not.toBeInTheDocument();
+    expect(container.querySelector(".dataset-detail-forecasting-evaluation__series-legend")).not.toBeInTheDocument();
+    expect(container.querySelector(".dataset-detail-forecasting-evaluation__chart")).not.toBeInTheDocument();
   });
 
   it("renders the evaluation independently of the Inference tab presence (S0271 orthogonality)", async () => {
@@ -3197,11 +3231,10 @@ describe("DatasetPage forecasting final-holdout evaluation overview (Project Spe
     renderDatasetPage();
 
     await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
-    expect(await screen.findByRole("heading", { name: "Forecast Evaluation Overview" })).toBeInTheDocument();
     // The evaluation Overview does not depend on the Inference tab -- it is
     // built from the visualizations payload, not the prediction-surface
     // capability.
-    expect(screen.getByRole("heading", { name: "Forecast vs Actual — Final Holdout" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Forecast vs Actual — Final Holdout" })).toBeInTheDocument();
   });
 });
 

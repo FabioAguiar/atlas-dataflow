@@ -32,10 +32,6 @@ function formatValue(value: number): string {
   return value.toLocaleString(undefined, { maximumFractionDigits: 4 });
 }
 
-function formatCount(value: number): string {
-  return value.toLocaleString();
-}
-
 /**
  * The Seasonal Profile only renders when every point carries a finite,
  * non-negative integer season position and a finite mean target -- anything
@@ -146,12 +142,9 @@ type ValidForecastingEvaluation = {
   points: Array<{ timeIndex: string; actual: number; forecast: number }>;
 };
 
-const EVALUATION_TITLE = "Forecast Evaluation Overview";
 const FORECAST_VS_ACTUAL_TITLE = "Forecast vs Actual — Final Holdout";
 const EVALUATION_UNAVAILABLE_MESSAGE =
   "This release does not carry a complete governed final-holdout forecast evaluation.";
-const EVALUATION_FROZEN_COPY =
-  "The evaluated model was frozen before the final holdout was opened. Its forecast for that holdout was generated before the observed targets were revealed.";
 
 function isPositiveInteger(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value > 0;
@@ -287,74 +280,23 @@ export function ForecastingEvaluationOverview({ visualizations }: ForecastingDia
   if (!evaluation) {
     return (
       <Card className="dataset-detail-visualization dataset-detail-forecasting-evaluation dataset-detail-forecasting-evaluation--unavailable">
-        <h3>{EVALUATION_TITLE}</h3>
+        <h3>{FORECAST_VS_ACTUAL_TITLE}</h3>
         <EmptyState message={EVALUATION_UNAVAILABLE_MESSAGE} title="Evaluation unavailable" />
       </Card>
     );
   }
 
-  const { development, finalHoldout, frequency, forecastHorizon, points } = evaluation;
+  const { points } = evaluation;
   const chartData = points.map((point) => ({
     label: point.timeIndex,
     actual: point.actual,
     forecast: point.forecast,
   }));
-  const holdoutCountLabel =
-    forecastHorizon !== null ? "Final holdout observations / forecast horizon" : "Final holdout observations";
-  const developmentRange = `${development.startIndex} → ${development.endIndex}`;
-  const finalHoldoutRange = `${finalHoldout.startIndex} → ${finalHoldout.endIndex}`;
 
   return (
     <Card className="dataset-detail-visualization dataset-detail-forecasting-evaluation">
-      <h3>{EVALUATION_TITLE}</h3>
+      <h3>{FORECAST_VS_ACTUAL_TITLE}</h3>
 
-      <p className="dataset-detail-forecasting-evaluation__statement">{EVALUATION_FROZEN_COPY}</p>
-
-      <dl className="dataset-detail-forecasting-evaluation__context">
-        <div className="dataset-detail-forecasting-evaluation__context-row">
-          <dt>Development / training evidence range</dt>
-          <dd>{developmentRange}</dd>
-        </div>
-        <div className="dataset-detail-forecasting-evaluation__context-row">
-          <dt>Development observations</dt>
-          <dd>{formatCount(development.observationCount)}</dd>
-        </div>
-        <div className="dataset-detail-forecasting-evaluation__context-row">
-          <dt>Final holdout range</dt>
-          <dd>{finalHoldoutRange}</dd>
-        </div>
-        <div className="dataset-detail-forecasting-evaluation__context-row">
-          <dt>{holdoutCountLabel}</dt>
-          <dd>{formatCount(finalHoldout.observationCount)}</dd>
-        </div>
-        <div className="dataset-detail-forecasting-evaluation__context-row">
-          <dt>Frequency</dt>
-          <dd>{frequency}</dd>
-        </div>
-      </dl>
-
-      <div
-        aria-label={`Development and training evidence from ${development.startIndex} to ${development.endIndex} (${development.observationCount} observations), then the sealed final holdout from ${finalHoldout.startIndex} to ${finalHoldout.endIndex} (${finalHoldout.observationCount} observations).`}
-        className="dataset-detail-forecasting-evaluation__boundary"
-        role="img"
-      >
-        <div className="dataset-detail-forecasting-evaluation__boundary-segment dataset-detail-forecasting-evaluation__boundary-segment--development">
-          <span className="dataset-detail-forecasting-evaluation__boundary-title">Development / training evidence</span>
-          <span className="dataset-detail-forecasting-evaluation__boundary-range">{developmentRange}</span>
-          <span className="dataset-detail-forecasting-evaluation__boundary-count">
-            {formatCount(development.observationCount)} observations
-          </span>
-        </div>
-        <div className="dataset-detail-forecasting-evaluation__boundary-segment dataset-detail-forecasting-evaluation__boundary-segment--final-holdout">
-          <span className="dataset-detail-forecasting-evaluation__boundary-title">Final holdout</span>
-          <span className="dataset-detail-forecasting-evaluation__boundary-range">{finalHoldoutRange}</span>
-          <span className="dataset-detail-forecasting-evaluation__boundary-count">
-            {formatCount(finalHoldout.observationCount)} observations
-          </span>
-        </div>
-      </div>
-
-      <h4 className="dataset-detail-forecasting-evaluation__chart-title">{FORECAST_VS_ACTUAL_TITLE}</h4>
       <div
         aria-label={FORECAST_VS_ACTUAL_TITLE}
         className="dataset-detail-visualization__chart dataset-detail-forecasting-evaluation__chart-layout"
@@ -438,40 +380,6 @@ export default function ForecastingDiagnostics({ visualizations }: ForecastingDi
 
   return (
     <>
-      <Card className="dataset-detail-visualization dataset-detail-visualization--seasonal-profile">
-        <h3>Seasonal Profile</h3>
-        {seasonalProfile ? (
-          <div
-            aria-label="seasonal profile"
-            className="dataset-detail-visualization__chart forecasting-diagnostics__bar-layout"
-            data-chart-grid={CHART_GRID}
-            data-chart-primary={CHART_PRIMARY}
-            data-chart-secondary={CHART_SECONDARY}
-          >
-            <div className="forecasting-diagnostics__chart">
-              <ResponsiveContainer height="100%" width="100%">
-                <BarChart data={seasonalProfile.points} margin={{ bottom: 8 }}>
-                  <CartesianGrid stroke={CHART_GRID} strokeDasharray="3 3" vertical={false} />
-                  <XAxis dataKey="label" tick={{ fontSize: 11 }} />
-                  <YAxis width={40} />
-                  <Bar dataKey="mean_target" fill={CHART_PRIMARY} isAnimationActive={false} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-            <ul className="forecasting-diagnostics__legend">
-              {seasonalProfile.points.map((point) => (
-                <li className="forecasting-diagnostics__legend-row" key={point.label}>
-                  <span className="forecasting-diagnostics__legend-label">{point.label}</span>
-                  <span className="forecasting-diagnostics__legend-value">{formatValue(point.mean_target)}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        ) : (
-          <EmptyState message={EMPTY_MESSAGE} title="Visualization not generated" />
-        )}
-      </Card>
-
       <Card className="dataset-detail-visualization dataset-detail-visualization--backtesting-fold-metric">
         <h3>Backtesting by Origin</h3>
         {foldMetric ? (
@@ -540,6 +448,40 @@ export default function ForecastingDiagnostics({ visualizations }: ForecastingDi
                 <li className="forecasting-diagnostics__legend-row" key={point.label}>
                   <span className="forecasting-diagnostics__legend-label">{point.label}</span>
                   <span className="forecasting-diagnostics__legend-value">{formatValue(point.mae)}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : (
+          <EmptyState message={EMPTY_MESSAGE} title="Visualization not generated" />
+        )}
+      </Card>
+
+      <Card className="dataset-detail-visualization dataset-detail-visualization--seasonal-profile">
+        <h3>Seasonal Profile</h3>
+        {seasonalProfile ? (
+          <div
+            aria-label="seasonal profile"
+            className="dataset-detail-visualization__chart forecasting-diagnostics__bar-layout"
+            data-chart-grid={CHART_GRID}
+            data-chart-primary={CHART_PRIMARY}
+            data-chart-secondary={CHART_SECONDARY}
+          >
+            <div className="forecasting-diagnostics__chart">
+              <ResponsiveContainer height="100%" width="100%">
+                <BarChart data={seasonalProfile.points} margin={{ bottom: 8 }}>
+                  <CartesianGrid stroke={CHART_GRID} strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="label" tick={{ fontSize: 11 }} />
+                  <YAxis width={40} />
+                  <Bar dataKey="mean_target" fill={CHART_PRIMARY} isAnimationActive={false} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+            <ul className="forecasting-diagnostics__legend">
+              {seasonalProfile.points.map((point) => (
+                <li className="forecasting-diagnostics__legend-row" key={point.label}>
+                  <span className="forecasting-diagnostics__legend-label">{point.label}</span>
+                  <span className="forecasting-diagnostics__legend-value">{formatValue(point.mean_target)}</span>
                 </li>
               ))}
             </ul>

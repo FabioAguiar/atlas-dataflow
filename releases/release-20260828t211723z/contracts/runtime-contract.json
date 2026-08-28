@@ -1,0 +1,29 @@
+{
+  "schema_version": "2.0.0",
+  "problem_type": "univariate_forecasting",
+  "payload_shape": "history_series",
+  "history_series": {
+    "container_key": "history",
+    "time_index_field_name": "period",
+    "target_field_name": "temperature",
+    "index_value_kind": "calendar_period",
+    "frequency": "monthly",
+    "source_exogenous_predictors": "forbidden",
+    "row_field_policy": "exact_time_index_and_target",
+    "minimum_observation_count": 1,
+    "minimum_history_required_through": "1938-12",
+    "ordering": "strictly_increasing",
+    "uniqueness_required": true,
+    "frequency_contiguous_required": true,
+    "missing_time_index_allowed": false,
+    "missing_target_allowed": false,
+    "target_value_kind": "continuous_numeric"
+  },
+  "forecast": {
+    "forecast_horizon": 12,
+    "horizon_source": "execution_contract.v2",
+    "caller_overridable": false,
+    "forecast_origin_source": "last_validated_history_index",
+    "future_index_policy": "advance_by_governed_frequency"
+  }
+}

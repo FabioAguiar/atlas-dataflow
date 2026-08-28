@@ -1,0 +1,329 @@
+{
+  "artifact_kind": "training_metrics",
+  "backtesting_evaluation": {
+    "fold_count": 9,
+    "fold_summaries": [
+      {
+        "fold_index": 1,
+        "forecast_origin": "1929-12",
+        "metrics": [
+          {
+            "name": "mae",
+            "value": 1.7001388888888809
+          },
+          {
+            "name": "rmse",
+            "value": 1.8894640260019513
+          },
+          {
+            "name": "seasonal_mase",
+            "value": 0.5948007774538361
+          }
+        ],
+        "validation_observations": 12
+      },
+      {
+        "fold_index": 2,
+        "forecast_origin": "1930-12",
+        "metrics": [
+          {
+            "name": "mae",
+            "value": 1.845757575757571
+          },
+          {
+            "name": "rmse",
+            "value": 2.2075563319375693
+          },
+          {
+            "name": "seasonal_mase",
+            "value": 0.6489625229736553
+          }
+        ],
+        "validation_observations": 12
+      },
+      {
+        "fold_index": 3,
+        "forecast_origin": "1931-12",
+        "metrics": [
+          {
+            "name": "mae",
+            "value": 1.674305555555555
+          },
+          {
+            "name": "rmse",
+            "value": 2.0251181847226727
+          },
+          {
+            "name": "seasonal_mase",
+            "value": 0.5968358988207759
+          }
+        ],
+        "validation_observations": 12
+      },
+      {
+        "fold_index": 4,
+        "forecast_origin": "1932-12",
+        "metrics": [
+          {
+            "name": "mae",
+            "value": 2.861752136752546
+          },
+          {
+            "name": "rmse",
+            "value": 3.258714499338741
+          },
+          {
+            "name": "seasonal_mase",
+            "value": 1.0393248617714164
+          }
+        ],
+        "validation_observations": 12
+      },
+      {
+        "fold_index": 5,
+        "forecast_origin": "1933-12",
+        "metrics": [
+          {
+            "name": "mae",
+            "value": 1.833287545787534
+          },
+          {
+            "name": "rmse",
+            "value": 2.5360802173861483
+          },
+          {
+            "name": "seasonal_mase",
+            "value": 0.652951728636656
+          }
+        ],
+        "validation_observations": 12
+      },
+      {
+        "fold_index": 6,
+        "forecast_origin": "1934-12",
+        "metrics": [
+          {
+            "name": "mae",
+            "value": 1.9157936507937787
+          },
+          {
+            "name": "rmse",
+            "value": 2.3049554064120965
+          },
+          {
+            "name": "seasonal_mase",
+            "value": 0.6872802334686203
+          }
+        ],
+        "validation_observations": 12
+      },
+      {
+        "fold_index": 7,
+        "forecast_origin": "1935-12",
+        "metrics": [
+          {
+            "name": "mae",
+            "value": 1.6176215277777335
+          },
+          {
+            "name": "rmse",
+            "value": 2.1237201900782523
+          },
+          {
+            "name": "seasonal_mase",
+            "value": 0.5797926622859261
+          }
+        ],
+        "validation_observations": 12
+      },
+      {
+        "fold_index": 8,
+        "forecast_origin": "1936-12",
+        "metrics": [
+          {
+            "name": "mae",
+            "value": 1.3961090686274769
+          },
+          {
+            "name": "rmse",
+            "value": 1.7737963975045732
+          },
+          {
+            "name": "seasonal_mase",
+            "value": 0.4981470752211031
+          }
+        ],
+        "validation_observations": 12
+      },
+      {
+        "fold_index": 9,
+        "forecast_origin": "1937-12",
+        "metrics": [
+          {
+            "name": "mae",
+            "value": 1.7101715686274848
+          },
+          {
+            "name": "rmse",
+            "value": 2.4311046856842666
+          },
+          {
+            "name": "seasonal_mase",
+            "value": 0.6145411308789975
+          }
+        ],
+        "validation_observations": 12
+      }
+    ],
+    "forecast_count": 108,
+    "horizon_mae": [
+      {
+        "horizon_step": 1,
+        "mae": 1.9757356162808561,
+        "observation_count": 9
+      },
+      {
+        "horizon_step": 2,
+        "mae": 1.7081263591620166,
+        "observation_count": 9
+      },
+      {
+        "horizon_step": 3,
+        "mae": 2.4720814332274106,
+        "observation_count": 9
+      },
+      {
+        "horizon_step": 4,
+        "mae": 1.1905308682331435,
+        "observation_count": 9
+      },
+      {
+        "horizon_step": 5,
+        "mae": 1.2698342727080372,
+        "observation_count": 9
+      },
+      {
+        "horizon_step": 6,
+        "mae": 1.5046320461947273,
+        "observation_count": 9
+      },
+      {
+        "horizon_step": 7,
+        "mae": 2.2895618327297678,
+        "observation_count": 9
+      },
+      {
+        "horizon_step": 8,
+        "mae": 2.0756025490034173,
+        "observation_count": 9
+      },
+      {
+        "horizon_step": 9,
+        "mae": 1.559160614032076,
+        "observation_count": 9
+      },
+      {
+        "horizon_step": 10,
+        "mae": 1.4048791733412083,
+        "observation_count": 9
+      },
+      {
+        "horizon_step": 11,
+        "mae": 2.0549292567001762,
+        "observation_count": 9
+      },
+      {
+        "horizon_step": 12,
+        "mae": 2.5681760031452447,
+        "observation_count": 9
+      }
+    ],
+    "pooled_metrics": [
+      {
+        "name": "mae",
+        "value": 1.8394375020631732
+      },
+      {
+        "name": "rmse",
+        "value": 2.3208005445295066
+      },
+      {
+        "name": "seasonal_mase",
+        "value": 0.6569596546123319
+      }
+    ]
+  },
+  "created_at": "2026-08-28T21:17:23.700529Z",
+  "evaluation_policy": {
+    "primary_metric": {
+      "direction": "lower_is_better",
+      "metric_id": "mae"
+    },
+    "secondary_metrics": [
+      {
+        "direction": "lower_is_better",
+        "metric_id": "rmse"
+      },
+      {
+        "direction": "lower_is_better",
+        "metric_id": "seasonal_mase",
+        "seasonal_period": 12
+      }
+    ]
+  },
+  "evidence_policy": {
+    "model_bytes_embedded": false,
+    "notebook_state_embedded": false,
+    "raw_api_payloads_prohibited": true,
+    "raw_dataset_embedded": false,
+    "raw_logs_prohibited": true,
+    "raw_runtime_prohibited": true,
+    "reduced_and_sanitized": true,
+    "secrets_prohibited": true
+  },
+  "final_holdout_evaluation": {
+    "evaluation_count": 1,
+    "metrics": [
+      {
+        "name": "mae",
+        "value": 1.5265838206627549
+      },
+      {
+        "name": "rmse",
+        "value": 1.8599669114528057
+      },
+      {
+        "name": "seasonal_mase",
+        "value": 0.555495460348981
+      }
+    ],
+    "model_frozen_before_open": true,
+    "observation_count": 12,
+    "used_for_adjustment": false,
+    "used_for_model_selection": false,
+    "used_for_retuning": false
+  },
+  "forecasting_evidence": {
+    "forecast_horizon": 12,
+    "problem_type": "univariate_forecasting",
+    "result_semantics_schema_version": "univariate-forecasting-result-semantics.v1"
+  },
+  "hashes": {
+    "algorithm": "sha256",
+    "execution_contract_sha256": "ad8eff4e14fbdce6b40090c7a548a5934f72007a1f4eb20fd47af3e8d2794544",
+    "preparation_recipe_sha256": "e3059592a5aed5fac614f142e911e41d2f0516d6d92d2a190f7ac7fd7e660ef1"
+  },
+  "path_references": {
+    "dataset_path": "pipeline/prepared/nottem/prepared-data.csv",
+    "execution_contract_path": "contracts/nottem/execution-contract.json",
+    "metrics_path": "pipeline/training-runs/nottem/train-20260828T211723Z/metrics.json",
+    "preparation_recipe_path": "pipeline/authoring/nottem/preparation-recipe.json",
+    "training_parameter_record_path": "pipeline/training-runs/nottem/train-20260828T211723Z/training-parameter-record.json"
+  },
+  "schema_version": "training-metrics.v4",
+  "training_run_identity": {
+    "dataset_slug": "nottem",
+    "output_directory": "pipeline/training-runs/nottem/train-20260828T211723Z/",
+    "run_id": "train-20260828T211723Z"
+  }
+}

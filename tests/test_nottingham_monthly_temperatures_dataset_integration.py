@@ -637,20 +637,25 @@ def test_notebook_asserts_frozen_forecasting_training_result_identity():
 def test_notebook_validates_native_forecasting_evidence_versions():
     code = _source("code")
     assert 'assert training_metrics["schema_version"] == "training-metrics.v4"' in code
-    # Project Spec S0270: training metrics/parameter record identities stay v4;
-    # the analytical-visualizations producer identity advances to v6.
-    assert 'assert analytical_visualizations["schema_version"] == "analytical-visualizations.v6"' in code
+    # Project Spec S0270/S0274: training metrics/parameter record identities
+    # stay v4; the analytical-visualizations producer identity advanced to v7
+    # (S0274 multi-metric backtesting/horizon diagnostic evolution of v6). The
+    # notebook must validate the current producer, not a stale v6 expectation.
+    assert 'assert analytical_visualizations["schema_version"] == "analytical-visualizations.v7"' in code
+    assert 'assert analytical_visualizations["schema_version"] == "analytical-visualizations.v6"' not in code
     assert '"analytical-visualizations.v4"' not in code
     assert 'assert training_metrics["forecasting_evidence"]["problem_type"] == "univariate_forecasting"' in code
     assert 'assert training_metrics["final_holdout_evaluation"]["model_frozen_before_open"] is True' in code
     assert 'assert training_metrics["final_holdout_evaluation"]["used_for_model_selection"] is False' in code
 
 
-def test_notebook_asserts_v6_bounded_final_holdout_forecast_evaluation():
-    # Project Spec S0270: the notebook expects the governed v6 bounded
-    # final-holdout evaluation on the next governed training run, asserting the
-    # point count, the known governed holdout boundary labels, and finite
-    # actual/forecast values -- never hand-authoring the forecast outputs.
+def test_notebook_asserts_v7_preserves_bounded_final_holdout_forecast_evaluation():
+    # Project Spec S0270/S0274: S0270 introduced the bounded final-holdout
+    # forecast evaluation on analytical-visualizations.v6; S0274's
+    # analytical-visualizations.v7 preserves that block unchanged. The notebook
+    # must still assert the point count, the known governed holdout boundary
+    # labels, and finite actual/forecast values -- never hand-authoring the
+    # forecast outputs -- against the current v7 producer.
     code = _source("code")
     assert 'final_holdout_forecast_evaluation = analytical_visualizations["final_holdout_forecast_evaluation"]' in code
     assert 'assert final_holdout_forecast_evaluation["partition_role"] == "final_holdout"' in code
@@ -664,6 +669,74 @@ def test_notebook_asserts_v6_bounded_final_holdout_forecast_evaluation():
     forecast_evaluation_start = code.index("final_holdout_forecast_evaluation = analytical_visualizations")
     forecast_evaluation_block = code[forecast_evaluation_start:forecast_evaluation_start + 2000]
     assert '"forecast":' not in forecast_evaluation_block
+
+
+def test_notebook_validates_s0274_forecasting_metric_diagnostics():
+    """Project Spec S0274: the notebook must additionally validate the new
+    bounded ``forecasting_metric_diagnostics`` block carried by
+    analytical-visualizations.v7 -- deriving the expected metric-id set from the
+    already-materialized ``execution_contract.evaluation_policy`` (never a
+    hardcoded Nottingham metric list), asserting FOLD_COUNT coverage for the
+    per-origin backtesting series and 1..FORECAST_HORIZON coverage for the
+    per-horizon series, and proving the two governed legacy compatibility
+    bridges (primary metric <-> backtesting_fold_metric, mae <-> horizon_mae).
+    The notebook only validates the governed artifact -- it never recomputes a
+    metric and never reads a highlighted-score/performance-focus selection
+    here."""
+    code = _source("code")
+    # Expected metric ids derived from the governed evaluation policy, not
+    # authored as a nottem-specific literal.
+    assert (
+        'execution_contract["evaluation_policy"]["primary_metric"]["metric_id"]' in code
+    )
+    assert 'execution_contract["evaluation_policy"]["secondary_metrics"]' in code
+    assert (
+        'forecasting_metric_diagnostics = analytical_visualizations["forecasting_metric_diagnostics"]["metrics"]'
+        in code
+    )
+    assert 'assert produced_diagnostic_metric_ids == expected_diagnostic_metric_ids' in code
+    assert (
+        'assert len(set(produced_diagnostic_metric_ids)) == len(produced_diagnostic_metric_ids)'
+        in code
+    )
+    # Per-diagnostic bounded structural coverage.
+    assert 'assert metric_diagnostic["direction"] == "lower_is_better"' in code
+    assert 'assert diagnostic_by_origin["fold_count"] == FOLD_COUNT' in code
+    assert 'assert len(diagnostic_origin_points) == FOLD_COUNT' in code
+    assert (
+        'assert [point["fold_index"] for point in diagnostic_origin_points] == list(range(1, FOLD_COUNT + 1))'
+        in code
+    )
+    assert "range(1, FORECAST_HORIZON + 1)" in code
+    assert 'metric_diagnostic["by_horizon"]["points"]' in code
+    assert 'math.isfinite(point["value"]) for point in diagnostic_horizon_points' in code
+    # Governed legacy compatibility bridge 1: primary metric <-> backtesting_fold_metric.
+    assert 'legacy_backtesting_fold_metric = analytical_visualizations["backtesting_fold_metric"]' in code
+    assert 'assert legacy_backtesting_fold_metric["metric_id"] == primary_evaluation_metric_id' in code
+    assert (
+        'assert primary_metric_diagnostic["backtesting_by_origin"]["points"] == legacy_backtesting_fold_metric["points"]'
+        in code
+    )
+    # Governed legacy compatibility bridge 2: mae diagnostic <-> horizon_mae.
+    assert 'legacy_horizon_mae_points = analytical_visualizations["horizon_mae"]["points"]' in code
+    assert 'assert mae_diagnostic_point["value"] == legacy_horizon_mae_point["mae"]' in code
+    assert (
+        'assert mae_diagnostic_point["observation_count"] == legacy_horizon_mae_point["observation_count"]'
+        in code
+    )
+    # The notebook must not re-derive metric formulas or read a highlighted
+    # score / performance focus in this validation.
+    metric_diagnostics_start = code.index("forecasting_metric_diagnostics = analytical_visualizations")
+    metric_diagnostics_source = code[metric_diagnostics_start:]
+    for forbidden in (
+        "highlighted_score_id",
+        "performance_focus",
+        "mean(",
+        "np.mean",
+        "abs(actual",
+        "** 0.5",
+    ):
+        assert forbidden not in metric_diagnostics_source
 
 
 def test_notebook_checks_scientific_continuity_without_hardcoding_into_evidence():

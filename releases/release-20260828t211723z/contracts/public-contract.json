@@ -1,0 +1,51 @@
+{
+  "schema_version": "2.0.0",
+  "problem_type": "univariate_forecasting",
+  "input_kind": "history_series",
+  "history_series": {
+    "time_index_field": {
+      "name": "period",
+      "label": "Period",
+      "value_kind": "calendar_period",
+      "display_order": 1
+    },
+    "target_field": {
+      "name": "temperature",
+      "label": "Temperature",
+      "value_kind": "number",
+      "display_order": 2
+    },
+    "frequency": "monthly",
+    "input_guidance": {
+      "minimum_observation_count": 1,
+      "required_anchor": {
+        "display_value": "1938-12"
+      },
+      "continuity": "consecutive_by_frequency"
+    },
+    "temporal_interaction": {
+      "control_kind": "month",
+      "required_anchor": {
+        "value": "1938-12",
+        "inclusion": "required"
+      },
+      "sequence": {
+        "step_kind": "calendar_month",
+        "continuity": "required"
+      }
+    }
+  },
+  "forecast": {
+    "forecast_horizon": 12,
+    "horizon_user_editable": false,
+    "origin_behavior": "starts_after_last_history_observation"
+  },
+  "predictive_interaction": {
+    "history_target_values": {
+      "affect_forecast": false
+    },
+    "public_prediction": {
+      "applicability": "not_applicable"
+    }
+  }
+}

@@ -60,7 +60,7 @@
     },
     {
       "dataset_slug": "nottem",
-      "active_release": "release-20260828t102855z",
+      "active_release": "release-20260828t211723z",
       "public_metadata": {
         "title": "Nottingham Monthly Temperatures",
         "summary": "Forecast Nottingham Castle monthly average air temperature twelve months ahead using Atlas's native univariate forecasting capability.",
@@ -69,7 +69,7 @@
         "tags": []
       },
       "review_status": "ready",
-      "dataset_detail_updated_at": "2026-08-27T10:39:40Z"
+      "dataset_detail_updated_at": "2026-08-27T21:18:25Z"
     }
   ]
 }

@@ -1,0 +1,115 @@
+{
+  "schema_version": "release-manifest.v1",
+  "manifest_kind": "release_manifest",
+  "dataset_identity": {
+    "dataset_slug": "nottem",
+    "dataset_title": "Nottingham Monthly Temperatures"
+  },
+  "release_identity": {
+    "release_id": "release-20260828t211723z",
+    "release_version": "1.0.0-rc.1",
+    "created_at": "2026-08-28T21:17:23Z"
+  },
+  "artifacts": [
+    {
+      "role": "contracts",
+      "reference": "contracts/runtime-contract.json",
+      "hash_algorithm": "sha256",
+      "hash_value": "01ade30408ab19b4f87bfe369c74a1df9948ff06e2124d544e36f52e05379b34"
+    },
+    {
+      "role": "public_contract",
+      "reference": "contracts/public-contract.json",
+      "hash_algorithm": "sha256",
+      "hash_value": "214720dacf1c0258f27dbf254921931ee49597721ca30c822a8e22d94cae620d"
+    },
+    {
+      "role": "predictive_bundle",
+      "reference": "predictions/bundle.json",
+      "hash_algorithm": "sha256",
+      "hash_value": "dd20fbf51e161821b70450f2fc7e2df14977632cdae4053730e363b22779d5de"
+    },
+    {
+      "role": "model_artifact",
+      "reference": "models/model.pkl",
+      "hash_algorithm": "sha256",
+      "hash_value": "cec68ba3991dd74b2ee54bfcd062ccc093b5c3d70a5ef159fb8d62c9ee95ce5d"
+    },
+    {
+      "role": "metrics",
+      "reference": "metrics/metrics.json",
+      "hash_algorithm": "sha256",
+      "hash_value": "43fc611f34bc2b0cf7b1936ab8500007d6a4aa1d6a80c4dbc20aa19249ff7731"
+    },
+    {
+      "role": "model_card",
+      "reference": "model-card.json",
+      "hash_algorithm": "sha256",
+      "hash_value": "a2777c23604f7f26dd76346ab5d39abf0225e89665575f53e13e292c2da61fd1"
+    },
+    {
+      "role": "public_context",
+      "reference": "public-context.json",
+      "hash_algorithm": "sha256",
+      "hash_value": "f9c3a15c4a110fbbc9557c349a1a7ddb1cf0b598bde97ce8240f42a8139c103c"
+    },
+    {
+      "role": "visualizations",
+      "reference": "visualizations/visualizations.json",
+      "hash_algorithm": "sha256",
+      "hash_value": "855c0d80f824a76514c709d168aff106122db96ac221b6ac355a164d0fd7f8a2"
+    },
+    {
+      "role": "manifest_input",
+      "reference": "manifest-input.json",
+      "hash_algorithm": "sha256",
+      "hash_value": "b8bda3d1df46e7ba69ab74583c879328a269755fe289708f5fb0c79701e265d2"
+    },
+    {
+      "role": "candidate_metadata",
+      "reference": "release-candidate.json",
+      "hash_algorithm": "sha256",
+      "hash_value": "3f03a3264711bc6f5f0a50998be7499fd3beed43560fbdf653a36ee821ed6a21"
+    }
+  ],
+  "required_hash_coverage": {
+    "hash_algorithm": "sha256",
+    "required_artifact_roles": [
+      "contracts",
+      "public_contract",
+      "predictive_bundle",
+      "model_artifact",
+      "metrics",
+      "model_card",
+      "public_context",
+      "visualizations",
+      "manifest_input",
+      "candidate_metadata"
+    ],
+    "missing_required_hashes_reject_manifest": true
+  },
+  "validation_policy": {
+    "missing_schema_version_rejects": true,
+    "missing_required_hash_rejects": true,
+    "dataset_identity_mismatch_rejects": true,
+    "release_identity_mismatch_rejects": true,
+    "unsafe_reference_rejects": true
+  },
+  "safety_boundaries": {
+    "raw_artifact_contents_embedded": false,
+    "raw_logs_persisted": false,
+    "raw_runtime_persisted": false,
+    "raw_api_payloads_persisted": false,
+    "secrets_persisted": false,
+    "sensitive_local_paths_persisted": false,
+    "unstable_temporary_paths_persisted": false,
+    "hash_calculation_implemented": false,
+    "signing_or_key_management_implemented": false,
+    "storage_migration_implemented": false,
+    "runtime_loading_implemented": false,
+    "public_endpoint_exposed": false,
+    "release_promoted": false,
+    "registry_updated": false,
+    "github_publication_performed": false
+  }
+}

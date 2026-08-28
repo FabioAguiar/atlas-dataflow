@@ -4551,6 +4551,271 @@ describe("DatasetAdminPage", () => {
     });
   });
 
+  // Project Spec S0275: Dataset Detail Live Preview resolves
+  // projectPerformanceFocusPreview(form.performance_focus) once and reuses the
+  // same projected object for both PerformanceSummary emphasis and the shared
+  // ForecastingDiagnostics highlighted-score selection, so changing Highlighted
+  // in the draft moves both from the same projection -- with no evidence
+  // regeneration, no private inference, and no reading of a raw draft field
+  // once the projection is null/invalid.
+  describe("Dataset Detail Live Preview forecasting highlighted-score diagnostic selection (Project Spec S0275)", () => {
+    const forecastingResultContract = {
+      status: "available",
+      semantics: {
+        schema_version: "univariate-forecasting-result-semantics.v1",
+        problem_type: "univariate_forecasting",
+        result_schema_version: "univariate-forecasting-result.v1",
+        primary_output: "forecast_series",
+        output_structure: "ordered_forecast_points",
+        forecast_value_kind: "continuous_numeric",
+        forecast_count_source: "forecast_horizon",
+        model_descriptor: { model_family: "deterministic_seasonal_trend_ols", display_name: "Seasonal Trend Model" },
+      },
+    };
+
+    const maeMetricDiagnostic = {
+      metric_id: "mae",
+      direction: "lower_is_better",
+      backtesting_by_origin: {
+        points: [
+          { fold_index: 0, forecast_origin: "O-1", value: 1.11 },
+          { fold_index: 1, forecast_origin: "O-2", value: 1.22 },
+        ],
+      },
+      by_horizon: {
+        points: [
+          { horizon_step: 1, value: 1.01, observation_count: 3 },
+          { horizon_step: 2, value: 1.02, observation_count: 3 },
+        ],
+      },
+    };
+    const rmseMetricDiagnostic = {
+      metric_id: "rmse",
+      direction: "lower_is_better",
+      backtesting_by_origin: {
+        points: [
+          { fold_index: 0, forecast_origin: "O-1", value: 2.71 },
+          { fold_index: 1, forecast_origin: "O-2", value: 2.82 },
+        ],
+      },
+      by_horizon: {
+        points: [
+          { horizon_step: 1, value: 2.01, observation_count: 3 },
+          { horizon_step: 2, value: 2.02, observation_count: 3 },
+        ],
+      },
+    };
+    const seasonalMaseMetricDiagnostic = {
+      metric_id: "seasonal_mase",
+      direction: "lower_is_better",
+      backtesting_by_origin: {
+        points: [
+          { fold_index: 0, forecast_origin: "O-1", value: 0.51 },
+          { fold_index: 1, forecast_origin: "O-2", value: 0.62 },
+        ],
+      },
+      by_horizon: {
+        points: [
+          { horizon_step: 1, value: 0.31, observation_count: 3 },
+          { horizon_step: 2, value: 0.32, observation_count: 3 },
+        ],
+      },
+    };
+
+    const legacyForecastingDiagnostics = {
+      forecast_horizon: 2,
+      frequency: "synthetic-step",
+      seasonal_profile: {
+        seasonal_period: 2,
+        points: [
+          { season_position: 0, mean_target: 5.0, observation_count: 4 },
+          { season_position: 1, mean_target: 7.0, observation_count: 4 },
+        ],
+      },
+      backtesting_fold_metric: {
+        metric_id: "mae",
+        direction: "lower_is_better",
+        points: [
+          { fold_index: 1, forecast_origin: "L-1", value: 8.11 },
+          { fold_index: 2, forecast_origin: "L-2", value: 8.22 },
+        ],
+      },
+      horizon_mae: {
+        points: [
+          { horizon_step: 1, mae: 9.01 },
+          { horizon_step: 2, mae: 9.02 },
+        ],
+      },
+    };
+
+    function v7Visualizations(metrics: Array<Record<string, unknown>>) {
+      return {
+        charts: [],
+        dataset_statistics: { instance_count: 24 },
+        forecasting_diagnostics: { ...legacyForecastingDiagnostics, metric_diagnostics: { metrics } },
+      };
+    }
+
+    const v6Visualizations = {
+      charts: [],
+      dataset_statistics: { instance_count: 24 },
+      forecasting_diagnostics: legacyForecastingDiagnostics,
+    };
+
+    function backtestingCard() {
+      return document.querySelector<HTMLElement>(".dataset-detail-visualization--backtesting-fold-metric")!;
+    }
+    function horizonCard() {
+      return document.querySelector<HTMLElement>(".dataset-detail-visualization--horizon-mae")!;
+    }
+    async function setHighlightedScore(value: string) {
+      fireEvent.click(screen.getByRole("tab", { name: "Metadata & Card" }));
+      await waitFor(() =>
+        expect(screen.getByLabelText("Performance focus")).toHaveValue("forecasting_performance"),
+      );
+      fireEvent.change(screen.getByLabelText("Highlighted score"), { target: { value } });
+      fireEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
+    }
+
+    it("drives PerformanceSummary emphasis and both diagnostic cards from the same projected RMSE highlight", async () => {
+      installFetchMock({
+        resultContractOverride: forecastingResultContract,
+        visualizationsOverride: v7Visualizations([
+          maeMetricDiagnostic,
+          rmseMetricDiagnostic,
+          seasonalMaseMetricDiagnostic,
+        ]),
+      });
+      const { container } = renderAdminPage();
+      await loadDraftOnly();
+
+      await setHighlightedScore("rmse");
+
+      expect(await screen.findByRole("heading", { name: "Backtesting by Origin — RMSE" })).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "Horizon RMSE" })).toBeInTheDocument();
+      expect(backtestingCard().textContent).toContain("RMSE: 2.71");
+      expect(horizonCard().textContent).toContain("2.01");
+      // The legacy MAE series and legacy horizon_mae values never leak in.
+      expect(backtestingCard().textContent).not.toContain("MAE: 1.11");
+      expect(horizonCard().textContent).not.toContain("9.01");
+
+      // PerformanceSummary emphasises RMSE through its existing behavior, from
+      // the same projected focus.
+      const performanceSummary = container.querySelector<HTMLElement>(".performance-summary")!;
+      expect(
+        within(performanceSummary).getByText("RMSE").closest(".performance-summary__score"),
+      ).toHaveTextContent("Highlighted");
+    });
+
+    it("switches both diagnostic cards to Seasonal MASE when Highlighted changes, with no evidence/network regeneration", async () => {
+      const fetchMock = installFetchMock({
+        resultContractOverride: forecastingResultContract,
+        visualizationsOverride: v7Visualizations([
+          maeMetricDiagnostic,
+          rmseMetricDiagnostic,
+          seasonalMaseMetricDiagnostic,
+        ]),
+      });
+      renderAdminPage();
+      await loadDraftOnly();
+
+      await setHighlightedScore("rmse");
+      await screen.findByRole("heading", { name: "Backtesting by Origin — RMSE" });
+
+      await setHighlightedScore("seasonal_mase");
+      expect(
+        await screen.findByRole("heading", { name: "Backtesting by Origin — Seasonal MASE" }),
+      ).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "Horizon Seasonal MASE" })).toBeInTheDocument();
+      expect(backtestingCard().textContent).toContain("Seasonal MASE: 0.51");
+      expect(horizonCard().textContent).toContain("0.31");
+      expect(screen.queryByRole("heading", { name: "Backtesting by Origin — RMSE" })).not.toBeInTheDocument();
+
+      // Selection is pure presentation: one authoring-context load, no
+      // private inference execution.
+      const authoringContextCalls = fetchMock.mock.calls.filter((call) =>
+        String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/authoring-context`),
+      );
+      expect(authoringContextCalls.length).toBe(1);
+      expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/inference"))).toBe(false);
+    });
+
+    it("does not trust a raw draft highlighted score once the projected performance focus is invalid", async () => {
+      // v7 evidence carries RMSE + Seasonal MASE only; the governed fallback
+      // identity (backtesting_fold_metric.metric_id) is MAE.
+      installFetchMock({
+        resultContractOverride: forecastingResultContract,
+        visualizationsOverride: v7Visualizations([rmseMetricDiagnostic, seasonalMaseMetricDiagnostic]),
+      });
+      const { container } = renderAdminPage();
+      await loadDraftOnly();
+
+      // Remove every visible score so projectPerformanceFocusPreview returns
+      // null -- the diagnostics must then rely only on the governed fallback
+      // identity, never a raw draft field.
+      fireEvent.click(screen.getByRole("tab", { name: "Metadata & Card" }));
+      await waitFor(() =>
+        expect(screen.getByLabelText("Performance focus")).toHaveValue("forecasting_performance"),
+      );
+      fireEvent.change(screen.getByLabelText("Highlighted score"), { target: { value: "seasonal_mase" } });
+      fireEvent.click(screen.getByLabelText("Show MAE"));
+      fireEvent.click(screen.getByLabelText("Show RMSE"));
+      fireEvent.click(screen.getByLabelText("Show Seasonal MASE"));
+      fireEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
+
+      await screen.findByRole("heading", { name: "Seasonal Profile" });
+      // The fallback identity (MAE) has no coherent v7 entry, so both cards
+      // fail closed -- and RMSE / Seasonal MASE (still-present v7 entries that
+      // a raw-draft-trusting implementation might have surfaced) are not
+      // substituted.
+      expect(screen.queryByRole("heading", { name: "Backtesting by Origin — Seasonal MASE" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: "Backtesting by Origin — RMSE" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: "Horizon Seasonal MASE" })).not.toBeInTheDocument();
+      expect(
+        container.querySelector(".dataset-detail-visualization--backtesting-fold-metric .forecasting-diagnostics__chart"),
+      ).not.toBeInTheDocument();
+      expect(within(backtestingCard()).getByText("Visualization not generated")).toBeInTheDocument();
+    });
+
+    it("keeps the legacy Horizon MAE / Backtesting by Origin rendering for a v6 authoring context even when Highlighted is RMSE", async () => {
+      installFetchMock({
+        resultContractOverride: forecastingResultContract,
+        visualizationsOverride: v6Visualizations,
+      });
+      renderAdminPage();
+      await loadDraftOnly();
+
+      await setHighlightedScore("rmse");
+
+      expect(await screen.findByRole("heading", { name: "Backtesting by Origin" })).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "Horizon MAE" })).toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: "Horizon RMSE" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: "Backtesting by Origin — RMSE" })).not.toBeInTheDocument();
+      expect(backtestingCard().textContent).toContain("mae: 8.11");
+      expect(horizonCard().textContent).toContain("9.01");
+    });
+
+    it("leaves Seasonal Profile independent of the highlighted score", async () => {
+      installFetchMock({
+        resultContractOverride: forecastingResultContract,
+        visualizationsOverride: v7Visualizations([
+          maeMetricDiagnostic,
+          rmseMetricDiagnostic,
+          seasonalMaseMetricDiagnostic,
+        ]),
+      });
+      renderAdminPage();
+      await loadDraftOnly();
+
+      await setHighlightedScore("rmse");
+      const seasonalCard = document.querySelector<HTMLElement>(".dataset-detail-visualization--seasonal-profile")!;
+      await within(seasonalCard).findByRole("heading", { name: "Seasonal Profile" });
+      expect(within(seasonalCard).getByText("Position 0")).toBeInTheDocument();
+      expect(within(seasonalCard).getByText("Position 1")).toBeInTheDocument();
+      expect(seasonalCard.textContent).not.toContain("RMSE");
+    });
+  });
+
   // Project Spec S0272: Dataset Detail Live Preview reuses the exact same
   // shared ForecastingEvaluationOverview renderer and shared-surface slot the
   // public route uses, fed only by the already-loaded authoring-context

@@ -1,14 +1,58 @@
 import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, XAxis, YAxis } from "recharts";
 import { Card, EmptyState } from "../ui";
+import { getPerformanceMetricMetadata } from "../../lib/performanceMetricMetadata";
 import type { VisualizationsPayload } from "./TargetDistribution";
 
 type ForecastingDiagnosticsProps = {
   visualizations: VisualizationsPayload | null;
+  /**
+   * Project Spec S0275: the already-projected, already-validated forecasting
+   * highlighted score id. Presentation-selection input only -- the caller
+   * (public DatasetPage / Admin Live Preview) is responsible for supplying it
+   * only for a valid `forecasting_performance` focus whose highlighted id is
+   * one of the published/projected visible scores. This component never reads
+   * a raw profile field, score value, dataset slug, or model name, and never
+   * computes a metric.
+   */
+  highlightedScoreId?: string | null;
 };
 
 type RawSeasonalPoint = { season_position?: number; mean_target?: number; observation_count?: number };
 type RawFoldPoint = { fold_index?: number; forecast_origin?: string; value?: number };
 type RawHorizonPoint = { horizon_step?: number; mae?: number };
+
+// Project Spec S0274 diagnostic vocabulary: the closed set of governed
+// forecasting metric ids an S0274 metric_diagnostics entry may carry. Kept in
+// sync with api/public_visualizations_loader.py::_FORECASTING_SUPPORTED_METRIC_IDS
+// and pipeline/analytical-visualizations.schema.json's forecasting metric enum.
+const FORECASTING_DIAGNOSTIC_METRIC_IDS: ReadonlySet<string> = new Set(["mae", "rmse", "seasonal_mase"]);
+
+type RawMetricDiagnosticEntry = {
+  metric_id?: string;
+  direction?: string;
+  backtesting_by_origin?: {
+    points?: Array<{ fold_index?: number; forecast_origin?: string; value?: number }>;
+  };
+  by_horizon?: {
+    points?: Array<{ horizon_step?: number; value?: number; observation_count?: number }>;
+  };
+};
+
+type ValidSelectedMetric = {
+  metricId: string;
+  label: string;
+  byOrigin: Array<{ label: string; value: number }>;
+  byHorizon: Array<{ label: string; value: number }>;
+};
+
+type MetricSelection =
+  // No S0274 metric_diagnostics block -> historical v4/v6 legacy rendering.
+  | { kind: "legacy" }
+  // Exactly one governed, coherent v7 metric entry drives both cards.
+  | { kind: "selected"; metric: ValidSelectedMetric }
+  // v7 metric_diagnostics present but the selected metric could not be
+  // resolved coherently -> fail closed, never substitute another metric.
+  | { kind: "unavailable" };
 
 type ValidSeasonalProfile = {
   points: Array<{ label: string; mean_target: number }>;
@@ -106,6 +150,141 @@ function getValidHorizonMae(points: RawHorizonPoint[] | undefined): ValidHorizon
     validated.push({ label: `h+${step}`, mae });
   }
   return { points: validated };
+}
+
+// ---------------------------------------------------------------------------
+// Project Spec S0275: highlighted-score-driven selection of one governed
+// S0274 metric-diagnostic entry. This block adds no metric formula -- it only
+// validates the shape of an already-projected v7 entry and picks the single
+// coherent match for the caller's highlighted score. A legacy MAE series is
+// never relabeled, and an explicit highlighted metric absent from the v7
+// evidence fails closed rather than silently falling back to another metric.
+// ---------------------------------------------------------------------------
+
+/**
+ * Whether a score id names a forecasting-compatible, lower-is-better metric
+ * that the S0274 diagnostic vocabulary represents. The shared performance
+ * metric metadata module stays the single label/direction authority -- this
+ * component never declares a local forecasting metric map.
+ */
+function isForecastingDiagnosticMetricId(scoreId: string): boolean {
+  if (!FORECASTING_DIAGNOSTIC_METRIC_IDS.has(scoreId)) {
+    return false;
+  }
+  return getPerformanceMetricMetadata(scoreId)?.optimization.kind === "lower_is_better";
+}
+
+/**
+ * Bounded validation of one projected S0274 metric-diagnostic entry. Returns
+ * null (so the caller fails closed) on any missing/malformed leaf -- a
+ * malformed selected entry is never handed to Recharts, and no fold or
+ * horizon value is recomputed. Point order is preserved as projected by the
+ * API (already fold/step ordered); it is not re-sorted here.
+ */
+function getValidSelectedMetric(entry: RawMetricDiagnosticEntry | undefined): ValidSelectedMetric | null {
+  if (!entry || typeof entry !== "object") {
+    return null;
+  }
+  const metricId = entry.metric_id;
+  if (typeof metricId !== "string" || !isForecastingDiagnosticMetricId(metricId)) {
+    return null;
+  }
+  if (entry.direction !== "lower_is_better") {
+    return null;
+  }
+  const label = getPerformanceMetricMetadata(metricId)?.display_label;
+  if (!label) {
+    return null;
+  }
+
+  const originPoints = entry.backtesting_by_origin?.points;
+  if (!Array.isArray(originPoints) || originPoints.length === 0) {
+    return null;
+  }
+  const byOrigin: Array<{ label: string; value: number }> = [];
+  const seenFolds = new Set<number>();
+  for (const point of originPoints) {
+    if (!point || typeof point !== "object") {
+      return null;
+    }
+    const { fold_index: fold, forecast_origin: origin, value } = point;
+    if (typeof fold !== "number" || !Number.isInteger(fold) || fold < 0 || seenFolds.has(fold)) {
+      return null;
+    }
+    seenFolds.add(fold);
+    if (typeof origin !== "string" || !origin) {
+      return null;
+    }
+    if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+      return null;
+    }
+    byOrigin.push({ label: origin, value });
+  }
+
+  const horizonPoints = entry.by_horizon?.points;
+  if (!Array.isArray(horizonPoints) || horizonPoints.length === 0) {
+    return null;
+  }
+  const byHorizon: Array<{ label: string; value: number }> = [];
+  const seenSteps = new Set<number>();
+  for (const point of horizonPoints) {
+    if (!point || typeof point !== "object") {
+      return null;
+    }
+    const { horizon_step: step, value, observation_count: observationCount } = point;
+    if (typeof step !== "number" || !Number.isInteger(step) || step < 1 || seenSteps.has(step)) {
+      return null;
+    }
+    seenSteps.add(step);
+    if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+      return null;
+    }
+    if (typeof observationCount !== "number" || !Number.isInteger(observationCount) || observationCount < 1) {
+      return null;
+    }
+    byHorizon.push({ label: `h+${step}`, value });
+  }
+
+  return { metricId, label, byOrigin, byHorizon };
+}
+
+/**
+ * Resolves which metric drives Backtesting by Origin + Horizon:
+ *   - no metric_diagnostics block            -> legacy v4/v6 rendering
+ *   - valid explicit highlighted id + match  -> that metric (both cards)
+ *   - valid explicit highlighted id, no match/malformed -> unavailable (fail
+ *     closed; never substitute legacy MAE or the primary metric)
+ *   - no valid explicit highlighted id       -> deterministic governed
+ *     fallback to backtesting_fold_metric.metric_id, requiring a coherent
+ *     matching v7 entry; otherwise unavailable
+ */
+function resolveMetricSelection(
+  diagnostics: NonNullable<VisualizationsPayload["forecasting_diagnostics"]> | null,
+  highlightedScoreId: string | null | undefined,
+): MetricSelection {
+  const metricDiagnostics = diagnostics?.metric_diagnostics;
+  if (metricDiagnostics === undefined || metricDiagnostics === null) {
+    return { kind: "legacy" };
+  }
+  const metrics = metricDiagnostics.metrics;
+  if (!Array.isArray(metrics) || metrics.length === 0) {
+    return { kind: "unavailable" };
+  }
+
+  const explicitId = typeof highlightedScoreId === "string" ? highlightedScoreId.trim() : "";
+  if (explicitId && isForecastingDiagnosticMetricId(explicitId)) {
+    const match = getValidSelectedMetric(metrics.find((metric) => metric?.metric_id === explicitId));
+    return match ? { kind: "selected", metric: match } : { kind: "unavailable" };
+  }
+
+  const fallbackId = diagnostics?.backtesting_fold_metric?.metric_id;
+  if (typeof fallbackId === "string" && isForecastingDiagnosticMetricId(fallbackId)) {
+    const match = getValidSelectedMetric(metrics.find((metric) => metric?.metric_id === fallbackId));
+    if (match) {
+      return { kind: "selected", metric: match };
+    }
+  }
+  return { kind: "unavailable" };
 }
 
 // ---------------------------------------------------------------------------
@@ -363,28 +542,57 @@ export function ForecastingEvaluationOverview({ visualizations }: ForecastingDia
   );
 }
 
-// Project Spec S0248: a single shared renderer for the three bounded
+// Project Spec S0248 / S0275: a single shared renderer for the bounded
 // univariate-forecasting diagnostic cards -- consumed identically by the
 // public Dataset Detail surface and Dataset Admin Live Preview through the
 // same DatasetDetailSurface composition, so this component never fetches
 // data itself, never recomputes aggregates, and never carries
-// dataset-specific branching or copy.
-export default function ForecastingDiagnostics({ visualizations }: ForecastingDiagnosticsProps) {
+// dataset-specific branching or copy. Under S0275 it additionally accepts one
+// already-projected highlighted forecasting score id and, when the release
+// carries an S0274 metric_diagnostics block, renders Backtesting by Origin
+// and Horizon from the single governed metric entry that score selects --
+// both cards always the same metric, titled with the shared metadata label.
+export default function ForecastingDiagnostics({ visualizations, highlightedScoreId }: ForecastingDiagnosticsProps) {
   const diagnostics = visualizations?.forecasting_diagnostics ?? null;
   const seasonalProfile = getValidSeasonalProfile(diagnostics?.seasonal_profile?.points);
-  const foldMetric = getValidFoldMetric(
-    diagnostics?.backtesting_fold_metric?.metric_id,
-    diagnostics?.backtesting_fold_metric?.points,
-  );
-  const horizonMae = getValidHorizonMae(diagnostics?.horizon_mae?.points);
+
+  const selection = resolveMetricSelection(diagnostics, highlightedScoreId);
+  const selectedMetric = selection.kind === "selected" ? selection.metric : null;
+  const legacyMode = selection.kind === "legacy";
+
+  const legacyFoldMetric = legacyMode
+    ? getValidFoldMetric(
+        diagnostics?.backtesting_fold_metric?.metric_id,
+        diagnostics?.backtesting_fold_metric?.points,
+      )
+    : null;
+  const legacyHorizonMae = legacyMode ? getValidHorizonMae(diagnostics?.horizon_mae?.points) : null;
+
+  // Backtesting by Origin: the selected v7 metric wins; otherwise the legacy
+  // backtesting_fold_metric; otherwise a fail-closed empty state. Legacy and
+  // selected points share the same { label, value } shape.
+  const backtestingTitle = selectedMetric
+    ? `Backtesting by Origin — ${selectedMetric.label}`
+    : "Backtesting by Origin";
+  const backtestingPoints = selectedMetric?.byOrigin ?? legacyFoldMetric?.points ?? null;
+  const backtestingSeriesLabel = selectedMetric?.label ?? legacyFoldMetric?.metricId ?? null;
+
+  // Horizon: the selected v7 metric wins; otherwise legacy Horizon MAE
+  // (never relabeled); otherwise a fail-closed empty state.
+  const horizonTitle = selectedMetric ? `Horizon ${selectedMetric.label}` : "Horizon MAE";
+  const horizonPoints = selectedMetric
+    ? selectedMetric.byHorizon
+    : legacyHorizonMae
+      ? legacyHorizonMae.points.map((point) => ({ label: point.label, value: point.mae }))
+      : null;
 
   return (
     <>
       <Card className="dataset-detail-visualization dataset-detail-visualization--backtesting-fold-metric">
-        <h3>Backtesting by Origin</h3>
-        {foldMetric ? (
+        <h3>{backtestingTitle}</h3>
+        {backtestingPoints && backtestingSeriesLabel ? (
           <div
-            aria-label="backtesting by origin"
+            aria-label={backtestingTitle.toLowerCase()}
             className="dataset-detail-visualization__chart forecasting-diagnostics__line-layout"
             data-chart-grid={CHART_GRID}
             data-chart-primary={CHART_PRIMARY}
@@ -392,7 +600,7 @@ export default function ForecastingDiagnostics({ visualizations }: ForecastingDi
           >
             <div className="forecasting-diagnostics__chart">
               <ResponsiveContainer height="100%" width="100%">
-                <LineChart data={foldMetric.points} margin={{ bottom: 8 }}>
+                <LineChart data={backtestingPoints} margin={{ bottom: 8 }}>
                   <CartesianGrid stroke={CHART_GRID} strokeDasharray="3 3" vertical={false} />
                   <XAxis dataKey="label" tick={{ fontSize: 11 }} />
                   <YAxis width={40} />
@@ -408,11 +616,11 @@ export default function ForecastingDiagnostics({ visualizations }: ForecastingDi
               </ResponsiveContainer>
             </div>
             <ul className="forecasting-diagnostics__legend">
-              {foldMetric.points.map((point, index) => (
+              {backtestingPoints.map((point, index) => (
                 <li className="forecasting-diagnostics__legend-row" key={`${point.label}-${index}`}>
                   <span className="forecasting-diagnostics__legend-label">{point.label}</span>
                   <span className="forecasting-diagnostics__legend-value">
-                    {foldMetric.metricId}: {formatValue(point.value)}
+                    {backtestingSeriesLabel}: {formatValue(point.value)}
                   </span>
                 </li>
               ))}
@@ -424,10 +632,10 @@ export default function ForecastingDiagnostics({ visualizations }: ForecastingDi
       </Card>
 
       <Card className="dataset-detail-visualization dataset-detail-visualization--horizon-mae">
-        <h3>Horizon MAE</h3>
-        {horizonMae ? (
+        <h3>{horizonTitle}</h3>
+        {horizonPoints ? (
           <div
-            aria-label="horizon mae"
+            aria-label={horizonTitle.toLowerCase()}
             className="dataset-detail-visualization__chart forecasting-diagnostics__bar-layout"
             data-chart-grid={CHART_GRID}
             data-chart-primary={CHART_PRIMARY}
@@ -435,19 +643,19 @@ export default function ForecastingDiagnostics({ visualizations }: ForecastingDi
           >
             <div className="forecasting-diagnostics__chart">
               <ResponsiveContainer height="100%" width="100%">
-                <BarChart data={horizonMae.points} margin={{ bottom: 8 }}>
+                <BarChart data={horizonPoints} margin={{ bottom: 8 }}>
                   <CartesianGrid stroke={CHART_GRID} strokeDasharray="3 3" vertical={false} />
                   <XAxis dataKey="label" tick={{ fontSize: 11 }} />
                   <YAxis width={40} />
-                  <Bar dataKey="mae" fill={CHART_SECONDARY} isAnimationActive={false} />
+                  <Bar dataKey="value" fill={CHART_SECONDARY} isAnimationActive={false} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
             <ul className="forecasting-diagnostics__legend">
-              {horizonMae.points.map((point) => (
+              {horizonPoints.map((point) => (
                 <li className="forecasting-diagnostics__legend-row" key={point.label}>
                   <span className="forecasting-diagnostics__legend-label">{point.label}</span>
-                  <span className="forecasting-diagnostics__legend-value">{formatValue(point.mae)}</span>
+                  <span className="forecasting-diagnostics__legend-value">{formatValue(point.value)}</span>
                 </li>
               ))}
             </ul>

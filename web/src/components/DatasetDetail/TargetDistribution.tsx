@@ -59,14 +59,18 @@ export type VisualizationsPayload = {
       bins?: Array<{ label?: string; count?: number }>;
     };
   };
-  // Project Spec S0248 / S0270: bounded forecasting diagnostics the public
-  // visualizations projection may carry instead of charts/
+  // Project Spec S0248 / S0270 / S0274: bounded forecasting diagnostics the
+  // public visualizations projection may carry instead of charts/
   // regression_diagnostics/confusion_matrix. A native univariate-forecasting
-  // public projection may be a historical analytical-visualizations.v4
-  // artifact (diagnostics only) or an S0270 analytical-visualizations.v6
-  // artifact (the same diagnostics plus the optional forecasting_evaluation
-  // block below). TargetDistribution/FeatureImportance never read this
-  // themselves -- it lives on the shared payload type so
+  // public projection may be:
+  //   v4 -> legacy forecasting diagnostics (aggregate diagnostics only)
+  //   v6 -> legacy diagnostics + final-holdout evaluation (the optional
+  //         forecasting_evaluation block below)
+  //   v7 -> v6 + metric_diagnostics (the optional S0274 multi-metric
+  //         backtesting-by-origin / by-horizon block below)
+  // A historical v4/v6 release never carries metric_diagnostics, so it stays
+  // optional at this TypeScript boundary. TargetDistribution/FeatureImportance
+  // never read this themselves -- it lives on the shared payload type so
   // ForecastingDiagnostics.tsx, DatasetPage.tsx, DatasetAdminPage.tsx, and
   // livePreviewProjection.ts can all consume it without a competing type.
   forecasting_diagnostics?: {
@@ -83,6 +87,26 @@ export type VisualizationsPayload = {
     };
     horizon_mae?: {
       points?: Array<{ horizon_step?: number; mae?: number }>;
+    };
+    // Project Spec S0274: the optional bounded multi-metric backtesting/horizon
+    // diagnostic block, present only for a valid analytical-visualizations.v7
+    // release (a v4/v6 release never carries this field). Every leaf stays
+    // optional at this TypeScript/network boundary even though
+    // api/public_visualizations_loader.py independently re-validates the
+    // canonical v7 response; ForecastingDiagnostics.tsx owns the bounded
+    // frontend validation before any selected-metric chart is drawn, and no
+    // MAE/RMSE/Seasonal-MASE formula is ever evaluated in the browser.
+    metric_diagnostics?: {
+      metrics?: Array<{
+        metric_id?: string;
+        direction?: string;
+        backtesting_by_origin?: {
+          points?: Array<{ fold_index?: number; forecast_origin?: string; value?: number }>;
+        };
+        by_horizon?: {
+          points?: Array<{ horizon_step?: number; value?: number; observation_count?: number }>;
+        };
+      }>;
     };
   };
   // Project Spec S0270 (consumed by S0272): the optional bounded public

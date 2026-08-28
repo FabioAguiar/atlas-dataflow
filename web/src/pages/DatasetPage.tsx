@@ -597,12 +597,34 @@ export default function DatasetPage() {
       <RegressionDiagnostics visualizations={visualizationsState.data} />
     ) : null;
 
+  // Project Spec S0275: the published forecasting highlighted score that
+  // drives the shared ForecastingDiagnostics selection. Derived only from the
+  // already-loaded published context.performance_focus -- no extra request,
+  // and never a raw score value. A score id is passed only when the published
+  // focus is forecasting_performance, the highlighted id is non-empty, and it
+  // is actually one of the published visible scores. PerformanceSummary keeps
+  // receiving the full context.performance_focus unchanged.
+  const forecastingHighlightedScoreId = (() => {
+    const focus = context?.performance_focus;
+    if (!focus || focus.focus_id !== "forecasting_performance") {
+      return null;
+    }
+    const highlightedId = focus.highlighted_score_id?.trim();
+    if (!highlightedId) {
+      return null;
+    }
+    return focus.visible_scores.some((score) => score.score_id === highlightedId) ? highlightedId : null;
+  })();
+
   // Project Spec S0248: ForecastingDiagnostics renders only for an available
   // univariate-forecasting release, gated on the same release-bound result
   // contract authority above -- never a second /visualizations request.
   const forecastingDiagnosticsContent =
     visualizationsState.status === "ready" && isForecastingRelease ? (
-      <ForecastingDiagnostics visualizations={visualizationsState.data} />
+      <ForecastingDiagnostics
+        visualizations={visualizationsState.data}
+        highlightedScoreId={forecastingHighlightedScoreId}
+      />
     ) : null;
 
   // Project Spec S0272: the final-holdout forecast-evaluation overview is

@@ -1,16 +1,21 @@
 {
   "schema_version": "1.0.0",
   "dataset_slug": "nottem",
-  "published_at": "2026-08-28T14:49:47Z",
+  "published_at": "2026-08-28T19:31:28Z",
   "active_release_at_publish_time": "release-20260828t102855z",
   "profile": {
     "display": {
       "title": "Nottingham Monthly Temperatures",
+      "subtitle": "Explore monthly temperature seasonality and forecast the next 12 months with governed univariate forecasting.",
+      "problem_summary_title": "Forecasting Nottingham monthly air temperature",
+      "problem_summary_body": "This dataset contains 240 monthly average air-temperature observations recorded at Nottingham Castle from 1920 through 1939. Atlas treats the series as a univariate forecasting problem: using the governed monthly history, the model forecasts the next 12 monthly temperatures in degrees Fahrenheit. Evaluation preserves temporal order through expanding-window backtesting and a final 1939 holdout.",
+      "source_name": "R datasets package",
       "release_date_label": "2026-08-27",
       "canonical_name_fallback": true
     },
     "home_card": {
-      "background_image_ref": null,
+      "background_image_ref": "/media/home-cards/258d883064c940b6a8f14f15abc0930b.jpg",
+      "short_description": "Explore 20 years of Nottingham monthly average air temperatures and a governed univariate forecasting model that predicts the next 12 months in degrees Fahrenheit.",
       "primary_metric_key": null
     },
     "performance_focus": {
@@ -41,7 +46,7 @@
       ]
     },
     "theme": {
-      "preset": "atlas-green"
+      "preset": "ice-blue"
     },
     "inference_presentation": {
       "bound_predict_view_id": "nottem-temperature-forecast"

@@ -125,7 +125,14 @@ type ContextPayloadFixture = Omit<typeof contextPayload, "result_card"> & {
   canonical_name_fallback?: boolean | null;
   theme_preset?: string | null;
   performance_focus?: {
-    focus_id: "overall_discrimination" | "positive_class_detection" | "balanced_classification" | "probability_quality" | "operational_decision";
+    focus_id:
+      | "overall_discrimination"
+      | "positive_class_detection"
+      | "balanced_classification"
+      | "probability_quality"
+      | "operational_decision"
+      | "regression_performance"
+      | "forecasting_performance";
     highlighted_score_id: string;
     visible_scores: Array<{
       score_id: string;
@@ -3583,5 +3590,293 @@ describe("DatasetPage capability-driven public prediction surface (Project Spec 
         fetchMock.mock.calls.some((call) => String(call[0]).includes(`/views/bound-view/customization`)),
       ).toBe(true);
     });
+  });
+});
+
+// Project Spec S0275: the public Dataset Detail route passes the published
+// forecasting highlighted score (context.performance_focus) into the shared
+// ForecastingDiagnostics renderer, which then drives Backtesting by Origin +
+// Horizon from exactly one governed S0274 metric_diagnostics entry -- titled
+// with the shared metadata label, values straight from that entry, never a
+// browser-side metric formula, and failing closed (never substituting MAE)
+// when the explicitly highlighted metric is absent from the v7 evidence.
+describe("DatasetPage forecasting highlighted-score diagnostic selection (Project Spec S0275)", () => {
+  const forecastingResultContractAvailable = {
+    status: "available" as const,
+    semantics: {
+      schema_version: "univariate-forecasting-result-semantics.v1" as const,
+      problem_type: "univariate_forecasting" as const,
+      result_schema_version: "univariate-forecasting-result.v1" as const,
+      primary_output: "forecast_series" as const,
+      output_structure: "ordered_forecast_points" as const,
+      forecast_value_kind: "continuous_numeric" as const,
+      forecast_count_source: "forecast_horizon" as const,
+      model_descriptor: { model_family: "deterministic_seasonal_trend_ols", display_name: "Seasonal Trend Model" },
+    },
+  };
+
+  const forecastingMetricsPayload = { evaluation: { metrics: { mae: 1.11, rmse: 2.71, seasonal_mase: 0.51 } } };
+
+  // Synthetic values chosen so MAE / RMSE / Seasonal-MASE series are visibly
+  // different from each other and from the legacy backtesting_fold_metric /
+  // horizon_mae series, making any accidental substitution detectable.
+  const maeMetricDiagnostic = {
+    metric_id: "mae",
+    direction: "lower_is_better",
+    backtesting_by_origin: {
+      points: [
+        { fold_index: 0, forecast_origin: "O-1", value: 1.11 },
+        { fold_index: 1, forecast_origin: "O-2", value: 1.22 },
+      ],
+    },
+    by_horizon: {
+      points: [
+        { horizon_step: 1, value: 1.01, observation_count: 3 },
+        { horizon_step: 2, value: 1.02, observation_count: 3 },
+      ],
+    },
+  };
+  const rmseMetricDiagnostic = {
+    metric_id: "rmse",
+    direction: "lower_is_better",
+    backtesting_by_origin: {
+      points: [
+        { fold_index: 0, forecast_origin: "O-1", value: 2.71 },
+        { fold_index: 1, forecast_origin: "O-2", value: 2.82 },
+      ],
+    },
+    by_horizon: {
+      points: [
+        { horizon_step: 1, value: 2.01, observation_count: 3 },
+        { horizon_step: 2, value: 2.02, observation_count: 3 },
+      ],
+    },
+  };
+  const seasonalMaseMetricDiagnostic = {
+    metric_id: "seasonal_mase",
+    direction: "lower_is_better",
+    backtesting_by_origin: {
+      points: [
+        { fold_index: 0, forecast_origin: "O-1", value: 0.51 },
+        { fold_index: 1, forecast_origin: "O-2", value: 0.62 },
+      ],
+    },
+    by_horizon: {
+      points: [
+        { horizon_step: 1, value: 0.31, observation_count: 3 },
+        { horizon_step: 2, value: 0.32, observation_count: 3 },
+      ],
+    },
+  };
+
+  const legacyForecastingDiagnostics = {
+    forecast_horizon: 2,
+    frequency: "synthetic-step",
+    seasonal_profile: {
+      seasonal_period: 2,
+      points: [
+        { season_position: 0, mean_target: 5.0, observation_count: 4 },
+        { season_position: 1, mean_target: 7.0, observation_count: 4 },
+      ],
+    },
+    backtesting_fold_metric: {
+      metric_id: "mae",
+      direction: "lower_is_better",
+      points: [
+        { fold_index: 1, forecast_origin: "L-1", value: 8.11 },
+        { fold_index: 2, forecast_origin: "L-2", value: 8.22 },
+      ],
+    },
+    horizon_mae: {
+      points: [
+        { horizon_step: 1, mae: 9.01 },
+        { horizon_step: 2, mae: 9.02 },
+      ],
+    },
+  };
+
+  function v7Visualizations(metrics: Array<Record<string, unknown>>) {
+    return {
+      charts: [],
+      dataset_statistics: { instance_count: 24 },
+      forecasting_diagnostics: {
+        ...legacyForecastingDiagnostics,
+        metric_diagnostics: { metrics },
+      },
+    };
+  }
+
+  const v6Visualizations = {
+    charts: [],
+    dataset_statistics: { instance_count: 24 },
+    forecasting_diagnostics: legacyForecastingDiagnostics,
+  };
+
+  function forecastingContext(highlightedScoreId: string): ContextPayloadFixture {
+    return {
+      ...contextPayload,
+      problem_type: "univariate_forecasting",
+      performance_focus: {
+        focus_id: "forecasting_performance",
+        highlighted_score_id: highlightedScoreId,
+        visible_scores: [
+          { score_id: "mae", display_label: "MAE", value: "1.11", value_source: "manual", order: 0 },
+          { score_id: "rmse", display_label: "RMSE", value: "2.71", value_source: "manual", order: 1 },
+          { score_id: "seasonal_mase", display_label: "Seasonal MASE", value: "0.51", value_source: "manual", order: 2 },
+        ],
+      },
+    };
+  }
+
+  function installMock(visualizations: Record<string, unknown>, context: ContextPayloadFixture) {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith(`/datasets/${slug}/context`)) {
+        return jsonResponse({ dataset_slug: slug, context });
+      }
+      if (url.endsWith(`/datasets/${slug}/metrics`)) {
+        return jsonResponse({ dataset_slug: slug, metrics: forecastingMetricsPayload });
+      }
+      if (url.endsWith(`/datasets/${slug}/visualizations`)) {
+        return jsonResponse({ dataset_slug: slug, visualizations });
+      }
+      if (url.endsWith(`/datasets/${slug}/contract`)) {
+        return jsonResponse({
+          dataset_slug: slug,
+          contract: contractPayload,
+          result_contract: forecastingResultContractAvailable,
+        });
+      }
+      if (url.endsWith(`/datasets/${slug}`)) {
+        return jsonResponse(datasetMetadata);
+      }
+      return jsonResponse({}, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  function backtestingCard() {
+    return document.querySelector<HTMLElement>(".dataset-detail-visualization--backtesting-fold-metric")!;
+  }
+  function horizonCard() {
+    return document.querySelector<HTMLElement>(".dataset-detail-visualization--horizon-mae")!;
+  }
+
+  it("selects the MAE metric_diagnostics entry for an explicit highlighted MAE", async () => {
+    installMock(
+      v7Visualizations([maeMetricDiagnostic, rmseMetricDiagnostic, seasonalMaseMetricDiagnostic]),
+      forecastingContext("mae"),
+    );
+    renderDatasetPage();
+
+    expect(await screen.findByRole("heading", { name: "Backtesting by Origin — MAE" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Horizon MAE" })).toBeInTheDocument();
+
+    // Backtesting/legend values come from the MAE metric_diagnostics entry.
+    expect(within(backtestingCard()).getByText("MAE: 1.11")).toBeInTheDocument();
+    expect(within(backtestingCard()).getByText("MAE: 1.22")).toBeInTheDocument();
+    // Horizon values come from the MAE metric_diagnostics entry, not legacy
+    // horizon_mae (9.01 / 9.02).
+    expect(within(horizonCard()).getByText("1.01")).toBeInTheDocument();
+    expect(within(horizonCard()).getByText("1.02")).toBeInTheDocument();
+    expect(screen.queryByText("9.01")).not.toBeInTheDocument();
+    expect(screen.queryByText("MAE: 8.11")).not.toBeInTheDocument();
+
+    // Seasonal Profile still renders and is independent of the highlighted score.
+    expect(screen.getByRole("heading", { name: "Seasonal Profile" })).toBeInTheDocument();
+  });
+
+  it("selects the RMSE metric_diagnostics entry for an explicit highlighted RMSE, never the legacy MAE series", async () => {
+    installMock(
+      v7Visualizations([maeMetricDiagnostic, rmseMetricDiagnostic, seasonalMaseMetricDiagnostic]),
+      forecastingContext("rmse"),
+    );
+    renderDatasetPage();
+
+    expect(await screen.findByRole("heading", { name: "Backtesting by Origin — RMSE" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Horizon RMSE" })).toBeInTheDocument();
+
+    expect(within(backtestingCard()).getByText("RMSE: 2.71")).toBeInTheDocument();
+    expect(within(horizonCard()).getByText("2.01")).toBeInTheDocument();
+    // No MAE series values are relabeled as the selected RMSE series, and the
+    // legacy horizon_mae values never appear.
+    expect(screen.queryByText("MAE: 1.11")).not.toBeInTheDocument();
+    expect(screen.queryByText("RMSE: 1.11")).not.toBeInTheDocument();
+    expect(screen.queryByText("9.01")).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Backtesting by Origin — MAE" })).not.toBeInTheDocument();
+  });
+
+  it("selects the Seasonal-MASE metric_diagnostics entry for an explicit highlighted Seasonal MASE", async () => {
+    installMock(
+      v7Visualizations([maeMetricDiagnostic, rmseMetricDiagnostic, seasonalMaseMetricDiagnostic]),
+      forecastingContext("seasonal_mase"),
+    );
+    renderDatasetPage();
+
+    expect(
+      await screen.findByRole("heading", { name: "Backtesting by Origin — Seasonal MASE" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Horizon Seasonal MASE" })).toBeInTheDocument();
+
+    expect(within(backtestingCard()).getByText("Seasonal MASE: 0.51")).toBeInTheDocument();
+    expect(within(horizonCard()).getByText("0.31")).toBeInTheDocument();
+    expect(screen.queryByText("MAE: 1.11")).not.toBeInTheDocument();
+  });
+
+  it("fails closed when the explicitly highlighted metric is absent from the v7 evidence -- no MAE substitution", async () => {
+    installMock(
+      // RMSE highlighted, but the v7 block only carries MAE + Seasonal MASE.
+      v7Visualizations([maeMetricDiagnostic, seasonalMaseMetricDiagnostic]),
+      forecastingContext("rmse"),
+    );
+    const { container } = renderDatasetPage();
+
+    await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
+    await screen.findByRole("heading", { name: "Seasonal Profile" });
+
+    // Neither performance-diagnostic card renders a chart/series.
+    expect(container.querySelector(".dataset-detail-visualization--backtesting-fold-metric .forecasting-diagnostics__chart")).not.toBeInTheDocument();
+    expect(container.querySelector(".dataset-detail-visualization--horizon-mae .forecasting-diagnostics__chart")).not.toBeInTheDocument();
+    expect(within(backtestingCard()).getByText("Visualization not generated")).toBeInTheDocument();
+    expect(within(horizonCard()).getByText("Visualization not generated")).toBeInTheDocument();
+
+    // MAE is never silently substituted, and the legacy series never leaks in.
+    expect(screen.queryByText("MAE: 1.11")).not.toBeInTheDocument();
+    expect(screen.queryByText("MAE: 8.11")).not.toBeInTheDocument();
+    expect(screen.queryByText("9.01")).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Backtesting by Origin — RMSE" })).not.toBeInTheDocument();
+  });
+
+  it("keeps the legacy v6 Backtesting by Origin / Horizon MAE rendering when no metric_diagnostics is present, even if the profile highlights RMSE", async () => {
+    installMock(v6Visualizations, forecastingContext("rmse"));
+    renderDatasetPage();
+
+    expect(await screen.findByRole("heading", { name: "Backtesting by Origin" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Horizon MAE" })).toBeInTheDocument();
+    // No fake Horizon RMSE / metric-suffixed Backtesting title.
+    expect(screen.queryByRole("heading", { name: "Horizon RMSE" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Backtesting by Origin — RMSE" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Backtesting by Origin — MAE" })).not.toBeInTheDocument();
+
+    // Legacy series values are the ones rendered.
+    expect(within(backtestingCard()).getByText("mae: 8.11")).toBeInTheDocument();
+    expect(within(horizonCard()).getByText("9.01")).toBeInTheDocument();
+  });
+
+  it("issues no additional visualizations/metrics/inference request for the highlighted-score selection", async () => {
+    const fetchMock = installMock(
+      v7Visualizations([maeMetricDiagnostic, rmseMetricDiagnostic, seasonalMaseMetricDiagnostic]),
+      forecastingContext("rmse"),
+    );
+    renderDatasetPage();
+
+    await screen.findByRole("heading", { name: "Backtesting by Origin — RMSE" });
+
+    const countEndingWith = (suffix: string) =>
+      fetchMock.mock.calls.filter((call) => String(call[0]).endsWith(suffix)).length;
+    expect(countEndingWith(`/datasets/${slug}/visualizations`)).toBe(1);
+    expect(countEndingWith(`/datasets/${slug}/metrics`)).toBe(1);
+    expect(fetchMock.mock.calls.some((call) => String(call[0]).endsWith("/inference"))).toBe(false);
   });
 });

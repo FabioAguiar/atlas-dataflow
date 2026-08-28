@@ -4712,10 +4712,27 @@ function DatasetDetailLivePreview({
     visualizations,
   );
 
+  // Project Spec S0275: resolve the draft performance-focus preview projection
+  // exactly once and reuse the same bounded object for both PerformanceSummary
+  // emphasis and the ForecastingDiagnostics highlighted-score selection, so
+  // changing Highlighted in Admin Preview moves both from the same draft
+  // projection. When the projection returns null/invalid, no raw draft field
+  // is read independently as a fallback.
+  const projectedPerformanceFocus = projectPerformanceFocusPreview(form.performance_focus);
+  const forecastingHighlightedScoreId =
+    projectedPerformanceFocus &&
+    projectedPerformanceFocus.focus_id === "forecasting_performance" &&
+    projectedPerformanceFocus.highlighted_score_id.trim() &&
+    projectedPerformanceFocus.visible_scores.some(
+      (score) => score.score_id === projectedPerformanceFocus.highlighted_score_id,
+    )
+      ? projectedPerformanceFocus.highlighted_score_id
+      : null;
+
   const performanceContent = (
     <PerformanceSummary
       metrics={metrics ?? {}}
-      performanceFocus={projectPerformanceFocusPreview(form.performance_focus)}
+      performanceFocus={projectedPerformanceFocus}
       // Project Spec S0215: the same release-derived problem type already
       // established by S0213 -- never dataset slug or editable profile
       // fields.
@@ -4753,7 +4770,10 @@ function DatasetDetailLivePreview({
   // visualizations payload above, gated on the same private dataset-bound
   // result-contract authority -- it never issues a second request.
   const forecastingDiagnosticsContent = isForecastingPreview ? (
-    <ForecastingDiagnostics visualizations={visualizations} />
+    <ForecastingDiagnostics
+      visualizations={visualizations}
+      highlightedScoreId={forecastingHighlightedScoreId}
+    />
   ) : null;
   // Project Spec S0272: Admin Live Preview builds the exact same shared
   // final-holdout forecast-evaluation overview from the same already-loaded

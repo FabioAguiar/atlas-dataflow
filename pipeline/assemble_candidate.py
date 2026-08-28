@@ -532,18 +532,21 @@ _ANALYTICAL_VISUALIZATIONS_INTERNAL_VERSION_V3 = "analytical-visualizations.v3"
 _TRAINING_PARAMETER_RECORD_INTERNAL_VERSION_V4 = "training-parameter-record.v4"
 _TRAINING_METRICS_INTERNAL_VERSION_V4 = "training-metrics.v4"
 _ANALYTICAL_VISUALIZATIONS_INTERNAL_VERSION_V4 = "analytical-visualizations.v4"
-# Project Spec S0270: the governed native univariate-forecasting final-holdout
-# visual-evidence evolution of v4. A training-parameter-record.v4 +
-# training-metrics.v4 native forecasting provenance may carry EITHER the
-# historical aggregate analytical-visualizations.v4 evidence OR the current
-# analytical-visualizations.v6 final-holdout evidence -- and no other
-# visualization version. This is an explicit, declared contract-version rule;
-# it is never inferred from dataset slug, artifact path, or current date, and
-# it does not change the v2/v3/v5 provenance mappings.
+# Project Spec S0270 / S0274: the governed native univariate-forecasting
+# analytical visual-evidence evolutions of v4. A training-parameter-record.v4 +
+# training-metrics.v4 native forecasting provenance may carry the historical
+# aggregate analytical-visualizations.v4 profile, the analytical-visualizations.v6
+# final-holdout evolution, or the analytical-visualizations.v7 governed
+# multi-metric diagnostic evolution -- and no other visualization version.
+# This is an explicit, declared contract-version rule; it is never inferred
+# from dataset slug, artifact path, or current date, and it does not change the
+# v2/v3/v5 provenance mappings.
 _ANALYTICAL_VISUALIZATIONS_INTERNAL_VERSION_V6 = "analytical-visualizations.v6"
+_ANALYTICAL_VISUALIZATIONS_INTERNAL_VERSION_V7 = "analytical-visualizations.v7"
 _FORECASTING_V4_COMPATIBLE_VISUALIZATIONS_VERSIONS = (
     _ANALYTICAL_VISUALIZATIONS_INTERNAL_VERSION_V4,
     _ANALYTICAL_VISUALIZATIONS_INTERNAL_VERSION_V6,
+    _ANALYTICAL_VISUALIZATIONS_INTERNAL_VERSION_V7,
 )
 # Project Spec S0259: the v5 (native binary fixed-configuration) INTERNAL
 # Atlas-native training-record profile -- mirrors the v2 (multiclass), v3

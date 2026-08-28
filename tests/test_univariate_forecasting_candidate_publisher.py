@@ -277,6 +277,51 @@ def test_native_forecasting_v4_visualizations_remains_accepted_as_historical_com
     )
 
 
+def test_native_forecasting_record_v4_metrics_v4_accepts_visualizations_v7(tmp_path):
+    # Project Spec S0274: record v4 + metrics v4 native forecasting provenance
+    # explicitly recognizes analytical-visualizations.v7 (the governed
+    # multi-metric backtesting/horizon diagnostic evolution), carried forward
+    # verbatim. v4 and v6 remain admitted; incompatible versions still reject.
+    candidate_input = _build_v4_candidate_input(
+        tmp_path, visualizations_version="analytical-visualizations.v7"
+    )
+    assert (
+        candidate_input["artifact_inputs"]["visualizations"]["contract_version"]
+        == "analytical-visualizations.v7"
+    )
+    assert candidate_input["artifact_inputs"]["training_parameter_record"]["contract_version"] == (
+        "training-parameter-record.v4"
+    )
+    assert candidate_input["artifact_inputs"]["training_metrics"]["contract_version"] == "training-metrics.v4"
+    assert candidate_input["artifact_inputs"]["visualizations"]["source_stage"] == "M24"
+
+
+@pytest.mark.parametrize(
+    "visualizations_version",
+    ["analytical-visualizations.v4", "analytical-visualizations.v6", "analytical-visualizations.v7"],
+)
+def test_native_forecasting_candidate_assembly_accepts_v4_v6_v7(tmp_path, visualizations_version):
+    candidate_input = _build_v4_candidate_input(tmp_path, visualizations_version=visualizations_version)
+    assert (
+        candidate_input["artifact_inputs"]["visualizations"]["contract_version"] == visualizations_version
+    )
+
+
+@pytest.mark.parametrize(
+    "visualizations_version",
+    [
+        "analytical-visualizations.v1",
+        "analytical-visualizations.v2",
+        "analytical-visualizations.v3",
+        "analytical-visualizations.v5",
+        "analytical-visualizations.v8",
+    ],
+)
+def test_native_forecasting_candidate_assembly_still_rejects_incompatible_versions(tmp_path, visualizations_version):
+    with pytest.raises(ValueError, match="visualizations"):
+        _build_v4_candidate_input(tmp_path, visualizations_version=visualizations_version)
+
+
 def test_legacy_internal_v1_provenance_remains_unchanged(tmp_path):
     tmp_repo = tmp_path / "repo"
     paths = _write_v1_internal_governed_artifacts(tmp_repo)
@@ -427,10 +472,11 @@ def test_schema_does_not_remove_or_expand_external_fitted_model_vocabulary():
     assert "training-metrics.external-fitted-model.v2" not in metrics_enum
 
 
-def test_schema_admits_analytical_visualizations_v4_and_v6_vocabulary_only():
-    # Project Spec S0270: v6 is additively admitted alongside v4 (historical).
-    # v5 (native binary fixed-configuration) is intentionally NOT part of the
-    # forecasting visualizations enum.
+def test_schema_admits_analytical_visualizations_v4_v6_v7_vocabulary_only():
+    # Project Spec S0270 admitted v6 alongside v4 (historical); Project Spec
+    # S0274 additively admits v7 alongside v4/v6. v5 (native binary
+    # fixed-configuration) is intentionally NOT part of the forecasting
+    # visualizations enum.
     schema = json.loads(RELEASE_CANDIDATE_INPUT_SCHEMA_PATH.read_text())
     visualizations_prop = schema["properties"]["artifact_inputs"]["properties"]["visualizations"][
         "allOf"
@@ -441,6 +487,7 @@ def test_schema_admits_analytical_visualizations_v4_and_v6_vocabulary_only():
         "analytical-visualizations.v3",
         "analytical-visualizations.v4",
         "analytical-visualizations.v6",
+        "analytical-visualizations.v7",
     ]
     assert "analytical-visualizations.v5" not in visualizations_prop["enum"]
 
@@ -965,6 +1012,84 @@ def _v6_metrics(*, forecast_horizon: int = 6, **kwargs) -> dict:
     return _forecasting_metrics_overrides(forecast_horizon=forecast_horizon, **kwargs)
 
 
+def _v7_metric_diagnostics(
+    *,
+    forecast_horizon: int = 6,
+    metric_id: str = "mae",
+    fold_summaries: list[dict] | None = None,
+    horizon_mae_points: list[dict] | None = None,
+) -> dict:
+    """Project Spec S0274: one coherent metric diagnostic entry for `metric_id`
+    -- its backtesting_by_origin copied from the fold summaries and its
+    by_horizon mirroring the legacy horizon_mae shape (value == mae per step)."""
+    if fold_summaries is None:
+        fold_summaries = _default_fold_summaries(metric_id)
+    if horizon_mae_points is None:
+        horizon_mae_points = _default_horizon_mae_points(forecast_horizon)
+    return {
+        "metric_id": metric_id,
+        "direction": "lower_is_better",
+        "backtesting_by_origin": {
+            "fold_count": len(fold_summaries),
+            "points": [
+                {
+                    "fold_index": summary["fold_index"],
+                    "forecast_origin": summary["forecast_origin"],
+                    "value": next(m["value"] for m in summary["metrics"] if m["name"] == metric_id),
+                    "validation_observations": summary["validation_observations"],
+                }
+                for summary in fold_summaries
+            ],
+        },
+        "by_horizon": {
+            "points": [
+                {
+                    "horizon_step": point["horizon_step"],
+                    "value": point["mae"],
+                    "observation_count": point["observation_count"],
+                }
+                for point in horizon_mae_points
+            ],
+        },
+    }
+
+
+def _valid_v7_visualizations_document(
+    *,
+    forecast_horizon: int = 6,
+    development_observations: int = 20,
+    metric_ids: tuple[str, ...] = ("mae",),
+    metric_diagnostics_overrides: dict | None = None,
+    final_holdout_evaluation_overrides: dict | None = None,
+    **v4_kwargs,
+) -> dict:
+    """Project Spec S0274: a fully valid, schema-conformant
+    analytical-visualizations.v7 document -- every v6 aggregate/final-holdout
+    diagnostic plus a coherent forecasting_metric_diagnostics block whose
+    per-metric by-origin series match the default fold summaries and whose MAE
+    by_horizon matches the default horizon_mae legacy bridge."""
+    document = _valid_v6_visualizations_document(
+        forecast_horizon=forecast_horizon,
+        development_observations=development_observations,
+        final_holdout_evaluation_overrides=final_holdout_evaluation_overrides,
+        **v4_kwargs,
+    )
+    document["schema_version"] = "analytical-visualizations.v7"
+    block = {
+        "metrics": [
+            _v7_metric_diagnostics(forecast_horizon=forecast_horizon, metric_id=metric_id)
+            for metric_id in metric_ids
+        ]
+    }
+    block.update(metric_diagnostics_overrides or {})
+    document["forecasting_metric_diagnostics"] = block
+    return document
+
+
+def _v7_metrics(*, forecast_horizon: int = 6, **kwargs) -> dict:
+    return _v6_metrics(forecast_horizon=forecast_horizon, **kwargs)
+
+
 def _safe_details(reasons: list[dict]) -> set:
     return {reason["safe_detail"] for reason in reasons if "safe_detail" in reason}
 
@@ -1408,6 +1533,195 @@ def test_native_forecasting_never_confused_with_external_or_other_native_provena
     assert not any(detail.startswith("external_") for detail in all_details)
     assert not any(detail.startswith("native_multiclass") for detail in all_details)
     assert not any(detail.startswith("native_regression") for detail in all_details)
+
+
+# ---------------------------------------------------------------------------
+# Project Spec S0274: analytical-visualizations.v7 publisher compatibility
+# ---------------------------------------------------------------------------
+
+
+def test_native_forecasting_visualizations_accepts_full_coherent_v7_document():
+    reasons = validate._internal_native_forecasting_visualizations_compatibility(
+        _valid_v7_visualizations_document(),
+        _forecasting_predictive_bundle_overrides(),
+        _v7_metrics(),
+    )
+    assert reasons == []
+
+
+def test_native_forecasting_visualizations_v7_document_validates_against_schema():
+    jsonschema = pytest.importorskip("jsonschema")
+    schema = json.loads(ANALYTICAL_VISUALIZATIONS_SCHEMA_PATH.read_text())
+    validator_cls = jsonschema.validators.validator_for(schema, default=jsonschema.Draft202012Validator)
+    validator_cls(schema).validate(_valid_v7_visualizations_document())
+
+
+def test_native_forecasting_visualizations_v7_still_applies_v4_and_v6_cross_checks():
+    # A v4 aggregate contradiction (horizon vs bundle) rejects on a v7 doc.
+    document = _valid_v7_visualizations_document(forecast_horizon=6)
+    reasons = validate._internal_native_forecasting_visualizations_compatibility(
+        document, _forecasting_predictive_bundle_overrides(forecast_horizon=12),
+    )
+    assert "native_forecasting_visualizations_horizon_mismatch" in _safe_details(reasons)
+    # A v6 final-holdout contradiction also still rejects under S0270 checks.
+    document = _valid_v7_visualizations_document(
+        final_holdout_evaluation_overrides={"partition_role": "test"}
+    )
+    reasons = validate._internal_native_forecasting_visualizations_compatibility(
+        document, _forecasting_predictive_bundle_overrides(), _v7_metrics(),
+    )
+    assert "native_forecasting_v6_final_holdout_evaluation_policy_violation" in _safe_details(reasons)
+
+
+def test_native_forecasting_v7_missing_metric_diagnostics_rejects():
+    document = _valid_v7_visualizations_document()
+    del document["forecasting_metric_diagnostics"]
+    reasons = validate._internal_native_forecasting_visualizations_compatibility(
+        document, _forecasting_predictive_bundle_overrides(), _v7_metrics(),
+    )
+    assert "native_forecasting_v7_metric_diagnostics_missing" in _safe_details(reasons)
+
+
+def test_native_forecasting_v7_unsupported_metric_id_rejects():
+    document = _valid_v7_visualizations_document()
+    document["forecasting_metric_diagnostics"]["metrics"][0]["metric_id"] = "mape"
+    reasons = validate._internal_native_forecasting_visualizations_compatibility(
+        document, _forecasting_predictive_bundle_overrides(), _v7_metrics(),
+    )
+    assert "native_forecasting_v7_metric_diagnostics_unsupported_metric_id" in _safe_details(reasons)
+
+
+def test_native_forecasting_v7_duplicate_metric_id_rejects():
+    document = _valid_v7_visualizations_document(metric_ids=("mae",))
+    document["forecasting_metric_diagnostics"]["metrics"].append(
+        _v7_metric_diagnostics(metric_id="mae")
+    )
+    reasons = validate._internal_native_forecasting_visualizations_compatibility(
+        document, _forecasting_predictive_bundle_overrides(), _v7_metrics(),
+    )
+    assert "native_forecasting_v7_metric_diagnostics_duplicate_metric_id" in _safe_details(reasons)
+
+
+def test_native_forecasting_v7_horizon_gap_rejects():
+    document = _valid_v7_visualizations_document()
+    document["forecasting_metric_diagnostics"]["metrics"][0]["by_horizon"]["points"].pop()
+    reasons = validate._internal_native_forecasting_visualizations_compatibility(
+        document, _forecasting_predictive_bundle_overrides(), _v7_metrics(),
+    )
+    assert "native_forecasting_v7_metric_diagnostics_by_horizon_step_coverage_mismatch" in _safe_details(reasons)
+
+
+def test_native_forecasting_v7_duplicate_horizon_step_rejects():
+    document = _valid_v7_visualizations_document()
+    points = document["forecasting_metric_diagnostics"]["metrics"][0]["by_horizon"]["points"]
+    points[1]["horizon_step"] = points[0]["horizon_step"]
+    reasons = validate._internal_native_forecasting_visualizations_compatibility(
+        document, _forecasting_predictive_bundle_overrides(), _v7_metrics(),
+    )
+    assert "native_forecasting_v7_metric_diagnostics_by_horizon_duplicate_step" in _safe_details(reasons)
+
+
+def test_native_forecasting_v7_legacy_primary_fold_bridge_contradiction_rejects():
+    document = _valid_v7_visualizations_document()
+    document["forecasting_metric_diagnostics"]["metrics"][0]["backtesting_by_origin"]["points"][0][
+        "value"
+    ] = 99.0
+    reasons = validate._internal_native_forecasting_visualizations_compatibility(
+        document, _forecasting_predictive_bundle_overrides(), _v7_metrics(),
+    )
+    assert "native_forecasting_v7_metric_diagnostics_primary_bridge_mismatch" in _safe_details(reasons)
+
+
+def test_native_forecasting_v7_legacy_horizon_mae_bridge_contradiction_rejects():
+    document = _valid_v7_visualizations_document()
+    document["forecasting_metric_diagnostics"]["metrics"][0]["by_horizon"]["points"][0]["value"] = 42.0
+    reasons = validate._internal_native_forecasting_visualizations_compatibility(
+        document, _forecasting_predictive_bundle_overrides(), _v7_metrics(),
+    )
+    assert "native_forecasting_v7_metric_diagnostics_mae_bridge_mismatch" in _safe_details(reasons)
+
+
+def test_native_forecasting_v7_by_origin_contradicts_metrics_fold_summaries_rejects():
+    document = _valid_v7_visualizations_document()
+    # Keep the legacy primary bridge internally consistent (both wrong the same
+    # way) so the metrics fold-summary cross-check is what rejects.
+    document["backtesting_fold_metric"]["points"][0]["value"] = 99.0
+    document["forecasting_metric_diagnostics"]["metrics"][0]["backtesting_by_origin"]["points"][0][
+        "value"
+    ] = 99.0
+    reasons = validate._internal_native_forecasting_visualizations_compatibility(
+        document, _forecasting_predictive_bundle_overrides(), _v7_metrics(),
+    )
+    assert (
+        "native_forecasting_v7_metric_diagnostics_by_origin_fold_summary_mismatch"
+        in _safe_details(reasons)
+    )
+
+
+def test_native_forecasting_v7_metric_set_mismatch_vs_evaluation_policy_rejects():
+    document = _valid_v7_visualizations_document(metric_ids=("mae",))
+    metrics = _v7_metrics(
+        evaluation_policy_overrides={
+            "primary_metric": {"metric_id": "mae", "direction": "lower_is_better"},
+            "secondary_metrics": [{"metric_id": "rmse", "direction": "lower_is_better"}],
+        }
+    )
+    reasons = validate._internal_native_forecasting_visualizations_compatibility(
+        document, _forecasting_predictive_bundle_overrides(), metrics,
+    )
+    assert "native_forecasting_v7_metric_diagnostics_metric_set_mismatch" in _safe_details(reasons)
+
+
+def test_native_forecasting_v7_final_holdout_contradiction_still_rejects_under_s0270():
+    document = _valid_v7_visualizations_document(forecast_horizon=6)
+    document["final_holdout_forecast_evaluation"]["final_holdout_boundary"]["end_index"] = "1999-12"
+    reasons = validate._internal_native_forecasting_visualizations_compatibility(
+        document, _forecasting_predictive_bundle_overrides(), _v7_metrics(),
+    )
+    assert (
+        "native_forecasting_v6_final_holdout_evaluation_boundary_label_mismatch"
+        in _safe_details(reasons)
+    )
+
+
+def test_native_forecasting_v7_never_routed_as_binary_v5():
+    reasons = validate._internal_native_binary_v5_visualizations_compatibility(
+        _valid_v7_visualizations_document(),
+        {"result_semantics": {"problem_type": "binary_classification"}},
+        {"schema_version": "training-metrics.v5"},
+    )
+    assert reasons != []
+
+
+def test_forecasting_candidate_reaches_valid_true_with_coherent_v7_artifacts(tmp_path):
+    visualizations = _valid_v7_visualizations_document()
+    candidate_dir = _write_forecasting_candidate(
+        tmp_path,
+        predictive_bundle=_forecasting_predictive_bundle_overrides(),
+        metrics=_v7_metrics(),
+        visualizations=visualizations,
+    )
+
+    result = validate.validate_candidate_file(candidate_dir)
+
+    assert result["valid"] is True, result["rejection_reasons"]
+    assert result["schema_compatibility"]["visualizations"]["compatible"] is True
+
+
+def test_forecasting_candidate_rejects_incoherent_v7_metric_diagnostics(tmp_path):
+    visualizations = _valid_v7_visualizations_document()
+    del visualizations["forecasting_metric_diagnostics"]
+    candidate_dir = _write_forecasting_candidate(
+        tmp_path,
+        predictive_bundle=_forecasting_predictive_bundle_overrides(),
+        metrics=_v7_metrics(),
+        visualizations=visualizations,
+    )
+
+    result = validate.validate_candidate_file(candidate_dir)
+
+    assert result["valid"] is False
+    assert result["schema_compatibility"]["visualizations"]["compatible"] is False
 
 
 # ===========================================================================

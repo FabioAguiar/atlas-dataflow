@@ -115,20 +115,26 @@ NATIVE_UNIVARIATE_FORECASTING_MODEL_FAMILY = "deterministic_seasonal_trend_ols"
 NATIVE_UNIVARIATE_FORECASTING_METRIC_NAMES = ("mae", "rmse", "seasonal_mase")
 NATIVE_UNIVARIATE_FORECASTING_BACKTESTING_MODE = "expanding_window"
 
-# Project Spec S0248 / S0270: the strict native univariate-forecasting
+# Project Spec S0248 / S0270 / S0274: the strict native univariate-forecasting
 # analytical visualizations profile -- a bounded seasonal profile, per-fold
-# backtesting primary-metric diagnostic, and per-horizon-step MAE diagnostic,
-# all sourced from the S0244 backtesting/holdout evidence already computed
-# above. Project Spec S0270 advances the producer identity from
-# analytical-visualizations.v4 to analytical-visualizations.v6, which retains
-# every v4 aggregate diagnostic and additionally carries exactly one bounded
-# final_holdout_forecast_evaluation block built from the already-computed
-# one-pass sealed-final-holdout evaluation (holdout_forecast_vector,
-# y_true_holdout, authenticated row labels). It is never a raw development
-# history vector, raw feature/exogenous rows, or model internals. The
+# backtesting primary-metric diagnostic, per-horizon-step MAE diagnostic, and
+# (S0274) a bounded multi-metric backtesting/horizon diagnostic block, all
+# sourced from the S0244 backtesting/holdout evidence already computed above.
+# Project Spec S0270 advanced the producer identity to
+# analytical-visualizations.v6, which retains every v4 aggregate diagnostic and
+# additionally carries exactly one bounded final_holdout_forecast_evaluation
+# block. Project Spec S0274 advances it again to analytical-visualizations.v7,
+# which retains every v6 required property and validation rule and additionally
+# carries a forecasting_metric_diagnostics block with one diagnostic entry per
+# configured governed evaluation metric (mae/rmse/seasonal_mase): a
+# backtesting_by_origin series copied verbatim from the already-computed fold
+# summaries and a by_horizon series aggregated from the same single
+# expanding-window backtest. No second fit/forecast, no raw fold
+# actual/prediction vector, no persisted per-fold seasonal-MASE scale, and no
+# highlighted-score/performance-focus selection is ever read. The
 # training-parameter-record.v4 and training-metrics.v4 identities are
 # deliberately unchanged.
-NATIVE_UNIVARIATE_FORECASTING_ANALYTICAL_VISUALIZATIONS_VERSION = "analytical-visualizations.v6"
+NATIVE_UNIVARIATE_FORECASTING_ANALYTICAL_VISUALIZATIONS_VERSION = "analytical-visualizations.v7"
 NATIVE_UNIVARIATE_FORECASTING_SEASONAL_POPULATION_KIND = "full_development"
 # Project Spec S0270: hard public-safety-compatible maximum number of exact
 # final-holdout evaluation points (matches the forecasting public horizon-
@@ -6404,6 +6410,154 @@ def _native_forecasting_final_holdout_forecast_evaluation(
     }
 
 
+def _native_forecasting_metric_by_horizon_series(
+    metric_id: str,
+    horizon_points: dict[int, list[tuple[float, float]]],
+    horizon_seasonal_scaled_abs_errors: dict[int, list[float]],
+    forecast_horizon: int,
+) -> list[dict[str, Any]]:
+    """Project Spec S0274: derive one reduced by-horizon series for a single
+    configured metric from the already-computed single expanding-window
+    backtest -- never a second fit or forecast. mae = mean(abs_error);
+    rmse = sqrt(mean(squared_error)); seasonal_mase =
+    mean(abs_error / fold_specific_seasonal_mase_scale), each summand already
+    divided by its own fold's scale during the backtest. Horizon steps must be
+    unique, ordered, and cover 1..forecast_horizon without gaps for the current
+    complete-fold expanding-window protocol."""
+    steps = sorted(horizon_points)
+    if steps != list(range(1, forecast_horizon + 1)):
+        raise TrainingInputError(
+            "invalid_preparation_recipe",
+            "backtesting horizon steps do not cover 1..forecast_horizon without gaps for the "
+            "current complete-fold expanding-window protocol.",
+            field="preparation_recipe_path",
+        )
+    points: list[dict[str, Any]] = []
+    for step in steps:
+        step_points = horizon_points[step]
+        observation_count = len(step_points)
+        if observation_count <= 0:
+            raise TrainingInputError(
+                "invalid_metric_value",
+                f"{metric_id} by-horizon step {step} has no contributing observations.",
+                field="evaluation_policy",
+            )
+        if metric_id == "mae":
+            value = sum(abs(t - p) for t, p in step_points) / observation_count
+        elif metric_id == "rmse":
+            value = math.sqrt(
+                sum((t - p) ** 2 for t, p in step_points) / observation_count
+            )
+        elif metric_id == "seasonal_mase":
+            scaled_errors = horizon_seasonal_scaled_abs_errors.get(step, [])
+            if len(scaled_errors) != observation_count:
+                raise TrainingInputError(
+                    "invalid_metric_value",
+                    "seasonal_mase by-horizon aggregation is missing a fold-scaled error for "
+                    f"horizon step {step}.",
+                    field="evaluation_policy.seasonal_period",
+                )
+            value = sum(scaled_errors) / observation_count
+        else:
+            raise TrainingInputError(
+                "unsupported_metric",
+                f"unsupported univariate-forecasting evaluation metric: {metric_id!r}",
+                field="evaluation_policy",
+            )
+        value = _finite_metric_value(f"{metric_id}_by_horizon", value)
+        if isinstance(value, bool) or value < 0:
+            raise TrainingInputError(
+                "invalid_metric_value",
+                f"{metric_id} by-horizon value is negative or non-numeric.",
+                field="evaluation_policy",
+            )
+        points.append({
+            "horizon_step": step,
+            "value": value,
+            "observation_count": observation_count,
+        })
+    return points
+
+
+def _native_forecasting_metric_diagnostics(
+    *,
+    requested_metric_entries: list[dict[str, Any]],
+    fold_summaries: list[dict[str, Any]],
+    horizon_points: dict[int, list[tuple[float, float]]],
+    horizon_seasonal_scaled_abs_errors: dict[int, list[float]],
+    forecast_horizon: int,
+) -> dict[str, Any]:
+    """Project Spec S0274: build the strict bounded forecasting_metric_diagnostics
+    block -- one and only one diagnostic entry for every metric in the exact
+    configured evaluation-policy metric set (primary + de-duplicated
+    secondaries). Each entry's backtesting_by_origin points are copied verbatim
+    from the already-computed fold summaries (no metric formula runs in that
+    extraction path); its by_horizon series is aggregated from the same single
+    expanding-window backtest. Fails closed rather than silently omitting a
+    configured fold/metric."""
+    fold_count = len(fold_summaries)
+    metrics: list[dict[str, Any]] = []
+    seen_metric_ids: set[str] = set()
+    for entry in requested_metric_entries:
+        metric_id = entry["metric_id"]
+        if metric_id not in NATIVE_UNIVARIATE_FORECASTING_METRIC_NAMES:
+            raise TrainingInputError(
+                "unsupported_metric",
+                f"unsupported univariate-forecasting evaluation metric: {metric_id!r}",
+                field="evaluation_policy",
+            )
+        if metric_id in seen_metric_ids:
+            raise TrainingInputError(
+                "invalid_contract_field",
+                f"duplicate configured univariate-forecasting evaluation metric: {metric_id!r}",
+                field="evaluation_policy",
+            )
+        seen_metric_ids.add(metric_id)
+
+        by_origin_points: list[dict[str, Any]] = []
+        for summary in fold_summaries:
+            metric_value = next(
+                (
+                    item["value"]
+                    for item in summary["metrics"]
+                    if item["name"] == metric_id
+                ),
+                None,
+            )
+            if metric_value is None:
+                raise TrainingInputError(
+                    "missing_primary_metric",
+                    "a backtesting fold summary is missing a configured evaluation metric "
+                    "required for the multi-metric backtesting diagnostic.",
+                    field="evaluation_policy",
+                )
+            by_origin_points.append({
+                "fold_index": summary["fold_index"],
+                "forecast_origin": summary["forecast_origin"],
+                "value": metric_value,
+                "validation_observations": summary["validation_observations"],
+            })
+
+        metrics.append({
+            "metric_id": metric_id,
+            "direction": "lower_is_better",
+            "backtesting_by_origin": {
+                "fold_count": fold_count,
+                "points": by_origin_points,
+            },
+            "by_horizon": {
+                "points": _native_forecasting_metric_by_horizon_series(
+                    metric_id,
+                    horizon_points,
+                    horizon_seasonal_scaled_abs_errors,
+                    forecast_horizon,
+                ),
+            },
+        })
+
+    return {"metrics": metrics}
+
+
 def _build_native_univariate_forecasting_analytical_visualizations_artifact(
     *,
     final_development_history: list[float],
@@ -6414,6 +6568,7 @@ def _build_native_univariate_forecasting_analytical_visualizations_artifact(
     final_holdout_observation_count: int,
     fold_summaries: list[dict[str, Any]],
     horizon_mae: list[dict[str, Any]],
+    forecasting_metric_diagnostics: dict[str, Any],
     primary_metric_id: str,
     final_holdout_labels: list[str],
     y_true_holdout: list[float],
@@ -6426,12 +6581,14 @@ def _build_native_univariate_forecasting_analytical_visualizations_artifact(
     output_directory: Path,
     training_timestamp: str,
 ) -> dict[str, Any]:
-    """Project Spec S0248 / S0270: builds the strict
-    analytical-visualizations.v6 artifact from evidence the S0244
+    """Project Spec S0248 / S0270 / S0274: builds the strict
+    analytical-visualizations.v7 artifact from evidence the S0244
     backtest/final-fit above already computed in memory -- never a second fold
     prediction pass, a second final-holdout prediction pass, or another model
-    fit. v6 retains every v4 aggregate diagnostic and additionally carries the
-    bounded final_holdout_forecast_evaluation block."""
+    fit. v7 retains every v6 aggregate/final-holdout diagnostic and additionally
+    carries the bounded forecasting_metric_diagnostics block (one entry per
+    configured governed evaluation metric) supplied by the caller from the same
+    single expanding-window backtest."""
     seasonal_points = _native_forecasting_seasonal_profile(final_development_history, seasonal_period)
 
     fold_points: list[dict[str, Any]] = []
@@ -6504,6 +6661,7 @@ def _build_native_univariate_forecasting_analytical_visualizations_artifact(
             final_holdout_start_label=final_holdout_start_label,
             final_holdout_end_label=final_holdout_end_label,
         ),
+        "forecasting_metric_diagnostics": forecasting_metric_diagnostics,
         "evidence_policy": {
             "raw_logs_prohibited": True,
             "raw_runtime_prohibited": True,
@@ -6579,6 +6737,11 @@ def _train_native_univariate_forecasting_fixed_configuration(
     pooled_pred: list[float] = []
     pooled_seasonal_mase_ratios: list[float] = []
     horizon_points: dict[int, list[tuple[float, float]]] = {}
+    # Project Spec S0274: the minimum reduced intermediate needed to aggregate a
+    # fold-scale-aware Seasonal-MASE by horizon step without a second forecast --
+    # each entry is already divided by that fold's own seasonal scale, so the
+    # raw scale is never retained past the fold or persisted as an artifact.
+    horizon_seasonal_scaled_abs_errors: dict[int, list[float]] = {}
 
     # Project Spec S0244 (Desired Change J): the frozen expanding-window
     # backtest. No candidate search, no hyperparameter tuning, no
@@ -6623,11 +6786,17 @@ def _train_native_univariate_forecasting_fixed_configuration(
 
         pooled_true.extend(y_true)
         pooled_pred.extend(y_pred)
-        if "seasonal_mase" in fold_scales:
-            scale = fold_scales["seasonal_mase"]
-            pooled_seasonal_mase_ratios.extend(abs(t - p) / scale for t, p in zip(y_true, y_pred))
+        fold_seasonal_scale = fold_scales.get("seasonal_mase")
+        if fold_seasonal_scale is not None:
+            pooled_seasonal_mase_ratios.extend(
+                abs(t - p) / fold_seasonal_scale for t, p in zip(y_true, y_pred)
+            )
         for step, (t, p) in enumerate(zip(y_true, y_pred), start=1):
             horizon_points.setdefault(step, []).append((t, p))
+            if fold_seasonal_scale is not None:
+                horizon_seasonal_scaled_abs_errors.setdefault(step, []).append(
+                    abs(t - p) / fold_seasonal_scale
+                )
 
     pooled_metric_values: dict[str, float] = {}
     for entry in requested_metric_entries:
@@ -6651,6 +6820,17 @@ def _train_native_univariate_forecasting_fixed_configuration(
             "mae": step_mae,
             "observation_count": len(points),
         })
+
+    # Project Spec S0274: one and only one diagnostic entry per configured
+    # governed evaluation metric, built from the same single expanding-window
+    # backtest above -- no second fit/forecast, no persisted raw fold vectors.
+    forecasting_metric_diagnostics = _native_forecasting_metric_diagnostics(
+        requested_metric_entries=requested_metric_entries,
+        fold_summaries=fold_summaries,
+        horizon_points=horizon_points,
+        horizon_seasonal_scaled_abs_errors=horizon_seasonal_scaled_abs_errors,
+        forecast_horizon=forecast_horizon,
+    )
 
     # Project Spec S0244 (Desired Change L): fresh final fit on the complete
     # development partition, frozen before the sealed final holdout opens.
@@ -6789,6 +6969,7 @@ def _train_native_univariate_forecasting_fixed_configuration(
         final_holdout_observation_count=len(y_true_holdout),
         fold_summaries=fold_summaries,
         horizon_mae=horizon_mae,
+        forecasting_metric_diagnostics=forecasting_metric_diagnostics,
         primary_metric_id=contract["evaluation_policy"]["primary_metric"]["metric_id"],
         final_holdout_labels=final_holdout_labels,
         y_true_holdout=y_true_holdout,

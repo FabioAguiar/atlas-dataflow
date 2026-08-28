@@ -14,6 +14,7 @@ from __future__ import annotations
 import csv
 import inspect
 import json
+import math
 import sys
 from pathlib import Path
 
@@ -36,6 +37,8 @@ from pipeline.training import (
     _forecast_mae,
     _forecast_rmse,
     _forecast_seasonal_mase,
+    _native_forecasting_metric_by_horizon_series,
+    _native_forecasting_metric_diagnostics,
     _seasonal_mase_scale,
     train_from_paths,
 )
@@ -857,7 +860,7 @@ def test_v4_missing_seasonal_position_fails_closed(
 # ---------------------------------------------------------------------------
 
 
-def test_v6_is_the_current_producer_identity_while_record_and_metrics_stay_v4(
+def test_v7_is_the_current_producer_identity_while_record_and_metrics_stay_v4(
     fixed_training_environment: Path, tmp_path: Path,
 ) -> None:
     _result, output_directory = _run(fixed_training_environment, tmp_path)
@@ -865,12 +868,14 @@ def test_v6_is_the_current_producer_identity_while_record_and_metrics_stay_v4(
     metrics_doc = json.loads((output_directory / METRICS_ARTIFACT_FILENAME).read_text())
     record_doc = json.loads((output_directory / TRAINING_PARAMETER_RECORD_FILENAME).read_text())
 
-    assert visualizations_doc["schema_version"] == "analytical-visualizations.v6"
-    assert NATIVE_UNIVARIATE_FORECASTING_ANALYTICAL_VISUALIZATIONS_VERSION == "analytical-visualizations.v6"
+    assert visualizations_doc["schema_version"] == "analytical-visualizations.v7"
+    assert NATIVE_UNIVARIATE_FORECASTING_ANALYTICAL_VISUALIZATIONS_VERSION == "analytical-visualizations.v7"
     assert metrics_doc["schema_version"] == "training-metrics.v4"
     assert NATIVE_UNIVARIATE_FORECASTING_TRAINING_METRICS_VERSION == "training-metrics.v4"
     assert record_doc["schema_version"] == "training-parameter-record.v4"
     assert NATIVE_UNIVARIATE_FORECASTING_TRAINING_PARAMETER_RECORD_VERSION == "training-parameter-record.v4"
+    # v7 retains the S0270 final-holdout evidence unchanged.
+    assert visualizations_doc["final_holdout_forecast_evaluation"]["partition_role"] == "final_holdout"
 
 
 def test_v6_final_holdout_evaluation_uses_authenticated_labels_actuals_and_scored_forecasts(
@@ -999,6 +1004,235 @@ def test_no_external_study_access(fixed_training_environment: Path, tmp_path: Pa
     for forbidden in ("nottem", "nottingham", "dataset-study", "statsmodels"):
         assert forbidden not in record_text.lower()
         assert forbidden not in metrics_text.lower()
+
+
+# ---------------------------------------------------------------------------
+# analytical-visualizations.v7 governed multi-metric backtesting and horizon
+# diagnostic evidence (Project Spec S0274): the producer identity now emits v7,
+# retaining every v6 diagnostic and adding a forecasting_metric_diagnostics
+# block with one entry per configured governed evaluation metric, all derived
+# from the same single S0244 expanding-window backtest.
+# ---------------------------------------------------------------------------
+
+
+def _v7_diagnostics(output_directory: Path) -> list[dict]:
+    return _load_visualizations(output_directory)["forecasting_metric_diagnostics"]["metrics"]
+
+
+def test_v7_run_emits_one_diagnostic_entry_per_configured_metric(
+    fixed_training_environment: Path, tmp_path: Path,
+) -> None:
+    _result, output_directory = _run(fixed_training_environment, tmp_path)
+    visualizations_doc = _load_visualizations(output_directory)
+    metrics_doc = json.loads((output_directory / METRICS_ARTIFACT_FILENAME).read_text())
+
+    assert visualizations_doc["schema_version"] == "analytical-visualizations.v7"
+    diagnostics = visualizations_doc["forecasting_metric_diagnostics"]["metrics"]
+    configured = [metrics_doc["evaluation_policy"]["primary_metric"]["metric_id"]] + [
+        entry["metric_id"] for entry in metrics_doc["evaluation_policy"]["secondary_metrics"]
+    ]
+    # The synthetic contract configures primary mae + secondary rmse/seasonal_mase.
+    assert configured == ["mae", "rmse", "seasonal_mase"]
+    assert [entry["metric_id"] for entry in diagnostics] == configured
+    for entry in diagnostics:
+        assert entry["direction"] == "lower_is_better"
+        assert set(entry) == {"metric_id", "direction", "backtesting_by_origin", "by_horizon"}
+
+
+def test_v7_still_emits_training_metrics_v4_and_training_parameter_record_v4(
+    fixed_training_environment: Path, tmp_path: Path,
+) -> None:
+    _result, output_directory = _run(fixed_training_environment, tmp_path)
+    metrics_doc = json.loads((output_directory / METRICS_ARTIFACT_FILENAME).read_text())
+    record_doc = json.loads((output_directory / TRAINING_PARAMETER_RECORD_FILENAME).read_text())
+    assert metrics_doc["schema_version"] == "training-metrics.v4"
+    assert record_doc["schema_version"] == "training-parameter-record.v4"
+    # The v7 forecasting_evidence still points at training-metrics.v4 authority.
+    viz = _load_visualizations(output_directory)
+    assert viz["forecasting_evidence"]["training_metrics_schema_version"] == "training-metrics.v4"
+
+
+def test_v7_by_origin_reuses_existing_fold_summary_values(
+    fixed_training_environment: Path, tmp_path: Path,
+) -> None:
+    _result, output_directory = _run(fixed_training_environment, tmp_path)
+    metrics_doc = json.loads((output_directory / METRICS_ARTIFACT_FILENAME).read_text())
+    fold_summaries = metrics_doc["backtesting_evaluation"]["fold_summaries"]
+
+    for entry in _v7_diagnostics(output_directory):
+        metric_id = entry["metric_id"]
+        by_origin = entry["backtesting_by_origin"]
+        assert by_origin["fold_count"] == len(fold_summaries)
+        points_by_fold = {point["fold_index"]: point for point in by_origin["points"]}
+        assert list(points_by_fold) == sorted(points_by_fold)
+        for summary in fold_summaries:
+            point = points_by_fold[summary["fold_index"]]
+            expected = next(
+                item["value"] for item in summary["metrics"] if item["name"] == metric_id
+            )
+            assert point["value"] == pytest.approx(expected)
+            assert point["forecast_origin"] == summary["forecast_origin"]
+            assert point["validation_observations"] == summary["validation_observations"]
+
+
+def test_v7_legacy_primary_fold_metric_matches_multi_metric_by_origin(
+    fixed_training_environment: Path, tmp_path: Path,
+) -> None:
+    _result, output_directory = _run(fixed_training_environment, tmp_path)
+    visualizations_doc = _load_visualizations(output_directory)
+    legacy = visualizations_doc["backtesting_fold_metric"]
+    primary = next(
+        entry for entry in _v7_diagnostics(output_directory) if entry["metric_id"] == legacy["metric_id"]
+    )
+    assert primary["backtesting_by_origin"]["points"] == legacy["points"]
+
+
+def test_v7_legacy_horizon_mae_equals_mae_by_horizon_series(
+    fixed_training_environment: Path, tmp_path: Path,
+) -> None:
+    _result, output_directory = _run(fixed_training_environment, tmp_path)
+    visualizations_doc = _load_visualizations(output_directory)
+    legacy_points = visualizations_doc["horizon_mae"]["points"]
+    mae = next(entry for entry in _v7_diagnostics(output_directory) if entry["metric_id"] == "mae")
+    by_step = {point["horizon_step"]: point for point in mae["by_horizon"]["points"]}
+    assert set(by_step) == {point["horizon_step"] for point in legacy_points}
+    for legacy_point in legacy_points:
+        projected = by_step[legacy_point["horizon_step"]]
+        assert projected["value"] == pytest.approx(legacy_point["mae"])
+        assert projected["observation_count"] == legacy_point["observation_count"]
+
+
+def test_v7_by_horizon_steps_cover_full_range_and_values_are_finite_non_negative(
+    fixed_training_environment: Path, tmp_path: Path,
+) -> None:
+    _result, output_directory = _run(fixed_training_environment, tmp_path)
+    for entry in _v7_diagnostics(output_directory):
+        points = entry["by_horizon"]["points"]
+        assert [point["horizon_step"] for point in points] == [1, 2, 3, 4]
+        for point in points:
+            assert not isinstance(point["value"], bool)
+            assert math.isfinite(point["value"]) and point["value"] >= 0.0
+            assert point["observation_count"] == 2  # one contributing point per fold
+
+
+def test_v7_retains_final_holdout_forecast_evaluation(
+    fixed_training_environment: Path, tmp_path: Path,
+) -> None:
+    _result, output_directory = _run(fixed_training_environment, tmp_path)
+    block = _load_visualizations(output_directory)["final_holdout_forecast_evaluation"]
+    assert block["partition_role"] == "final_holdout"
+    assert block["evaluation_count"] == 1
+    assert len(block["points"]) == FORECAST_HORIZON
+
+
+def test_v7_generation_introduces_no_second_fit_or_predict(
+    fixed_training_environment: Path, tmp_path: Path, monkeypatch,
+) -> None:
+    from sklearn.linear_model import LinearRegression
+
+    fit_calls = {"n": 0}
+    predict_calls = {"n": 0}
+    original_fit = LinearRegression.fit
+    original_predict = LinearRegression.predict
+
+    def _counting_fit(self, X, y):
+        fit_calls["n"] += 1
+        return original_fit(self, X, y)
+
+    def _counting_predict(self, X):
+        predict_calls["n"] += 1
+        return original_predict(self, X)
+
+    monkeypatch.setattr(LinearRegression, "fit", _counting_fit)
+    monkeypatch.setattr(LinearRegression, "predict", _counting_predict)
+    _result, output_directory = _run(fixed_training_environment, tmp_path)
+
+    assert _load_visualizations(output_directory)["schema_version"] == "analytical-visualizations.v7"
+    # 2 folds + 1 final development fit; 2 fold forecasts + 1 final-holdout
+    # forecast. Building the multi-metric diagnostics adds no fit and no predict.
+    assert fit_calls["n"] == 3
+    assert predict_calls["n"] == 3
+
+
+def test_v7_never_persists_raw_fold_vectors_or_seasonal_scales(
+    fixed_training_environment: Path, tmp_path: Path,
+) -> None:
+    _result, output_directory = _run(fixed_training_environment, tmp_path)
+    text = (output_directory / ANALYTICAL_VISUALIZATIONS_FILENAME).read_text()
+    for forbidden in (
+        "y_true", "y_pred", "seasonal_scale", "seasonal_mase_scale",
+        "horizon_seasonal_scaled_abs_errors", "abs_error", "squared_error",
+        "scaled_abs", "raw_history",
+    ):
+        assert forbidden not in text
+
+
+def test_v7_by_horizon_helper_formulas_are_correct() -> None:
+    horizon_points = {
+        1: [(10.0, 12.0), (20.0, 17.0)],  # abs 2, 3 ; squared 4, 9
+        2: [(10.0, 10.0), (30.0, 26.0)],  # abs 0, 4 ; squared 0, 16
+    }
+    seasonal_scaled = {
+        1: [2.0 / 4.0, 3.0 / 5.0],
+        2: [0.0 / 4.0, 4.0 / 5.0],
+    }
+    mae = _native_forecasting_metric_by_horizon_series("mae", horizon_points, {}, 2)
+    assert [point["value"] for point in mae] == pytest.approx([2.5, 2.0])
+    assert [point["observation_count"] for point in mae] == [2, 2]
+
+    rmse = _native_forecasting_metric_by_horizon_series("rmse", horizon_points, {}, 2)
+    assert [point["value"] for point in rmse] == pytest.approx(
+        [math.sqrt((4 + 9) / 2), math.sqrt((0 + 16) / 2)]
+    )
+
+    mase = _native_forecasting_metric_by_horizon_series(
+        "seasonal_mase", horizon_points, seasonal_scaled, 2
+    )
+    assert [point["value"] for point in mase] == pytest.approx([(0.5 + 0.6) / 2, (0.0 + 0.8) / 2])
+
+
+def test_v7_by_horizon_helper_fails_closed_on_horizon_gap() -> None:
+    with pytest.raises(TrainingInputError):
+        _native_forecasting_metric_by_horizon_series(
+            "mae", {1: [(1.0, 1.0)], 3: [(1.0, 2.0)]}, {}, 3
+        )
+
+
+def test_v7_metric_diagnostics_helper_fails_closed_on_missing_configured_fold_metric() -> None:
+    with pytest.raises(TrainingInputError) as excinfo:
+        _native_forecasting_metric_diagnostics(
+            requested_metric_entries=[{"metric_id": "mae"}, {"metric_id": "rmse"}],
+            fold_summaries=[
+                {
+                    "fold_index": 1, "forecast_origin": "5", "validation_observations": 2,
+                    "metrics": [{"name": "mae", "value": 1.0}],  # rmse deliberately absent
+                }
+            ],
+            horizon_points={1: [(1.0, 1.0)], 2: [(1.0, 1.0)]},
+            horizon_seasonal_scaled_abs_errors={},
+            forecast_horizon=2,
+        )
+    assert excinfo.value.code == "missing_primary_metric"
+
+
+def test_v7_metric_diagnostics_helper_by_origin_copies_fold_values_verbatim() -> None:
+    block = _native_forecasting_metric_diagnostics(
+        requested_metric_entries=[{"metric_id": "mae"}, {"metric_id": "rmse"}],
+        fold_summaries=[
+            {"fold_index": 1, "forecast_origin": "5", "validation_observations": 2,
+             "metrics": [{"name": "mae", "value": 1.25}, {"name": "rmse", "value": 1.75}]},
+            {"fold_index": 2, "forecast_origin": "7", "validation_observations": 2,
+             "metrics": [{"name": "mae", "value": 0.5}, {"name": "rmse", "value": 0.9}]},
+        ],
+        horizon_points={1: [(1.0, 2.0), (2.0, 2.0)], 2: [(3.0, 3.0), (4.0, 6.0)]},
+        horizon_seasonal_scaled_abs_errors={},
+        forecast_horizon=2,
+    )
+    mae = next(entry for entry in block["metrics"] if entry["metric_id"] == "mae")
+    assert [point["value"] for point in mae["backtesting_by_origin"]["points"]] == [1.25, 0.5]
+    assert mae["backtesting_by_origin"]["fold_count"] == 2
+    rmse = next(entry for entry in block["metrics"] if entry["metric_id"] == "rmse")
+    assert [point["value"] for point in rmse["backtesting_by_origin"]["points"]] == [1.75, 0.9]
 
 
 def test_historical_training_result_construction_remains_compatible() -> None:

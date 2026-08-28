@@ -571,3 +571,164 @@ def test_v6_malformed_aggregate_diagnostic_still_fails_closed():
         _write_release(releases_root, "release-v6-aggbad", artifact)
         with pytest.raises(loader.PublicVisualizationsUnavailableError):
             loader.load_public_visualizations("release-v6-aggbad", releases_root=releases_root)
+
+
+def test_v6_projection_never_carries_metric_diagnostics():
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        _write_release(releases_root, "release-v6-nomd", _valid_v6_artifact())
+        projection = loader.load_public_visualizations("release-v6-nomd", releases_root=releases_root)
+        assert "metric_diagnostics" not in projection["forecasting_diagnostics"]
+
+
+# ---------------------------------------------------------------------------
+# Project Spec S0274: analytical-visualizations.v7 bounded public
+# forecasting_diagnostics.metric_diagnostics projection
+# ---------------------------------------------------------------------------
+
+
+def _metric_diagnostics(*, metric_ids=("mae", "rmse", "seasonal_mase"), forecast_horizon: int = 4) -> dict:
+    return {
+        "metrics": [
+            {
+                "metric_id": metric_id,
+                "direction": "lower_is_better",
+                "backtesting_by_origin": {
+                    "fold_count": 2,
+                    "points": [
+                        {"fold_index": 1, "forecast_origin": "11", "value": 1.2, "validation_observations": 4},
+                        {"fold_index": 2, "forecast_origin": "15", "value": 0.9, "validation_observations": 4},
+                    ],
+                },
+                "by_horizon": {
+                    "points": [
+                        {"horizon_step": step, "value": round(0.3 * step, 4), "observation_count": 2}
+                        for step in range(1, forecast_horizon + 1)
+                    ],
+                },
+            }
+            for metric_id in metric_ids
+        ],
+    }
+
+
+def _valid_v7_artifact(**overrides) -> dict:
+    payload = _valid_v6_artifact()
+    payload["schema_version"] = "analytical-visualizations.v7"
+    payload["forecasting_metric_diagnostics"] = _metric_diagnostics()
+    payload.update(overrides)
+    return payload
+
+
+def test_v7_projection_contains_legacy_diagnostics_evaluation_and_metric_diagnostics():
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        _write_release(releases_root, "release-v7-001", _valid_v7_artifact())
+
+        projection = loader.load_public_visualizations("release-v7-001", releases_root=releases_root)
+
+        diagnostics = projection["forecasting_diagnostics"]
+        # legacy v4/v6 forecasting diagnostics still present and unchanged in shape
+        assert diagnostics["forecast_horizon"] == 4
+        assert "seasonal_profile" in diagnostics
+        assert "backtesting_fold_metric" in diagnostics
+        assert "horizon_mae" in diagnostics
+        # v6 forecasting_evaluation still present
+        assert projection["forecasting_evaluation"]["index_value_kind"] == "calendar_period"
+        # new bounded metric_diagnostics
+        metric_diagnostics = diagnostics["metric_diagnostics"]
+        assert [entry["metric_id"] for entry in metric_diagnostics["metrics"]] == [
+            "mae", "rmse", "seasonal_mase",
+        ]
+
+
+def test_v7_metric_diagnostics_are_bounded_and_expose_no_internals():
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        _write_release(releases_root, "release-v7-002", _valid_v7_artifact())
+
+        projection = loader.load_public_visualizations("release-v7-002", releases_root=releases_root)
+        metric_diagnostics = projection["forecasting_diagnostics"]["metric_diagnostics"]
+
+        for entry in metric_diagnostics["metrics"]:
+            assert set(entry) == {"metric_id", "direction", "backtesting_by_origin", "by_horizon"}
+            assert entry["direction"] == "lower_is_better"
+            assert set(entry["backtesting_by_origin"]) == {"points"}
+            for point in entry["backtesting_by_origin"]["points"]:
+                assert set(point) == {"fold_index", "forecast_origin", "value"}
+            assert set(entry["by_horizon"]) == {"points"}
+            for point in entry["by_horizon"]["points"]:
+                assert set(point) == {"horizon_step", "value", "observation_count"}
+
+        serialized = json.dumps(metric_diagnostics)
+        for forbidden in ("validation_observations", "fold_count", "seasonal_scale", "scale"):
+            assert forbidden not in serialized
+
+
+def test_v7_metric_diagnostics_series_values_are_preserved_verbatim():
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        _write_release(releases_root, "release-v7-003", _valid_v7_artifact())
+
+        projection = loader.load_public_visualizations("release-v7-003", releases_root=releases_root)
+        metrics = projection["forecasting_diagnostics"]["metric_diagnostics"]["metrics"]
+        mae = next(entry for entry in metrics if entry["metric_id"] == "mae")
+        assert [point["value"] for point in mae["backtesting_by_origin"]["points"]] == [1.2, 0.9]
+        assert [point["horizon_step"] for point in mae["by_horizon"]["points"]] == [1, 2, 3, 4]
+        assert [point["value"] for point in mae["by_horizon"]["points"]] == [0.3, 0.6, 0.9, 1.2]
+
+
+def test_v4_projection_never_gains_metric_diagnostics():
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        _write_release(releases_root, "release-v4-nomd", _valid_v4_artifact())
+        projection = loader.load_public_visualizations("release-v4-nomd", releases_root=releases_root)
+        assert "metric_diagnostics" not in projection["forecasting_diagnostics"]
+        assert "forecasting_evaluation" not in projection
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda a: a.pop("forecasting_metric_diagnostics"),
+        lambda a: a["forecasting_metric_diagnostics"].__setitem__("metrics", []),
+        lambda a: a["forecasting_metric_diagnostics"]["metrics"][0].__setitem__("metric_id", "mape"),
+        lambda a: a["forecasting_metric_diagnostics"]["metrics"][0].__setitem__("direction", "higher_is_better"),
+        lambda a: a["forecasting_metric_diagnostics"]["metrics"][1].__setitem__("metric_id", "mae"),  # duplicate
+        lambda a: a["forecasting_metric_diagnostics"]["metrics"][0]["backtesting_by_origin"]["points"][1].__setitem__("fold_index", 1),  # duplicate fold
+        lambda a: a["forecasting_metric_diagnostics"]["metrics"][0]["backtesting_by_origin"]["points"][0].__setitem__("value", float("inf")),
+        lambda a: a["forecasting_metric_diagnostics"]["metrics"][0]["backtesting_by_origin"]["points"][0].__setitem__("forecast_origin", ""),
+        lambda a: a["forecasting_metric_diagnostics"]["metrics"][0]["by_horizon"]["points"][1].__setitem__("horizon_step", 1),  # duplicate step
+        lambda a: a["forecasting_metric_diagnostics"]["metrics"][0]["by_horizon"]["points"][0].__setitem__("value", -0.5),
+        lambda a: a["forecasting_metric_diagnostics"]["metrics"][0]["by_horizon"]["points"][0].__setitem__("value", True),
+        lambda a: a["forecasting_metric_diagnostics"]["metrics"][0]["by_horizon"]["points"][0].__setitem__("observation_count", 0),
+    ],
+)
+def test_v7_malformed_metric_diagnostics_fail_closed(mutation):
+    artifact = _valid_v7_artifact()
+    mutation(artifact)
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        _write_release(releases_root, "release-v7-bad", artifact)
+        with pytest.raises(loader.PublicVisualizationsUnavailableError):
+            loader.load_public_visualizations("release-v7-bad", releases_root=releases_root)
+
+
+def test_v7_malformed_v6_evaluation_still_fails_closed():
+    artifact = _valid_v7_artifact()
+    artifact["final_holdout_forecast_evaluation"]["points"][0]["actual"] = float("nan")
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        _write_release(releases_root, "release-v7-evalbad", artifact)
+        with pytest.raises(loader.PublicVisualizationsUnavailableError):
+            loader.load_public_visualizations("release-v7-evalbad", releases_root=releases_root)
+
+
+def test_v7_malformed_aggregate_diagnostic_still_fails_closed():
+    artifact = _valid_v7_artifact()
+    del artifact["seasonal_profile"]
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        _write_release(releases_root, "release-v7-aggbad", artifact)
+        with pytest.raises(loader.PublicVisualizationsUnavailableError):
+            loader.load_public_visualizations("release-v7-aggbad", releases_root=releases_root)

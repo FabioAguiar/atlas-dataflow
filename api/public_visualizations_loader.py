@@ -61,10 +61,23 @@ _ANALYTICAL_VISUALIZATIONS_INTERNAL_SCHEMA_VERSION_V4 = "analytical-visualizatio
 # early forecasting branch in load_public_visualizations below. A historical
 # v4 release is unchanged and never gains a `forecasting_evaluation` field.
 _ANALYTICAL_VISUALIZATIONS_INTERNAL_SCHEMA_VERSION_V6 = "analytical-visualizations.v6"
+# Project Spec S0274: the governed native univariate-forecasting multi-metric
+# backtesting/horizon diagnostic evolution of v6. v7 projects everything v6
+# projects (dataset_statistics, forecasting_diagnostics legacy fields,
+# forecasting_evaluation) and additionally projects a bounded
+# forecasting_diagnostics.metric_diagnostics block -- metric identity/direction
+# plus bounded by-origin (fold_index/forecast_origin/value) and by-horizon
+# (horizon_step/value/observation_count) points only. Never validation
+# observations, seasonal scales, raw fold errors, or a recomputed metric. A
+# historical v4/v6 release is unchanged and never gains metric_diagnostics.
+_ANALYTICAL_VISUALIZATIONS_INTERNAL_SCHEMA_VERSION_V7 = "analytical-visualizations.v7"
 _FORECASTING_SCHEMA_VERSIONS = (
     _ANALYTICAL_VISUALIZATIONS_INTERNAL_SCHEMA_VERSION_V4,
     _ANALYTICAL_VISUALIZATIONS_INTERNAL_SCHEMA_VERSION_V6,
+    _ANALYTICAL_VISUALIZATIONS_INTERNAL_SCHEMA_VERSION_V7,
 )
+_FORECASTING_SUPPORTED_METRIC_IDS = ("mae", "rmse", "seasonal_mase")
+_MAX_FORECASTING_METRIC_DIAGNOSTICS = 3
 _ACCEPTED_ANALYTICAL_VISUALIZATIONS_SCHEMA_VERSIONS = (
     _ANALYTICAL_VISUALIZATIONS_SCHEMA_VERSION,
     _ANALYTICAL_VISUALIZATIONS_EXTERNAL_SCHEMA_VERSION,
@@ -736,6 +749,123 @@ def _bounded_forecasting_evaluation(visualizations: dict[str, Any]) -> dict[str,
     }
 
 
+def _bounded_forecasting_metric_diagnostics(visualizations: dict[str, Any]) -> dict[str, Any] | None:
+    """Project Spec S0274: bounded public metric_diagnostics projection for a
+    valid analytical-visualizations.v7 artifact. Independently re-validates and
+    bounds the forecasting_metric_diagnostics block (never trusting the
+    producer's/publisher's validation alone) and returns, for every metric,
+    only metric_id/direction plus bounded by-origin (fold_index/forecast_origin/
+    value) and by-horizon (horizon_step/value/observation_count) points.
+    Returns None (fail-closed, never a partial metric set) on any violation.
+    Never exposes validation_observations, fold_count, seasonal scales, raw fold
+    errors, or a recomputed metric; the public loader computes no MAE/RMSE/MASE."""
+    data = visualizations.get("forecasting_metric_diagnostics")
+    if not isinstance(data, dict):
+        return None
+    metrics = data.get("metrics")
+    if (
+        not isinstance(metrics, list)
+        or not metrics
+        or len(metrics) > _MAX_FORECASTING_METRIC_DIAGNOSTICS
+    ):
+        return None
+
+    bounded_metrics: list[dict[str, Any]] = []
+    seen_metric_ids: set[str] = set()
+    for entry in metrics:
+        if not isinstance(entry, dict):
+            return None
+        metric_id = entry.get("metric_id")
+        if metric_id not in _FORECASTING_SUPPORTED_METRIC_IDS or metric_id in seen_metric_ids:
+            return None
+        seen_metric_ids.add(metric_id)
+        if entry.get("direction") != "lower_is_better":
+            return None
+
+        by_origin = entry.get("backtesting_by_origin")
+        if not isinstance(by_origin, dict):
+            return None
+        origin_points = by_origin.get("points")
+        if (
+            not isinstance(origin_points, list)
+            or not origin_points
+            or len(origin_points) > _MAX_FORECASTING_FOLD_POINTS
+        ):
+            return None
+        bounded_origin: list[dict[str, Any]] = []
+        seen_folds: set[int] = set()
+        for point in origin_points:
+            if not isinstance(point, dict):
+                return None
+            fold_index = point.get("fold_index")
+            forecast_origin = point.get("forecast_origin")
+            value = point.get("value")
+            if (
+                not isinstance(fold_index, int)
+                or isinstance(fold_index, bool)
+                or fold_index < 0
+                or fold_index in seen_folds
+            ):
+                return None
+            seen_folds.add(fold_index)
+            if not isinstance(forecast_origin, str) or not forecast_origin:
+                return None
+            if not _is_finite_number(value):
+                return None
+            bounded_origin.append({
+                "fold_index": fold_index,
+                "forecast_origin": forecast_origin,
+                "value": float(value),
+            })
+        bounded_origin.sort(key=lambda item: item["fold_index"])
+
+        by_horizon = entry.get("by_horizon")
+        if not isinstance(by_horizon, dict):
+            return None
+        horizon_points = by_horizon.get("points")
+        if (
+            not isinstance(horizon_points, list)
+            or not horizon_points
+            or len(horizon_points) > _MAX_FORECASTING_HORIZON_POINTS
+        ):
+            return None
+        bounded_horizon: list[dict[str, Any]] = []
+        seen_steps: set[int] = set()
+        for point in horizon_points:
+            if not isinstance(point, dict):
+                return None
+            horizon_step = point.get("horizon_step")
+            value = point.get("value")
+            observation_count = point.get("observation_count")
+            if (
+                not isinstance(horizon_step, int)
+                or isinstance(horizon_step, bool)
+                or horizon_step < 1
+                or horizon_step in seen_steps
+            ):
+                return None
+            seen_steps.add(horizon_step)
+            if not _is_finite_non_negative_number(value):
+                return None
+            if not _is_positive_integer(observation_count):
+                return None
+            bounded_horizon.append({
+                "horizon_step": horizon_step,
+                "value": float(value),
+                "observation_count": observation_count,
+            })
+        bounded_horizon.sort(key=lambda item: item["horizon_step"])
+
+        bounded_metrics.append({
+            "metric_id": metric_id,
+            "direction": "lower_is_better",
+            "backtesting_by_origin": {"points": bounded_origin},
+            "by_horizon": {"points": bounded_horizon},
+        })
+
+    return {"metrics": bounded_metrics}
+
+
 def _safe_projection(value: Any) -> Any:
     if isinstance(value, dict):
         return {
@@ -789,18 +919,28 @@ def load_public_visualizations(
             "Visualizations are not available for this release."
         )
 
-    # Project Spec S0248 / S0270: a v4 or v6 native forecasting artifact
-    # carries no charts/target_distribution_method/feature_importance_method
-    # at all, so it is handled by its own early branch here rather than
-    # through _canonical_public_charts below. A structurally invalid document
-    # degrades to the same bounded unavailable response as a missing one. v6
-    # additionally projects one bounded `forecasting_evaluation`; a historical
-    # v4 release is unchanged and never gains that field.
+    # Project Spec S0248 / S0270 / S0274: a v4, v6, or v7 native forecasting
+    # artifact carries no charts/target_distribution_method/
+    # feature_importance_method at all, so it is handled by its own early branch
+    # here rather than through _canonical_public_charts below. A structurally
+    # invalid document degrades to the same bounded unavailable response as a
+    # missing one. v6 and v7 additionally project one bounded
+    # `forecasting_evaluation`; v7 additionally projects one bounded
+    # `forecasting_diagnostics.metric_diagnostics`. A historical v4 release is
+    # unchanged and never gains either field; a historical v6 release is
+    # unchanged and never gains metric_diagnostics.
     if (
         isinstance(visualizations, dict)
         and visualizations.get("schema_version") in _FORECASTING_SCHEMA_VERSIONS
     ):
-        is_v6 = visualizations.get("schema_version") == _ANALYTICAL_VISUALIZATIONS_INTERNAL_SCHEMA_VERSION_V6
+        schema_version = visualizations.get("schema_version")
+        projects_evaluation = schema_version in (
+            _ANALYTICAL_VISUALIZATIONS_INTERNAL_SCHEMA_VERSION_V6,
+            _ANALYTICAL_VISUALIZATIONS_INTERNAL_SCHEMA_VERSION_V7,
+        )
+        projects_metric_diagnostics = (
+            schema_version == _ANALYTICAL_VISUALIZATIONS_INTERNAL_SCHEMA_VERSION_V7
+        )
         if visualizations.get("artifact_kind") != _ANALYTICAL_VISUALIZATIONS_ARTIFACT_KIND:
             raise PublicVisualizationsUnavailableError(
                 "Visualizations are not available for this release."
@@ -811,6 +951,16 @@ def load_public_visualizations(
             raise PublicVisualizationsUnavailableError(
                 "Visualizations are not available for this release."
             )
+        if projects_metric_diagnostics:
+            metric_diagnostics = _bounded_forecasting_metric_diagnostics(visualizations)
+            if metric_diagnostics is None:
+                raise PublicVisualizationsUnavailableError(
+                    "Visualizations are not available for this release."
+                )
+            forecasting_diagnostics = {
+                **forecasting_diagnostics,
+                "metric_diagnostics": metric_diagnostics,
+            }
         # `charts: []` keeps this payload compatible with the frontend's
         # `toVisualizationsPayload` guard (web/src/lib/livePreviewProjection.ts,
         # out of this spec's edit scope), which only accepts a payload that
@@ -820,7 +970,7 @@ def load_public_visualizations(
             "dataset_statistics": dataset_statistics,
             "forecasting_diagnostics": forecasting_diagnostics,
         }
-        if is_v6:
+        if projects_evaluation:
             forecasting_evaluation = _bounded_forecasting_evaluation(visualizations)
             if forecasting_evaluation is None:
                 raise PublicVisualizationsUnavailableError(

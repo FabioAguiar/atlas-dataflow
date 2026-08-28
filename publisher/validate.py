@@ -1869,10 +1869,22 @@ _INTERNAL_FORECASTING_VISUALIZATIONS_SCHEMA_VERSION_V4 = "analytical-visualizati
 # required final_holdout_forecast_evaluation block that is cross-checked
 # against the already-governed bundle/metrics evidence, never recomputed.
 _INTERNAL_FORECASTING_VISUALIZATIONS_SCHEMA_VERSION_V6 = "analytical-visualizations.v6"
+# Project Spec S0274: analytical-visualizations.v7 is the governed native
+# forecasting multi-metric backtesting/horizon diagnostic evolution of v6. A
+# native forecasting candidate may carry a coherent historical v4 artifact, a
+# coherent v6 artifact, or a coherent v7 artifact -- and no other visualization
+# version. Every v4 aggregate cross-check and every v6 final-holdout cross-check
+# applies identically to v7; v7 additionally carries a required
+# forecasting_metric_diagnostics block that is cross-checked fail-closed against
+# the already-governed training-metrics.v4 fold summaries / evaluation policy and
+# the legacy backtesting_fold_metric / horizon_mae bridges -- never recomputed.
+_INTERNAL_FORECASTING_VISUALIZATIONS_SCHEMA_VERSION_V7 = "analytical-visualizations.v7"
 _INTERNAL_FORECASTING_VISUALIZATIONS_ACCEPTED_SCHEMA_VERSIONS = (
     _INTERNAL_FORECASTING_VISUALIZATIONS_SCHEMA_VERSION_V4,
     _INTERNAL_FORECASTING_VISUALIZATIONS_SCHEMA_VERSION_V6,
+    _INTERNAL_FORECASTING_VISUALIZATIONS_SCHEMA_VERSION_V7,
 )
+_INTERNAL_FORECASTING_SUPPORTED_METRIC_IDS = ("mae", "rmse", "seasonal_mase")
 # Project Spec S0270: hard public-safety-compatible maximum number of exact
 # final-holdout evaluation points (matches the public forecasting horizon-
 # point bound in api/public_visualizations_loader.py).
@@ -2198,17 +2210,303 @@ def _internal_native_forecasting_v6_final_holdout_evaluation_checks(
     return []
 
 
+def _forecasting_configured_metric_id_set(evaluation_policy) -> list | None:
+    """Project Spec S0274: the exact configured governed forecasting metric id
+    set -- evaluation_policy.primary_metric.metric_id plus every
+    evaluation_policy.secondary_metrics[].metric_id, after deterministic
+    de-duplication that preserves first-seen order. Returns None if the policy
+    shape is malformed."""
+    if not isinstance(evaluation_policy, dict):
+        return None
+    primary_metric = evaluation_policy.get("primary_metric")
+    if not isinstance(primary_metric, dict):
+        return None
+    primary_id = primary_metric.get("metric_id")
+    if not isinstance(primary_id, str) or not primary_id:
+        return None
+    ordered = [primary_id]
+    secondary_metrics = evaluation_policy.get("secondary_metrics") or []
+    if not isinstance(secondary_metrics, list):
+        return None
+    for entry in secondary_metrics:
+        if not isinstance(entry, dict):
+            return None
+        secondary_id = entry.get("metric_id")
+        if not isinstance(secondary_id, str) or not secondary_id:
+            return None
+        if secondary_id not in ordered:
+            ordered.append(secondary_id)
+    return ordered
+
+
+def _forecasting_by_origin_series_equal(diagnostic_points, legacy_points) -> bool:
+    """Project Spec S0274: a metric diagnostic's backtesting_by_origin points and
+    the legacy backtesting_fold_metric points describe the identical per-fold
+    series (fold_index / forecast_origin / value / validation_observations),
+    compared fold-index-aligned. Never recomputes a metric."""
+    if not isinstance(diagnostic_points, list) or not isinstance(legacy_points, list):
+        return False
+    if len(diagnostic_points) != len(legacy_points):
+        return False
+    legacy_by_fold = {}
+    for point in legacy_points:
+        if not isinstance(point, dict):
+            return False
+        legacy_by_fold[point.get("fold_index")] = point
+    for point in diagnostic_points:
+        legacy = legacy_by_fold.get(point.get("fold_index"))
+        if not isinstance(legacy, dict):
+            return False
+        if (
+            point.get("forecast_origin") != legacy.get("forecast_origin")
+            or point.get("value") != legacy.get("value")
+            or point.get("validation_observations") != legacy.get("validation_observations")
+        ):
+            return False
+    return True
+
+
+def _forecasting_by_origin_matches_fold_summaries(metric_id, diagnostic_points, fold_summaries) -> bool:
+    """Project Spec S0274: every metric-diagnostic by-origin point equals the
+    corresponding training-metrics.v4 fold summary value for that metric. Never
+    recomputes a metric."""
+    summaries_by_fold = {}
+    for summary in fold_summaries:
+        if not isinstance(summary, dict):
+            return False
+        summaries_by_fold[summary.get("fold_index")] = summary
+    if len(summaries_by_fold) != len(diagnostic_points):
+        return False
+    for point in diagnostic_points:
+        summary = summaries_by_fold.get(point.get("fold_index"))
+        if not isinstance(summary, dict):
+            return False
+        if point.get("forecast_origin") != summary.get("forecast_origin"):
+            return False
+        if point.get("validation_observations") != summary.get("validation_observations"):
+            return False
+        summary_metrics = summary.get("metrics")
+        if not isinstance(summary_metrics, list):
+            return False
+        summary_value = next(
+            (
+                item.get("value")
+                for item in summary_metrics
+                if isinstance(item, dict) and item.get("name") == metric_id
+            ),
+            None,
+        )
+        if summary_value is None or summary_value != point.get("value"):
+            return False
+    return True
+
+
+def _forecasting_mae_by_horizon_matches_legacy(mae_by_horizon_points, legacy_horizon_mae_points) -> bool:
+    """Project Spec S0274: the MAE metric diagnostic by_horizon series equals the
+    legacy horizon_mae series exactly (value/observation_count per step). Never
+    recomputes MAE."""
+    if not isinstance(mae_by_horizon_points, list) or not isinstance(legacy_horizon_mae_points, list):
+        return False
+    if len(mae_by_horizon_points) != len(legacy_horizon_mae_points):
+        return False
+    legacy_by_step = {}
+    for point in legacy_horizon_mae_points:
+        if not isinstance(point, dict):
+            return False
+        legacy_by_step[point.get("horizon_step")] = point
+    for point in mae_by_horizon_points:
+        legacy = legacy_by_step.get(point.get("horizon_step"))
+        if not isinstance(legacy, dict):
+            return False
+        if point.get("value") != legacy.get("mae"):
+            return False
+        if point.get("observation_count") != legacy.get("observation_count"):
+            return False
+    return True
+
+
+def _internal_native_forecasting_v7_metric_diagnostics_checks(
+    visualizations_data: dict,
+    *,
+    forecast_horizon,
+    metrics_data: dict | None,
+) -> list[dict]:
+    """Project Spec S0274: fail-closed validation of the v7
+    forecasting_metric_diagnostics block. Structural rules (supported/unique
+    metric ids, direction, unique fold_index / horizon_step, 1..forecast_horizon
+    coverage, finite non-negative values, positive observation counts), the
+    legacy backtesting_fold_metric / horizon_mae bridges, and -- where
+    training-metrics.v4 is authoritative -- the exact configured metric-id set,
+    fold_count agreement, and by-origin equality with the fold summaries are all
+    enforced. RMSE / Seasonal-MASE by-horizon values are never recomputed from
+    raw data; only the already-governed declarations are cross-checked."""
+    def _reject(safe_detail: str) -> list[dict]:
+        return [_safe_rejection_reason(
+            "contradictory_candidate_artifact",
+            "Native forecasting v7 forecasting_metric_diagnostics is malformed or inconsistent "
+            "with the governed metrics / legacy-bridge evidence.",
+            "visualizations",
+            safe_detail,
+        )]
+
+    if not isinstance(forecast_horizon, int) or isinstance(forecast_horizon, bool) or forecast_horizon <= 0:
+        return _reject("native_forecasting_v7_metric_diagnostics_horizon_invalid")
+    expected_steps = list(range(1, forecast_horizon + 1))
+
+    diagnostics = visualizations_data.get("forecasting_metric_diagnostics")
+    if not isinstance(diagnostics, dict):
+        return _reject("native_forecasting_v7_metric_diagnostics_missing")
+    metrics = diagnostics.get("metrics")
+    if not isinstance(metrics, list) or not (1 <= len(metrics) <= 3):
+        return _reject("native_forecasting_v7_metric_diagnostics_metrics_invalid")
+
+    seen_metric_ids: list[str] = []
+    per_metric_by_origin: dict[str, list] = {}
+    per_metric_by_horizon: dict[str, list] = {}
+    for entry in metrics:
+        if not isinstance(entry, dict):
+            return _reject("native_forecasting_v7_metric_diagnostics_metrics_invalid")
+        metric_id = entry.get("metric_id")
+        if metric_id not in _INTERNAL_FORECASTING_SUPPORTED_METRIC_IDS:
+            return _reject("native_forecasting_v7_metric_diagnostics_unsupported_metric_id")
+        if metric_id in seen_metric_ids:
+            return _reject("native_forecasting_v7_metric_diagnostics_duplicate_metric_id")
+        seen_metric_ids.append(metric_id)
+        if entry.get("direction") != "lower_is_better":
+            return _reject("native_forecasting_v7_metric_diagnostics_direction_invalid")
+
+        by_origin = entry.get("backtesting_by_origin")
+        if not isinstance(by_origin, dict):
+            return _reject("native_forecasting_v7_metric_diagnostics_by_origin_invalid")
+        by_origin_points = by_origin.get("points")
+        if not isinstance(by_origin_points, list) or not by_origin_points:
+            return _reject("native_forecasting_v7_metric_diagnostics_by_origin_invalid")
+        fold_indices: list[int] = []
+        for point in by_origin_points:
+            if not isinstance(point, dict):
+                return _reject("native_forecasting_v7_metric_diagnostics_by_origin_invalid")
+            fold_index = point.get("fold_index")
+            forecast_origin = point.get("forecast_origin")
+            validation_observations = point.get("validation_observations")
+            if not isinstance(fold_index, int) or isinstance(fold_index, bool) or fold_index < 0:
+                return _reject("native_forecasting_v7_metric_diagnostics_by_origin_invalid")
+            if fold_index in fold_indices:
+                return _reject("native_forecasting_v7_metric_diagnostics_by_origin_duplicate_fold")
+            fold_indices.append(fold_index)
+            if not isinstance(forecast_origin, str) or not forecast_origin:
+                return _reject("native_forecasting_v7_metric_diagnostics_by_origin_invalid")
+            if not _is_finite_numeric(point.get("value")):
+                return _reject("native_forecasting_v7_metric_diagnostics_by_origin_value_invalid")
+            if (
+                not isinstance(validation_observations, int)
+                or isinstance(validation_observations, bool)
+                or validation_observations <= 0
+            ):
+                return _reject("native_forecasting_v7_metric_diagnostics_by_origin_invalid")
+        if by_origin.get("fold_count") != len(by_origin_points):
+            return _reject("native_forecasting_v7_metric_diagnostics_by_origin_fold_count_mismatch")
+        per_metric_by_origin[metric_id] = by_origin_points
+
+        by_horizon = entry.get("by_horizon")
+        if not isinstance(by_horizon, dict):
+            return _reject("native_forecasting_v7_metric_diagnostics_by_horizon_invalid")
+        by_horizon_points = by_horizon.get("points")
+        if not isinstance(by_horizon_points, list) or not by_horizon_points:
+            return _reject("native_forecasting_v7_metric_diagnostics_by_horizon_invalid")
+        steps: list[int] = []
+        for point in by_horizon_points:
+            if not isinstance(point, dict):
+                return _reject("native_forecasting_v7_metric_diagnostics_by_horizon_invalid")
+            step = point.get("horizon_step")
+            value = point.get("value")
+            observation_count = point.get("observation_count")
+            if not isinstance(step, int) or isinstance(step, bool) or step < 1:
+                return _reject("native_forecasting_v7_metric_diagnostics_by_horizon_invalid")
+            if step in steps:
+                return _reject("native_forecasting_v7_metric_diagnostics_by_horizon_duplicate_step")
+            steps.append(step)
+            if not _is_finite_numeric(value) or value < 0:
+                return _reject("native_forecasting_v7_metric_diagnostics_by_horizon_value_invalid")
+            if (
+                not isinstance(observation_count, int)
+                or isinstance(observation_count, bool)
+                or observation_count <= 0
+            ):
+                return _reject("native_forecasting_v7_metric_diagnostics_by_horizon_invalid")
+        if sorted(steps) != expected_steps:
+            return _reject("native_forecasting_v7_metric_diagnostics_by_horizon_step_coverage_mismatch")
+        per_metric_by_horizon[metric_id] = by_horizon_points
+
+    # Legacy primary bridge: the primary metric diagnostic by-origin series must
+    # equal the legacy backtesting_fold_metric series.
+    backtesting_fold_metric = visualizations_data.get("backtesting_fold_metric")
+    primary_metric_id = (
+        backtesting_fold_metric.get("metric_id") if isinstance(backtesting_fold_metric, dict) else None
+    )
+    if primary_metric_id not in per_metric_by_origin:
+        return _reject("native_forecasting_v7_metric_diagnostics_primary_metric_absent")
+    if not _forecasting_by_origin_series_equal(
+        per_metric_by_origin[primary_metric_id],
+        backtesting_fold_metric.get("points") if isinstance(backtesting_fold_metric, dict) else None,
+    ):
+        return _reject("native_forecasting_v7_metric_diagnostics_primary_bridge_mismatch")
+
+    # Legacy MAE bridge: when mae is configured its by-horizon series must equal
+    # the legacy horizon_mae series exactly.
+    if "mae" in per_metric_by_horizon:
+        horizon_mae = visualizations_data.get("horizon_mae")
+        if not _forecasting_mae_by_horizon_matches_legacy(
+            per_metric_by_horizon["mae"],
+            horizon_mae.get("points") if isinstance(horizon_mae, dict) else None,
+        ):
+            return _reject("native_forecasting_v7_metric_diagnostics_mae_bridge_mismatch")
+
+    # Cross-check against training-metrics.v4 where that artifact is authoritative.
+    if (
+        isinstance(metrics_data, dict)
+        and metrics_data.get("schema_version") == _INTERNAL_FORECASTING_METRICS_SCHEMA_VERSION
+    ):
+        configured_ids = _forecasting_configured_metric_id_set(metrics_data.get("evaluation_policy"))
+        if configured_ids is None:
+            return _reject("native_forecasting_v7_metric_diagnostics_evaluation_policy_invalid")
+        if set(seen_metric_ids) != set(configured_ids):
+            return _reject("native_forecasting_v7_metric_diagnostics_metric_set_mismatch")
+
+        backtesting_evaluation = metrics_data.get("backtesting_evaluation")
+        fold_summaries = (
+            backtesting_evaluation.get("fold_summaries") if isinstance(backtesting_evaluation, dict) else None
+        )
+        metrics_fold_count = (
+            backtesting_evaluation.get("fold_count") if isinstance(backtesting_evaluation, dict) else None
+        )
+        if isinstance(metrics_fold_count, int) and not isinstance(metrics_fold_count, bool):
+            for points in per_metric_by_origin.values():
+                if len(points) != metrics_fold_count:
+                    return _reject("native_forecasting_v7_metric_diagnostics_by_origin_fold_count_mismatch")
+        if isinstance(fold_summaries, list):
+            for metric_id, points in per_metric_by_origin.items():
+                if not _forecasting_by_origin_matches_fold_summaries(metric_id, points, fold_summaries):
+                    return _reject("native_forecasting_v7_metric_diagnostics_by_origin_fold_summary_mismatch")
+
+    return []
+
+
 def _internal_native_forecasting_visualizations_compatibility(
     visualizations_data: dict | None,
     predictive_bundle_data: dict | None,
     metrics_data: dict | None = None,
 ) -> list[dict]:
-    """Project Spec S0248: full fail-closed compatibility check for a native
-    forecasting candidate's analytical-visualizations.v4 artifact against its
-    predictive bundle and (when present) training-metrics.v4 artifact.
-    Mirrors the internal native continuous-regression visualizations
-    compatibility discipline above. Never recomputes visual evidence -- only
-    cross-checks the already-governed declarations for agreement."""
+    """Project Spec S0248 / S0270 / S0274: full fail-closed compatibility check
+    for a native forecasting candidate's analytical-visualizations.v4 (historical
+    aggregate), .v6 (final-holdout evolution), or .v7 (governed multi-metric
+    backtesting/horizon diagnostic evolution) artifact against its predictive
+    bundle and (when present) training-metrics.v4 artifact. Every v4 aggregate
+    cross-check applies to v6 and v7 identically; every v6 final-holdout
+    cross-check applies to v7 identically; v7 additionally validates the bounded
+    forecasting_metric_diagnostics block. Mirrors the internal native
+    continuous-regression visualizations compatibility discipline above. Never
+    recomputes visual evidence -- only cross-checks the already-governed
+    declarations for agreement."""
     if not isinstance(visualizations_data, dict) or not isinstance(predictive_bundle_data, dict):
         return []
     if (
@@ -2289,7 +2587,10 @@ def _internal_native_forecasting_visualizations_compatibility(
     # the already-governed bundle horizon, visualizations dataset_statistics,
     # and (when present) the metrics artifact. Never recompute predictions or
     # metrics.
-    if visualizations_data.get("schema_version") == _INTERNAL_FORECASTING_VISUALIZATIONS_SCHEMA_VERSION_V6:
+    if visualizations_data.get("schema_version") in (
+        _INTERNAL_FORECASTING_VISUALIZATIONS_SCHEMA_VERSION_V6,
+        _INTERNAL_FORECASTING_VISUALIZATIONS_SCHEMA_VERSION_V7,
+    ):
         v6_reasons = _internal_native_forecasting_v6_final_holdout_evaluation_checks(
             visualizations_data,
             forecast_horizon=visualizations_horizon,
@@ -2299,6 +2600,21 @@ def _internal_native_forecasting_visualizations_compatibility(
         )
         if v6_reasons:
             return v6_reasons
+
+    # Project Spec S0274: a v7 artifact additionally carries a bounded
+    # forecasting_metric_diagnostics block. Every v4 aggregate check and every
+    # v6 final-holdout check above applies identically; the v7 block is then
+    # validated fail-closed and cross-checked against training-metrics.v4 and
+    # the legacy backtesting_fold_metric / horizon_mae bridges. Never recompute
+    # a metric or a forecast.
+    if visualizations_data.get("schema_version") == _INTERNAL_FORECASTING_VISUALIZATIONS_SCHEMA_VERSION_V7:
+        v7_reasons = _internal_native_forecasting_v7_metric_diagnostics_checks(
+            visualizations_data,
+            forecast_horizon=visualizations_horizon,
+            metrics_data=metrics_data,
+        )
+        if v7_reasons:
+            return v7_reasons
 
     if not isinstance(metrics_data, dict) or metrics_data.get("schema_version") != _INTERNAL_FORECASTING_METRICS_SCHEMA_VERSION:
         return []

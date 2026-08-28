@@ -361,13 +361,14 @@
                     "analytical-visualizations.v2",
                     "analytical-visualizations.v3",
                     "analytical-visualizations.v4",
-                    "analytical-visualizations.v6"
+                    "analytical-visualizations.v6",
+                    "analytical-visualizations.v7"
                   ]
                 }
               }
             }
           ],
-          "description": "Project Spec S0128: required, release-bound analytical visualizations artifact reference (Target Distribution and Feature Importance), produced during governed training. Project Spec S0227 additively admits the analytical-visualizations.v2 (Project Spec S0216, native multiclass) contract-version vocabulary already produced by governed training, and reserves analytical-visualizations.v3 as future continuous-regression contract-version vocabulary only -- no v3 visualization schema/content is defined by this spec, and the visualization role remains required (never optional) for every provenance. Project Spec S0247 additionally reserves analytical-visualizations.v4 as native univariate-forecasting contract-version vocabulary. Project Spec S0270 additively admits analytical-visualizations.v6 -- the governed native forecasting final-holdout visual-evidence evolution of v4 (never a generic v6 for every model family); v4 remains admitted as historical forecasting evidence. analytical-visualizations.v5 (native binary fixed-configuration) is intentionally not part of this enum and is unchanged by S0270."
+          "description": "Project Spec S0128: required, release-bound analytical visualizations artifact reference (Target Distribution and Feature Importance), produced during governed training. Project Spec S0227 additively admits the analytical-visualizations.v2 (Project Spec S0216, native multiclass) contract-version vocabulary already produced by governed training, and reserves analytical-visualizations.v3 as future continuous-regression contract-version vocabulary only -- no v3 visualization schema/content is defined by this spec, and the visualization role remains required (never optional) for every provenance. Project Spec S0247 additionally reserves analytical-visualizations.v4 as native univariate-forecasting contract-version vocabulary. Project Spec S0270 additively admits analytical-visualizations.v6 -- the governed native forecasting final-holdout visual-evidence evolution of v4 (never a generic v6 for every model family); v4 remains admitted as historical forecasting evidence. Project Spec S0274 additively admits analytical-visualizations.v7 -- the governed native forecasting multi-metric backtesting and horizon diagnostic evolution of v6; v4 and v6 remain admitted as historical forecasting evidence. analytical-visualizations.v5 (native binary fixed-configuration) is intentionally not part of this enum and is unchanged by S0270/S0274."
         },
         "inference_bundle": {
           "allOf": [

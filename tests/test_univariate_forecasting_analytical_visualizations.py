@@ -164,6 +164,39 @@ def _valid_v6_document(**overrides) -> dict:
     return payload
 
 
+def _metric_diagnostics(*, metric_ids=("mae", "rmse", "seasonal_mase"), forecast_horizon: int = 4) -> dict:
+    return {
+        "metrics": [
+            {
+                "metric_id": metric_id,
+                "direction": "lower_is_better",
+                "backtesting_by_origin": {
+                    "fold_count": 2,
+                    "points": [
+                        {"fold_index": 1, "forecast_origin": "11", "value": 1.2, "validation_observations": 4},
+                        {"fold_index": 2, "forecast_origin": "15", "value": 0.9, "validation_observations": 4},
+                    ],
+                },
+                "by_horizon": {
+                    "points": [
+                        {"horizon_step": step, "value": round(0.3 * step, 4), "observation_count": 2}
+                        for step in range(1, forecast_horizon + 1)
+                    ],
+                },
+            }
+            for metric_id in metric_ids
+        ],
+    }
+
+
+def _valid_v7_document(**overrides) -> dict:
+    payload = _valid_v6_document()
+    payload["schema_version"] = "analytical-visualizations.v7"
+    payload["forecasting_metric_diagnostics"] = _metric_diagnostics()
+    payload.update(overrides)
+    return payload
+
+
 # ---------------------------------------------------------------------------
 # Direct schema validity
 # ---------------------------------------------------------------------------
@@ -181,13 +214,14 @@ def test_directly_constructed_v6_document_validates():
     _schema_validator().validate(_valid_v6_document())
 
 
-def test_producer_identity_is_now_v6_and_v4_remains_its_own_historical_branch():
+def test_producer_identity_is_now_v7_and_v4_v6_remain_historical_branches():
     if jsonschema is None:
         pytest.skip("jsonschema not installed")
-    assert NATIVE_UNIVARIATE_FORECASTING_ANALYTICAL_VISUALIZATIONS_VERSION == "analytical-visualizations.v6"
-    # v4 stays accepted, unchanged, as historical aggregate forecasting evidence.
+    assert NATIVE_UNIVARIATE_FORECASTING_ANALYTICAL_VISUALIZATIONS_VERSION == "analytical-visualizations.v7"
+    # v4 and v6 stay accepted, unchanged, as historical forecasting evidence.
     _schema_validator().validate(_valid_v4_document())
-    assert _valid_v6_document()["schema_version"] == NATIVE_UNIVARIATE_FORECASTING_ANALYTICAL_VISUALIZATIONS_VERSION
+    _schema_validator().validate(_valid_v6_document())
+    assert _valid_v7_document()["schema_version"] == NATIVE_UNIVARIATE_FORECASTING_ANALYTICAL_VISUALIZATIONS_VERSION
 
 
 def test_v4_remains_aggregate_only_and_rejects_the_v6_only_final_holdout_block():
@@ -260,6 +294,128 @@ def test_v6_rejects_invalid_boundary_count_or_point_structures(mutation):
     document = _valid_v6_document(final_holdout_forecast_evaluation=block)
     with pytest.raises(jsonschema.ValidationError):
         _schema_validator().validate(document)
+
+
+# ---------------------------------------------------------------------------
+# Project Spec S0274: analytical-visualizations.v7 governed multi-metric
+# backtesting/horizon diagnostic profile
+# ---------------------------------------------------------------------------
+
+
+def test_directly_constructed_v7_document_validates():
+    if jsonschema is None:
+        pytest.skip("jsonschema not installed")
+    _schema_validator().validate(_valid_v7_document())
+
+
+def test_v7_requires_the_forecasting_metric_diagnostics_block():
+    if jsonschema is None:
+        pytest.skip("jsonschema not installed")
+    document = _valid_v7_document()
+    del document["forecasting_metric_diagnostics"]
+    with pytest.raises(jsonschema.ValidationError):
+        _schema_validator().validate(document)
+
+
+def test_v7_still_requires_every_v6_field_including_final_holdout_block():
+    if jsonschema is None:
+        pytest.skip("jsonschema not installed")
+    for removed in (
+        "final_holdout_forecast_evaluation", "seasonal_profile", "backtesting_fold_metric",
+        "horizon_mae", "dataset_statistics",
+    ):
+        document = _valid_v7_document()
+        del document[removed]
+        with pytest.raises(jsonschema.ValidationError):
+            _schema_validator().validate(document)
+
+
+def test_v7_retains_every_v6_diagnostic_unchanged():
+    document = _valid_v7_document()
+    v6 = _valid_v6_document()
+    for key in ("forecasting_evidence", "dataset_statistics", "seasonal_profile",
+                "backtesting_fold_metric", "horizon_mae", "final_holdout_forecast_evaluation",
+                "evidence_policy"):
+        assert document[key] == v6[key]
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda b: b["metrics"][0].__setitem__("metric_id", "mape"),
+        lambda b: b["metrics"][0].__setitem__("direction", "higher_is_better"),
+        lambda b: b["metrics"][0].__setitem__("unexpected", "x"),
+        lambda b: b.__setitem__("metrics", []),
+        lambda b: b.__setitem__("metrics", b["metrics"] + b["metrics"]),  # 6 entries > maxItems 3
+        lambda b: b["metrics"][0]["backtesting_by_origin"]["points"][0].__setitem__("fold_index", -1),
+        lambda b: b["metrics"][0]["backtesting_by_origin"]["points"][0].__setitem__("forecast_origin", ""),
+        lambda b: b["metrics"][0]["backtesting_by_origin"]["points"][0].pop("validation_observations"),
+        lambda b: b["metrics"][0]["backtesting_by_origin"]["points"][0].__setitem__("validation_observations", 0),
+        lambda b: b["metrics"][0]["backtesting_by_origin"].pop("fold_count"),
+        lambda b: b["metrics"][0]["by_horizon"]["points"][0].__setitem__("horizon_step", 0),
+        lambda b: b["metrics"][0]["by_horizon"]["points"][0].__setitem__("value", -1.0),
+        lambda b: b["metrics"][0]["by_horizon"]["points"][0].__setitem__("observation_count", 0),
+        lambda b: b["metrics"][0]["by_horizon"]["points"][0].pop("value"),
+    ],
+)
+def test_v7_rejects_malformed_metric_diagnostics(mutation):
+    if jsonschema is None:
+        pytest.skip("jsonschema not installed")
+    block = _metric_diagnostics()
+    mutation(block)
+    document = _valid_v7_document(forecasting_metric_diagnostics=block)
+    with pytest.raises(jsonschema.ValidationError):
+        _schema_validator().validate(document)
+
+
+def test_v7_duplicate_metric_id_is_enforced_by_producer_not_structural_schema():
+    # JSON Schema cannot express array-item uniqueness on a nested key; the
+    # producer (_native_forecasting_metric_diagnostics) and publisher validation
+    # enforce "no duplicate metric_id" -- see
+    # tests/test_native_univariate_forecasting_training.py and
+    # tests/test_univariate_forecasting_candidate_publisher.py.
+    if jsonschema is None:
+        pytest.skip("jsonschema not installed")
+    block = _metric_diagnostics(metric_ids=("mae", "mae"))
+    _schema_validator().validate(_valid_v7_document(forecasting_metric_diagnostics=block))
+
+
+def test_v6_remains_valid_without_the_v7_only_field():
+    if jsonschema is None:
+        pytest.skip("jsonschema not installed")
+    document = _valid_v6_document()
+    assert "forecasting_metric_diagnostics" not in document
+    _schema_validator().validate(document)
+
+
+def test_v6_rejects_a_silently_injected_v7_only_field_because_it_remains_closed():
+    if jsonschema is None:
+        pytest.skip("jsonschema not installed")
+    document = _valid_v6_document()
+    document["forecasting_metric_diagnostics"] = _metric_diagnostics()
+    with pytest.raises(jsonschema.ValidationError):
+        _schema_validator().validate(document)
+
+
+def test_v4_remains_historical_and_rejects_the_v7_only_field():
+    if jsonschema is None:
+        pytest.skip("jsonschema not installed")
+    _schema_validator().validate(_valid_v4_document())
+    document = _valid_v4_document()
+    document["forecasting_metric_diagnostics"] = _metric_diagnostics()
+    with pytest.raises(jsonschema.ValidationError):
+        _schema_validator().validate(document)
+
+
+def test_v7_document_is_the_only_branch_that_matches_its_own_schema_version():
+    if jsonschema is None:
+        pytest.skip("jsonschema not installed")
+    for other_version in ("analytical-visualizations.v1", "analytical-visualizations.v2",
+                          "analytical-visualizations.v3", "analytical-visualizations.v4",
+                          "analytical-visualizations.v5", "analytical-visualizations.v6"):
+        document = _valid_v7_document(schema_version=other_version)
+        with pytest.raises(jsonschema.ValidationError):
+            _schema_validator().validate(document)
 
 
 def test_v6_document_is_the_only_branch_that_matches_its_own_schema_version():
@@ -454,6 +610,7 @@ def _build_artifact(**overrides) -> dict:
         final_holdout_observation_count=4,
         fold_summaries=_synthetic_fold_summaries(),
         horizon_mae=_synthetic_horizon_mae(),
+        forecasting_metric_diagnostics=_metric_diagnostics(metric_ids=("mae", "rmse")),
         primary_metric_id="mae",
         final_holdout_labels=["20", "21", "22", "23"],
         y_true_holdout=[14.0, 12.0, 9.5, 15.0],
@@ -470,12 +627,21 @@ def _build_artifact(**overrides) -> dict:
     return _build_native_univariate_forecasting_analytical_visualizations_artifact(**kwargs)
 
 
-def test_builder_emits_v6_and_validates_against_real_schema():
+def test_builder_emits_v7_and_validates_against_real_schema():
     if jsonschema is None:
         pytest.skip("jsonschema not installed")
     artifact = _build_artifact()
-    assert artifact["schema_version"] == "analytical-visualizations.v6"
+    assert artifact["schema_version"] == "analytical-visualizations.v7"
     _schema_validator().validate(artifact)
+
+
+def test_builder_embeds_supplied_metric_diagnostics_verbatim():
+    block = _metric_diagnostics(metric_ids=("mae", "rmse"))
+    artifact = _build_artifact(forecasting_metric_diagnostics=block)
+    assert artifact["forecasting_metric_diagnostics"] is block
+    assert [entry["metric_id"] for entry in artifact["forecasting_metric_diagnostics"]["metrics"]] == [
+        "mae", "rmse",
+    ]
 
 
 def test_builder_emits_exact_aligned_synthetic_evaluation_points():

@@ -1,0 +1,129 @@
+{
+  "consumed_inputs": {
+    "dataset_path": "pipeline/prepared/nottem/prepared-data.csv",
+    "execution_contract_dataset_id": "nottem",
+    "execution_contract_path": "contracts/nottem/execution-contract.json",
+    "preparation_recipe_path": "pipeline/authoring/nottem/preparation-recipe.json",
+    "prepared_dataset_dataset_id": "nottem"
+  },
+  "controlled_entrypoint_provenance": {
+    "entrypoint": "pipeline.training.train_from_paths",
+    "execution_contract_sha256": "ad8eff4e14fbdce6b40090c7a548a5934f72007a1f4eb20fd47af3e8d2794544",
+    "generated_at": "2026-08-28T20:40:33.492229Z",
+    "marker_id": "185aaa90a1623285c492583815d3f86e56646e1bd9a7494f3ac4dbddb9e0571c",
+    "marker_kind": "controlled_training_entrypoint",
+    "marker_version": "controlled-entrypoint-provenance.v1",
+    "output_directory": "pipeline/training-runs/nottem/train-20260828T204031Z/",
+    "prepared_dataset_sha256": "129cb04c53af3bfb3857c62e6cbf9975c9a564785284f2479abe3d7aeb382955",
+    "run_id": "train-20260828T204031Z"
+  },
+  "evidence_policy": {
+    "private_source_paths_prohibited": true,
+    "raw_api_payloads_prohibited": true,
+    "raw_artifact_contents_prohibited": true,
+    "raw_logs_prohibited": true,
+    "raw_runtime_prohibited": true,
+    "reduced_and_sanitized": true,
+    "secrets_prohibited": true
+  },
+  "forecasting_evidence": {
+    "problem_type": "univariate_forecasting",
+    "result_semantics_schema_version": "univariate-forecasting-result-semantics.v1",
+    "training_policy_schema_version": "univariate-forecasting-training-policy.v1"
+  },
+  "hashes": {
+    "algorithm": "sha256",
+    "execution_contract_sha256": "ad8eff4e14fbdce6b40090c7a548a5934f72007a1f4eb20fd47af3e8d2794544",
+    "metrics_sha256": "9b448e1459536477ce6ee0e5a0d91a2ccd0004ba15c9ef33071922e507b4449c",
+    "model_artifact_sha256": "cec68ba3991dd74b2ee54bfcd062ccc093b5c3d70a5ef159fb8d62c9ee95ce5d",
+    "preparation_recipe_sha256": "e3059592a5aed5fac614f142e911e41d2f0516d6d92d2a190f7ac7fd7e660ef1",
+    "prepared_dataset_sha256": "129cb04c53af3bfb3857c62e6cbf9975c9a564785284f2479abe3d7aeb382955"
+  },
+  "permitted_execution_contract_fields": [
+    "contract_version",
+    "dataset_id",
+    "evaluation_policy",
+    "forecast_horizon",
+    "frequency",
+    "index_value_kind",
+    "problem_type",
+    "random_seed",
+    "result_semantics",
+    "source_exogenous_predictors",
+    "target_column",
+    "temporal_evaluation",
+    "time_index_column",
+    "training_policy"
+  ],
+  "problem_type": "univariate_forecasting",
+  "produced_outputs": {
+    "metrics_path": "pipeline/training-runs/nottem/train-20260828T204031Z/metrics.json",
+    "model_card_input_path": null,
+    "model_selection_evidence_path": null,
+    "serialized_model_path": "pipeline/training-runs/nottem/train-20260828T204031Z/model.pkl",
+    "training_parameter_record_path": "pipeline/training-runs/nottem/train-20260828T204031Z/training-parameter-record.json"
+  },
+  "record_boundary_confirmations": {
+    "controlled_entrypoint_provenance_marker_present": true,
+    "is_metrics_artifact": false,
+    "model_bytes_embedded": false,
+    "notebook_state_embedded": false,
+    "raw_dataset_embedded": false,
+    "unauthorized_contract_fields_consumed": false
+  },
+  "record_kind": "training_parameter_record",
+  "schema_version": "training-parameter-record.v4",
+  "serializer": {
+    "installed_version": "1.5.3",
+    "name": "joblib",
+    "serialization_format_version": "joblib-1.5.3"
+  },
+  "training_parameters": {
+    "backtesting_protocol": {
+      "development_observations": 228,
+      "fold_count": 9,
+      "mode": "expanding_window"
+    },
+    "final_holdout_protocol": {
+      "evaluation_count": 1,
+      "model_frozen_before_open": true,
+      "observation_count": 12
+    },
+    "finalization_policy": {
+      "backtesting_refit_each_fold": true,
+      "final_fit_scope": "full_development",
+      "final_holdout_evaluation_count": 1,
+      "final_holdout_used_for_adjustment": false,
+      "final_holdout_used_for_model_selection": false,
+      "freeze_before_final_holdout_open": true,
+      "no_retuning_after_final_holdout": true
+    },
+    "fixed_model_configuration": {
+      "include_intercept": true,
+      "linear_time_trend": true,
+      "reference_season_position": 0,
+      "seasonal_effects": "additive_indicators",
+      "seasonal_period": 12,
+      "trend_origin": "development_start"
+    },
+    "forecast_horizon": 12,
+    "frequency": "monthly",
+    "model_family": "deterministic_seasonal_trend_ols",
+    "model_selection_performed": false,
+    "primary_metric": "mae",
+    "random_seed": 42,
+    "secondary_metrics": [
+      "rmse",
+      "seasonal_mase"
+    ],
+    "selection_mode": "fixed_configuration",
+    "target_column": "temperature",
+    "time_index_column": "period"
+  },
+  "training_run_identity": {
+    "dataset_slug": "nottem",
+    "output_directory": "pipeline/training-runs/nottem/train-20260828T204031Z/",
+    "run_id": "train-20260828T204031Z"
+  },
+  "training_timestamp": "2026-08-28T20:40:33.492229Z"
+}

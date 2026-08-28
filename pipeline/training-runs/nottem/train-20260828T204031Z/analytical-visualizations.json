@@ -1,0 +1,691 @@
+{
+  "artifact_kind": "analytical_visualizations",
+  "backtesting_fold_metric": {
+    "direction": "lower_is_better",
+    "fold_count": 9,
+    "metric_id": "mae",
+    "points": [
+      {
+        "fold_index": 1,
+        "forecast_origin": "1929-12",
+        "validation_observations": 12,
+        "value": 1.7001388888888809
+      },
+      {
+        "fold_index": 2,
+        "forecast_origin": "1930-12",
+        "validation_observations": 12,
+        "value": 1.845757575757571
+      },
+      {
+        "fold_index": 3,
+        "forecast_origin": "1931-12",
+        "validation_observations": 12,
+        "value": 1.674305555555555
+      },
+      {
+        "fold_index": 4,
+        "forecast_origin": "1932-12",
+        "validation_observations": 12,
+        "value": 2.861752136752546
+      },
+      {
+        "fold_index": 5,
+        "forecast_origin": "1933-12",
+        "validation_observations": 12,
+        "value": 1.833287545787534
+      },
+      {
+        "fold_index": 6,
+        "forecast_origin": "1934-12",
+        "validation_observations": 12,
+        "value": 1.9157936507937787
+      },
+      {
+        "fold_index": 7,
+        "forecast_origin": "1935-12",
+        "validation_observations": 12,
+        "value": 1.6176215277777335
+      },
+      {
+        "fold_index": 8,
+        "forecast_origin": "1936-12",
+        "validation_observations": 12,
+        "value": 1.3961090686274769
+      },
+      {
+        "fold_index": 9,
+        "forecast_origin": "1937-12",
+        "validation_observations": 12,
+        "value": 1.7101715686274848
+      }
+    ]
+  },
+  "created_at": "2026-08-28T20:40:33.492229Z",
+  "dataset_statistics": {
+    "development_observations": 228,
+    "final_holdout_observations": 12,
+    "instance_count": 240
+  },
+  "evidence_policy": {
+    "model_bytes_embedded": false,
+    "notebook_state_embedded": false,
+    "raw_api_payloads_prohibited": true,
+    "raw_dataset_embedded": false,
+    "raw_logs_prohibited": true,
+    "raw_runtime_prohibited": true,
+    "raw_transformed_matrices_embedded": false,
+    "reduced_and_sanitized": true,
+    "secrets_prohibited": true,
+    "serialized_estimator_state_embedded": false
+  },
+  "final_holdout_forecast_evaluation": {
+    "development_boundary": {
+      "end_index": "1938-12",
+      "observation_count": 228,
+      "start_index": "1920-01"
+    },
+    "evaluation_count": 1,
+    "final_holdout_boundary": {
+      "end_index": "1939-12",
+      "observation_count": 12,
+      "start_index": "1939-01"
+    },
+    "forecast_generated_before_target_open": true,
+    "frequency": "monthly",
+    "index_value_kind": "calendar_period",
+    "model_frozen_before_open": true,
+    "partition_role": "final_holdout",
+    "points": [
+      {
+        "actual": 39.4,
+        "forecast": 40.314766081871284,
+        "time_index": "1939-01"
+      },
+      {
+        "actual": 40.9,
+        "forecast": 39.70423976608181,
+        "time_index": "1939-02"
+      },
+      {
+        "actual": 42.4,
+        "forecast": 42.788450292397606,
+        "time_index": "1939-03"
+      },
+      {
+        "actual": 47.8,
+        "forecast": 46.81476608187129,
+        "time_index": "1939-04"
+      },
+      {
+        "actual": 52.4,
+        "forecast": 53.17266081871337,
+        "time_index": "1939-05"
+      },
+      {
+        "actual": 58.0,
+        "forecast": 58.6463450292397,
+        "time_index": "1939-06"
+      },
+      {
+        "actual": 60.7,
+        "forecast": 62.56739766081865,
+        "time_index": "1939-07"
+      },
+      {
+        "actual": 61.8,
+        "forecast": 61.05687134502918,
+        "time_index": "1939-08"
+      },
+      {
+        "actual": 58.2,
+        "forecast": 56.99371345029232,
+        "time_index": "1939-09"
+      },
+      {
+        "actual": 46.7,
+        "forecast": 50.2463450292397,
+        "time_index": "1939-10"
+      },
+      {
+        "actual": 46.6,
+        "forecast": 42.97266081871338,
+        "time_index": "1939-11"
+      },
+      {
+        "actual": 37.8,
+        "forecast": 40.22529239766074,
+        "time_index": "1939-12"
+      }
+    ]
+  },
+  "forecasting_evidence": {
+    "forecast_horizon": 12,
+    "frequency": "monthly",
+    "problem_type": "univariate_forecasting",
+    "result_semantics_schema_version": "univariate-forecasting-result-semantics.v1",
+    "seasonal_period": 12,
+    "training_metrics_schema_version": "training-metrics.v4"
+  },
+  "forecasting_metric_diagnostics": {
+    "metrics": [
+      {
+        "backtesting_by_origin": {
+          "fold_count": 9,
+          "points": [
+            {
+              "fold_index": 1,
+              "forecast_origin": "1929-12",
+              "validation_observations": 12,
+              "value": 1.7001388888888809
+            },
+            {
+              "fold_index": 2,
+              "forecast_origin": "1930-12",
+              "validation_observations": 12,
+              "value": 1.845757575757571
+            },
+            {
+              "fold_index": 3,
+              "forecast_origin": "1931-12",
+              "validation_observations": 12,
+              "value": 1.674305555555555
+            },
+            {
+              "fold_index": 4,
+              "forecast_origin": "1932-12",
+              "validation_observations": 12,
+              "value": 2.861752136752546
+            },
+            {
+              "fold_index": 5,
+              "forecast_origin": "1933-12",
+              "validation_observations": 12,
+              "value": 1.833287545787534
+            },
+            {
+              "fold_index": 6,
+              "forecast_origin": "1934-12",
+              "validation_observations": 12,
+              "value": 1.9157936507937787
+            },
+            {
+              "fold_index": 7,
+              "forecast_origin": "1935-12",
+              "validation_observations": 12,
+              "value": 1.6176215277777335
+            },
+            {
+              "fold_index": 8,
+              "forecast_origin": "1936-12",
+              "validation_observations": 12,
+              "value": 1.3961090686274769
+            },
+            {
+              "fold_index": 9,
+              "forecast_origin": "1937-12",
+              "validation_observations": 12,
+              "value": 1.7101715686274848
+            }
+          ]
+        },
+        "by_horizon": {
+          "points": [
+            {
+              "horizon_step": 1,
+              "observation_count": 9,
+              "value": 1.9757356162808561
+            },
+            {
+              "horizon_step": 2,
+              "observation_count": 9,
+              "value": 1.7081263591620166
+            },
+            {
+              "horizon_step": 3,
+              "observation_count": 9,
+              "value": 2.4720814332274106
+            },
+            {
+              "horizon_step": 4,
+              "observation_count": 9,
+              "value": 1.1905308682331435
+            },
+            {
+              "horizon_step": 5,
+              "observation_count": 9,
+              "value": 1.2698342727080372
+            },
+            {
+              "horizon_step": 6,
+              "observation_count": 9,
+              "value": 1.5046320461947273
+            },
+            {
+              "horizon_step": 7,
+              "observation_count": 9,
+              "value": 2.2895618327297678
+            },
+            {
+              "horizon_step": 8,
+              "observation_count": 9,
+              "value": 2.0756025490034173
+            },
+            {
+              "horizon_step": 9,
+              "observation_count": 9,
+              "value": 1.559160614032076
+            },
+            {
+              "horizon_step": 10,
+              "observation_count": 9,
+              "value": 1.4048791733412083
+            },
+            {
+              "horizon_step": 11,
+              "observation_count": 9,
+              "value": 2.0549292567001762
+            },
+            {
+              "horizon_step": 12,
+              "observation_count": 9,
+              "value": 2.5681760031452447
+            }
+          ]
+        },
+        "direction": "lower_is_better",
+        "metric_id": "mae"
+      },
+      {
+        "backtesting_by_origin": {
+          "fold_count": 9,
+          "points": [
+            {
+              "fold_index": 1,
+              "forecast_origin": "1929-12",
+              "validation_observations": 12,
+              "value": 1.8894640260019513
+            },
+            {
+              "fold_index": 2,
+              "forecast_origin": "1930-12",
+              "validation_observations": 12,
+              "value": 2.2075563319375693
+            },
+            {
+              "fold_index": 3,
+              "forecast_origin": "1931-12",
+              "validation_observations": 12,
+              "value": 2.0251181847226727
+            },
+            {
+              "fold_index": 4,
+              "forecast_origin": "1932-12",
+              "validation_observations": 12,
+              "value": 3.258714499338741
+            },
+            {
+              "fold_index": 5,
+              "forecast_origin": "1933-12",
+              "validation_observations": 12,
+              "value": 2.5360802173861483
+            },
+            {
+              "fold_index": 6,
+              "forecast_origin": "1934-12",
+              "validation_observations": 12,
+              "value": 2.3049554064120965
+            },
+            {
+              "fold_index": 7,
+              "forecast_origin": "1935-12",
+              "validation_observations": 12,
+              "value": 2.1237201900782523
+            },
+            {
+              "fold_index": 8,
+              "forecast_origin": "1936-12",
+              "validation_observations": 12,
+              "value": 1.7737963975045732
+            },
+            {
+              "fold_index": 9,
+              "forecast_origin": "1937-12",
+              "validation_observations": 12,
+              "value": 2.4311046856842666
+            }
+          ]
+        },
+        "by_horizon": {
+          "points": [
+            {
+              "horizon_step": 1,
+              "observation_count": 9,
+              "value": 2.292904923033549
+            },
+            {
+              "horizon_step": 2,
+              "observation_count": 9,
+              "value": 2.1903833746312085
+            },
+            {
+              "horizon_step": 3,
+              "observation_count": 9,
+              "value": 2.8480016476788323
+            },
+            {
+              "horizon_step": 4,
+              "observation_count": 9,
+              "value": 1.5489796172685555
+            },
+            {
+              "horizon_step": 5,
+              "observation_count": 9,
+              "value": 1.4929360253986732
+            },
+            {
+              "horizon_step": 6,
+              "observation_count": 9,
+              "value": 2.021257922701086
+            },
+            {
+              "horizon_step": 7,
+              "observation_count": 9,
+              "value": 2.635506289168129
+            },
+            {
+              "horizon_step": 8,
+              "observation_count": 9,
+              "value": 2.765992142183308
+            },
+            {
+              "horizon_step": 9,
+              "observation_count": 9,
+              "value": 2.0679910373244295
+            },
+            {
+              "horizon_step": 10,
+              "observation_count": 9,
+              "value": 1.5931035837163883
+            },
+            {
+              "horizon_step": 11,
+              "observation_count": 9,
+              "value": 2.576312171214445
+            },
+            {
+              "horizon_step": 12,
+              "observation_count": 9,
+              "value": 3.1152593145198764
+            }
+          ]
+        },
+        "direction": "lower_is_better",
+        "metric_id": "rmse"
+      },
+      {
+        "backtesting_by_origin": {
+          "fold_count": 9,
+          "points": [
+            {
+              "fold_index": 1,
+              "forecast_origin": "1929-12",
+              "validation_observations": 12,
+              "value": 0.5948007774538361
+            },
+            {
+              "fold_index": 2,
+              "forecast_origin": "1930-12",
+              "validation_observations": 12,
+              "value": 0.6489625229736553
+            },
+            {
+              "fold_index": 3,
+              "forecast_origin": "1931-12",
+              "validation_observations": 12,
+              "value": 0.5968358988207759
+            },
+            {
+              "fold_index": 4,
+              "forecast_origin": "1932-12",
+              "validation_observations": 12,
+              "value": 1.0393248617714164
+            },
+            {
+              "fold_index": 5,
+              "forecast_origin": "1933-12",
+              "validation_observations": 12,
+              "value": 0.652951728636656
+            },
+            {
+              "fold_index": 6,
+              "forecast_origin": "1934-12",
+              "validation_observations": 12,
+              "value": 0.6872802334686203
+            },
+            {
+              "fold_index": 7,
+              "forecast_origin": "1935-12",
+              "validation_observations": 12,
+              "value": 0.5797926622859261
+            },
+            {
+              "fold_index": 8,
+              "forecast_origin": "1936-12",
+              "validation_observations": 12,
+              "value": 0.4981470752211031
+            },
+            {
+              "fold_index": 9,
+              "forecast_origin": "1937-12",
+              "validation_observations": 12,
+              "value": 0.6145411308789975
+            }
+          ]
+        },
+        "by_horizon": {
+          "points": [
+            {
+              "horizon_step": 1,
+              "observation_count": 9,
+              "value": 0.7052547707276319
+            },
+            {
+              "horizon_step": 2,
+              "observation_count": 9,
+              "value": 0.6101891627186808
+            },
+            {
+              "horizon_step": 3,
+              "observation_count": 9,
+              "value": 0.8829658056220859
+            },
+            {
+              "horizon_step": 4,
+              "observation_count": 9,
+              "value": 0.4260487309464189
+            },
+            {
+              "horizon_step": 5,
+              "observation_count": 9,
+              "value": 0.4537058920904165
+            },
+            {
+              "horizon_step": 6,
+              "observation_count": 9,
+              "value": 0.5363442426189813
+            },
+            {
+              "horizon_step": 7,
+              "observation_count": 9,
+              "value": 0.8197955384274539
+            },
+            {
+              "horizon_step": 8,
+              "observation_count": 9,
+              "value": 0.7423938054406725
+            },
+            {
+              "horizon_step": 9,
+              "observation_count": 9,
+              "value": 0.557247964263601
+            },
+            {
+              "horizon_step": 10,
+              "observation_count": 9,
+              "value": 0.4993987476742062
+            },
+            {
+              "horizon_step": 11,
+              "observation_count": 9,
+              "value": 0.731405770228768
+            },
+            {
+              "horizon_step": 12,
+              "observation_count": 9,
+              "value": 0.9187654245890656
+            }
+          ]
+        },
+        "direction": "lower_is_better",
+        "metric_id": "seasonal_mase"
+      }
+    ]
+  },
+  "horizon_mae": {
+    "points": [
+      {
+        "horizon_step": 1,
+        "mae": 1.9757356162808561,
+        "observation_count": 9
+      },
+      {
+        "horizon_step": 2,
+        "mae": 1.7081263591620166,
+        "observation_count": 9
+      },
+      {
+        "horizon_step": 3,
+        "mae": 2.4720814332274106,
+        "observation_count": 9
+      },
+      {
+        "horizon_step": 4,
+        "mae": 1.1905308682331435,
+        "observation_count": 9
+      },
+      {
+        "horizon_step": 5,
+        "mae": 1.2698342727080372,
+        "observation_count": 9
+      },
+      {
+        "horizon_step": 6,
+        "mae": 1.5046320461947273,
+        "observation_count": 9
+      },
+      {
+        "horizon_step": 7,
+        "mae": 2.2895618327297678,
+        "observation_count": 9
+      },
+      {
+        "horizon_step": 8,
+        "mae": 2.0756025490034173,
+        "observation_count": 9
+      },
+      {
+        "horizon_step": 9,
+        "mae": 1.559160614032076,
+        "observation_count": 9
+      },
+      {
+        "horizon_step": 10,
+        "mae": 1.4048791733412083,
+        "observation_count": 9
+      },
+      {
+        "horizon_step": 11,
+        "mae": 2.0549292567001762,
+        "observation_count": 9
+      },
+      {
+        "horizon_step": 12,
+        "mae": 2.5681760031452447,
+        "observation_count": 9
+      }
+    ]
+  },
+  "schema_version": "analytical-visualizations.v7",
+  "seasonal_profile": {
+    "points": [
+      {
+        "mean_target": 39.71052631578947,
+        "observation_count": 19,
+        "season_position": 0
+      },
+      {
+        "mean_target": 39.1,
+        "observation_count": 19,
+        "season_position": 1
+      },
+      {
+        "mean_target": 42.18421052631579,
+        "observation_count": 19,
+        "season_position": 2
+      },
+      {
+        "mean_target": 46.21052631578947,
+        "observation_count": 19,
+        "season_position": 3
+      },
+      {
+        "mean_target": 52.568421052631585,
+        "observation_count": 19,
+        "season_position": 4
+      },
+      {
+        "mean_target": 58.04210526315789,
+        "observation_count": 19,
+        "season_position": 5
+      },
+      {
+        "mean_target": 61.96315789473684,
+        "observation_count": 19,
+        "season_position": 6
+      },
+      {
+        "mean_target": 60.45263157894736,
+        "observation_count": 19,
+        "season_position": 7
+      },
+      {
+        "mean_target": 56.38947368421053,
+        "observation_count": 19,
+        "season_position": 8
+      },
+      {
+        "mean_target": 49.642105263157895,
+        "observation_count": 19,
+        "season_position": 9
+      },
+      {
+        "mean_target": 42.36842105263158,
+        "observation_count": 19,
+        "season_position": 10
+      },
+      {
+        "mean_target": 39.62105263157895,
+        "observation_count": 19,
+        "season_position": 11
+      }
+    ],
+    "population_kind": "full_development",
+    "seasonal_period": 12
+  },
+  "training_run_identity": {
+    "dataset_slug": "nottem",
+    "output_directory": "pipeline/training-runs/nottem/train-20260828T204031Z/",
+    "run_id": "train-20260828T204031Z"
+  }
+}

@@ -1445,8 +1445,33 @@ function getDatasetLabel(dataset?: DatasetLabelSource) {
   return dataset?.display_title?.trim() || dataset?.title || dataset?.dataset_slug || "No dataset selected";
 }
 
-function getDatasetSelectorValue(dataset?: DatasetLabelSource) {
+// Project Spec S0281: the human-visible filter text for a dataset. This is
+// presentation only -- committed dataset identity is always dataset_slug and
+// is never rediscovered from this string.
+function getDatasetLabelText(dataset?: DatasetLabelSource) {
   return dataset ? getDatasetLabel(dataset) : "";
+}
+
+// Project Spec S0281: normalized (trim + case-insensitive) resolved display
+// label, used only to detect duplicate-title collisions within the current
+// Admin listing so colliding options/triggers can show their stable slug.
+function normalizedDatasetLabelKey(dataset: DatasetLabelSource) {
+  return getDatasetLabel(dataset).trim().toLowerCase();
+}
+
+function datasetLabelCollisionKeys(datasets: DatasetLabelSource[]) {
+  const counts = new Map<string, number>();
+  for (const dataset of datasets) {
+    const key = normalizedDatasetLabelKey(dataset);
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  const colliding = new Set<string>();
+  for (const [key, count] of counts) {
+    if (count > 1) {
+      colliding.add(key);
+    }
+  }
+  return colliding;
 }
 
 // The header renders exactly one publication/private tag for the selected
@@ -1470,7 +1495,10 @@ type DatasetComboBoxProps = {
   selectedDataset?: AdminDatasetListing;
   stateStatus: AdminDatasetState["status"];
   onNormalize: () => void;
+  // Project Spec S0281: transient filter text only -- never commits identity.
   onQueryChange: (value: string) => void;
+  // Project Spec S0281: commits the exact chosen dataset_slug.
+  onSelectDatasetSlug: (datasetSlug: string) => void;
 };
 
 function DatasetComboBox({
@@ -1478,18 +1506,25 @@ function DatasetComboBox({
   disabled,
   onNormalize,
   onQueryChange,
+  onSelectDatasetSlug,
   query,
   selectedDataset,
   stateStatus,
 }: DatasetComboBoxProps) {
   const [open, setOpen] = useState(false);
   const [activeSlug, setActiveSlug] = useState<string | null>(null);
-  const selectedValue = getDatasetSelectorValue(selectedDataset);
+  const selectedValue = getDatasetLabelText(selectedDataset);
+  // Project Spec S0281: duplicate display titles are legitimate for distinct
+  // slugs; detect the collisions once from the current listing so only the
+  // colliding options/trigger surface their slug as secondary disambiguation.
+  const collidingLabelKeys = useMemo(() => datasetLabelCollisionKeys(datasets), [datasets]);
+  const datasetLabelCollides = (dataset?: DatasetLabelSource) =>
+    dataset ? collidingLabelKeys.has(normalizedDatasetLabelKey(dataset)) : false;
   const normalizedQuery = query.trim().toLowerCase();
   const filteredDatasets = normalizedQuery
     ? datasets.filter((dataset) => {
-        const selectorValue = getDatasetSelectorValue(dataset).toLowerCase();
-        return selectorValue.includes(normalizedQuery) || dataset.dataset_slug.toLowerCase().includes(normalizedQuery);
+        const labelValue = getDatasetLabel(dataset).toLowerCase();
+        return labelValue.includes(normalizedQuery) || dataset.dataset_slug.toLowerCase().includes(normalizedQuery);
       })
     : datasets;
   const activeOptionId = filteredDatasets.some((dataset) => dataset.dataset_slug === activeSlug)
@@ -1508,8 +1543,12 @@ function DatasetComboBox({
     onNormalize();
   }
 
+  // Project Spec S0281: both mouse click and keyboard Enter commit exactly
+  // this option's dataset_slug -- never its display title. Closing the
+  // listbox and clearing the active option are the only local effects; the
+  // parent performs presentation-only filter-text normalization.
   function selectDataset(dataset: AdminDatasetListing) {
-    onQueryChange(getDatasetSelectorValue(dataset));
+    onSelectDatasetSlug(dataset.dataset_slug);
     setOpen(false);
     setActiveSlug(null);
   }
@@ -1572,7 +1611,12 @@ function DatasetComboBox({
         }}
         type="button"
       >
-        <span className="dataset-combobox__value">{triggerText}</span>
+        <span className="dataset-combobox__value-group">
+          <span className="dataset-combobox__value">{triggerText}</span>
+          {datasetLabelCollides(selectedDataset) && selectedDataset ? (
+            <span className="dataset-combobox__value-slug">{selectedDataset.dataset_slug}</span>
+          ) : null}
+        </span>
         <svg aria-hidden="true" className="dataset-combobox__chevron" viewBox="0 0 24 24">
           <path d="m6 9 6 6 6-6" />
         </svg>
@@ -1603,10 +1647,12 @@ function DatasetComboBox({
             role="listbox"
           >
             {filteredDatasets.map((dataset) => {
-              const optionValue = getDatasetSelectorValue(dataset);
+              const optionLabel = getDatasetLabel(dataset);
+              const collides = datasetLabelCollides(dataset);
               const selected = dataset.dataset_slug === selectedDataset?.dataset_slug;
               return (
                 <button
+                  aria-label={collides ? `${optionLabel} — ${dataset.dataset_slug}` : undefined}
                   aria-selected={selected}
                   className={["dataset-combobox__option", selected ? "is-selected" : ""].filter(Boolean).join(" ")}
                   id={`dataset-admin-option-${dataset.dataset_slug}`}
@@ -1616,7 +1662,8 @@ function DatasetComboBox({
                   role="option"
                   type="button"
                 >
-                  {optionValue}
+                  <span className="dataset-combobox__option-label">{optionLabel}</span>
+                  {collides ? <span className="dataset-combobox__option-slug">{dataset.dataset_slug}</span> : null}
                 </button>
               );
             })}
@@ -5500,7 +5547,7 @@ export default function DatasetAdminPage() {
 
         setState({ status: "ready", datasets: data.datasets });
         setSelectedSlug((current) => current || data.datasets[0]?.dataset_slug || "");
-        setDatasetQuery(getDatasetSelectorValue(data.datasets[0]));
+        setDatasetQuery(getDatasetLabelText(data.datasets[0]));
       })
       .catch((err: Error) => {
         if (err.name !== "AbortError") {
@@ -6086,18 +6133,30 @@ export default function DatasetAdminPage() {
     ? workspacePublishFeedback.text
     : toolbarPublicationFeedback(publicationState);
 
-  function selectDatasetFromQuery(value: string) {
+  // Project Spec S0281: transient filter text only. Typing here never commits
+  // a dataset identity -- not even when the text exactly equals a display
+  // title shared by several datasets.
+  function updateDatasetQuery(value: string) {
     setDatasetQuery(value);
-    const match = adminDatasets.find(
-      (dataset) => dataset.dataset_slug === value || getDatasetSelectorValue(dataset).toLowerCase() === value.trim().toLowerCase(),
-    );
-    if (match && match.dataset_slug !== selectedSlug) {
+  }
+
+  // Project Spec S0281: the sole option-commit path. A committed slug is
+  // accepted only by exact slug membership in the current Admin listing;
+  // display-title equality is never consulted. The filter-text update is
+  // presentation-only and is not read back to discover the selected identity.
+  function commitDatasetSelection(datasetSlug: string) {
+    const match = adminDatasets.find((dataset) => dataset.dataset_slug === datasetSlug);
+    if (!match) {
+      return;
+    }
+    if (match.dataset_slug !== selectedSlug) {
       setSelectedSlug(match.dataset_slug);
     }
+    setDatasetQuery(getDatasetLabel(match));
   }
 
   function normalizeDatasetQuery() {
-    setDatasetQuery(getDatasetSelectorValue(selectedAdminDataset));
+    setDatasetQuery(getDatasetLabelText(selectedAdminDataset));
   }
 
   function setField<K extends keyof DraftForm>(key: K, value: DraftForm[K]) {
@@ -6194,7 +6253,7 @@ export default function DatasetAdminPage() {
                 }
               : current,
           );
-          setDatasetQuery((current) => (current === getDatasetSelectorValue(selectedAdminDataset) ? nextDisplayTitle : current));
+          setDatasetQuery((current) => (current === getDatasetLabelText(selectedAdminDataset) ? nextDisplayTitle : current));
         }
         // Project Spec S0116: a successful content publish can change
         // review/snapshot/reachability, so the publication-state projection
@@ -6866,7 +6925,8 @@ export default function DatasetAdminPage() {
             datasets={adminDatasets}
             disabled={adminDatasetsState.status !== "ready" || adminDatasets.length === 0}
             onNormalize={normalizeDatasetQuery}
-            onQueryChange={selectDatasetFromQuery}
+            onQueryChange={updateDatasetQuery}
+            onSelectDatasetSlug={commitDatasetSelection}
             query={datasetQuery}
             selectedDataset={selectedAdminDataset}
             stateStatus={adminDatasetsState.status}

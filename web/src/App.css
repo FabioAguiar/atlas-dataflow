@@ -3084,6 +3084,27 @@ h1 {
   white-space: nowrap;
 }
 
+/* Project Spec S0281: two-line trigger content when the selected dataset's
+   display title collides with another dataset in the current listing. A
+   unique-title trigger keeps a single line and renders identically. */
+.dataset-combobox__value-group {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--atlas-space-1);
+}
+
+.dataset-combobox__value-slug {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--atlas-text-xs);
+  font-weight: 600;
+  color: var(--atlas-color-text-subtle);
+}
+
 .dataset-combobox__chevron {
   width: 1.05rem;
   height: 1.05rem;
@@ -3138,7 +3159,7 @@ h1 {
   min-height: 2.55rem;
   border: 0;
   border-radius: var(--atlas-radius-md);
-  padding: 0 var(--atlas-space-3);
+  padding: var(--atlas-space-1) var(--atlas-space-3);
   color: var(--atlas-color-text-muted);
   background: transparent;
   font: inherit;
@@ -3146,6 +3167,33 @@ h1 {
   font-weight: 800;
   text-align: left;
   cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--atlas-space-1);
+}
+
+/* Project Spec S0281: colliding options render their slug as visually
+   subordinate secondary text; unique options render the label line only. */
+.dataset-combobox__option-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dataset-combobox__option-slug {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: var(--atlas-text-xs);
+  font-weight: 600;
+  color: var(--atlas-color-text-subtle);
+}
+
+.dataset-combobox__option:hover .dataset-combobox__option-slug,
+.dataset-combobox__option:focus-visible .dataset-combobox__option-slug,
+.dataset-combobox__option.is-selected .dataset-combobox__option-slug {
+  color: inherit;
 }
 
 .dataset-combobox__option:hover,

@@ -7683,6 +7683,254 @@ describe("DatasetAdminPage", () => {
     expect(screen.queryByRole("listbox", { name: "Available datasets" })).not.toBeInTheDocument();
   });
 
+  describe("slug-stable selection and duplicate-title disambiguation (Project Spec S0281)", () => {
+    // Two distinct dataset slugs deliberately share one display title, plus a
+    // third unique-title dataset. getDatasetLabel resolves display_title first,
+    // so churnUs and churnEu both render "Customer Churn" and collide, while
+    // nottingham stays unique. Downstream publication-state deliberately
+    // differs per slug (churnUs reachable -> "Public"; churnEu not reachable ->
+    // "Private") so loading the wrong identity is observable.
+    const churnUs = {
+      dataset_slug: "customer-churn-us",
+      title: "Customer Churn US",
+      display_title: "Customer Churn",
+      summary: "US churn dataset",
+      domain: "telecom",
+      tags: ["telecom"],
+      active_release: "release-20260801-001",
+      publication_status: "ready",
+      last_updated: null,
+    };
+    const churnEu = {
+      dataset_slug: "customer-churn-eu",
+      title: "Customer Churn EU",
+      display_title: "Customer Churn",
+      summary: "EU churn dataset",
+      domain: "telecom",
+      tags: ["telecom"],
+      active_release: "release-20260801-002",
+      publication_status: "ready",
+      last_updated: null,
+    };
+    const nottingham = {
+      dataset_slug: "nottingham-monthly-temperatures",
+      title: "Nottingham Monthly Temperatures",
+      display_title: null,
+      summary: "Monthly mean temperatures",
+      domain: "climate",
+      tags: ["climate"],
+      active_release: "release-20260801-003",
+      publication_status: "ready",
+      last_updated: null,
+    };
+
+    function publicationStateFor(slug: string, reachable: boolean) {
+      return jsonResponse({
+        dataset_slug: slug,
+        active_release: "release-20260801-001",
+        visibility: {
+          configured_visible: true,
+          source: "explicit_record",
+          record_status: "valid",
+          updated_at: "2026-08-01T00:00:00Z",
+          effective_visible: true,
+        },
+        review: {
+          status: reachable ? "ready" : "needs_review",
+          approval_allowed: !reachable,
+          approval_blockers: [],
+        },
+        snapshot: {
+          status: "current_release",
+          exists: true,
+          published_at: "2026-08-01T00:00:00Z",
+          active_release_at_publish_time: "release-20260801-001",
+          matches_active_release: true,
+        },
+        public_access: { reachable, blockers: reachable ? [] : ["review_pending"], observations: [] },
+      });
+    }
+
+    function installDuplicateTitleFetchMock(initialPublicSlug: string) {
+      const bySlug: Record<string, { reachable: boolean }> = {
+        [churnUs.dataset_slug]: { reachable: true },
+        [churnEu.dataset_slug]: { reachable: false },
+        [nottingham.dataset_slug]: { reachable: true },
+      };
+      const initial = [churnUs, churnEu, nottingham].find((d) => d.dataset_slug === initialPublicSlug)!;
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/admin/datasets")) {
+          return jsonResponse({ datasets: [churnUs, churnEu, nottingham] });
+        }
+        // The public /datasets listing only seeds the initial selectedSlug.
+        if (url.endsWith("/datasets")) {
+          return jsonResponse({ datasets: [{ ...initial, visibility: "public" }] });
+        }
+        for (const [slug, cfg] of Object.entries(bySlug)) {
+          if (url.endsWith(`/admin/datasets/${slug}/publication-state`)) {
+            return publicationStateFor(slug, cfg.reachable);
+          }
+        }
+        return jsonResponse({}, 404);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      return fetchMock;
+    }
+
+    it("commits the exact clicked option's dataset_slug for two options that share a display title, loading that dataset downstream", async () => {
+      installDuplicateTitleFetchMock(churnUs.dataset_slug);
+      renderAdminPage();
+
+      const selector = await screen.findByRole("button", { name: "Dataset" });
+      await waitFor(() => expect(selector).toHaveTextContent("Customer Churn"));
+      // Initial selection is churnUs -> reachable -> Public.
+      await waitFor(() => expect(screen.getByLabelText("Dataset Detail visibility")).toHaveTextContent("Public"));
+
+      fireEvent.click(selector);
+      const listbox = screen.getByRole("listbox", { name: "Available datasets" });
+      // Both colliding options carry their own slug, visibly and in a unique
+      // accessible name; the unique-title option does not.
+      const optUs = within(listbox).getByRole("option", { name: "Customer Churn — customer-churn-us" });
+      const optEu = within(listbox).getByRole("option", { name: "Customer Churn — customer-churn-eu" });
+      expect(optUs).toHaveTextContent("customer-churn-us");
+      expect(optEu).toHaveTextContent("customer-churn-eu");
+      expect(within(listbox).getByRole("option", { name: "Nottingham Monthly Temperatures" })).not.toHaveTextContent(
+        "nottingham-monthly-temperatures",
+      );
+
+      fireEvent.click(optEu);
+
+      // churnEu is not reachable -> Private. If the first array match (churnUs)
+      // had been committed instead, this would read Public.
+      await waitFor(() => expect(screen.getByLabelText("Dataset Detail visibility")).toHaveTextContent("Private"));
+      await waitFor(() => expect(selector).toHaveTextContent("customer-churn-eu"));
+
+      await waitFor(() =>
+        expect(screen.getByRole("button", { name: "Open public Dataset Detail page" })).toBeEnabled(),
+      );
+      const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
+      fireEvent.click(screen.getByRole("button", { name: "Open public Dataset Detail page" }));
+      expect(openSpy).toHaveBeenCalledWith(
+        `/dataset/${encodeURIComponent("customer-churn-eu")}`,
+        "_blank",
+        "noopener,noreferrer",
+      );
+    });
+
+    it("commits the exact keyboard-active option's dataset_slug on Enter for a shared display title", async () => {
+      installDuplicateTitleFetchMock(churnUs.dataset_slug);
+      renderAdminPage();
+
+      const selector = await screen.findByRole("button", { name: "Dataset" });
+      await waitFor(() => expect(screen.getByLabelText("Dataset Detail visibility")).toHaveTextContent("Public"));
+
+      fireEvent.click(selector);
+      const filter = screen.getByLabelText("Filter datasets");
+      fireEvent.keyDown(filter, { key: "ArrowDown" });
+      expect(filter).toHaveAttribute("aria-activedescendant", "dataset-admin-option-customer-churn-us");
+      fireEvent.keyDown(filter, { key: "ArrowDown" });
+      expect(filter).toHaveAttribute("aria-activedescendant", "dataset-admin-option-customer-churn-eu");
+
+      fireEvent.keyDown(filter, { key: "Enter" });
+
+      await waitFor(() => expect(screen.getByLabelText("Dataset Detail visibility")).toHaveTextContent("Private"));
+      await waitFor(() => expect(selector).toHaveTextContent("customer-churn-eu"));
+      expect(screen.queryByRole("listbox", { name: "Available datasets" })).not.toBeInTheDocument();
+    });
+
+    it("keeps unique-title options and the unique-title trigger free of a secondary slug line", async () => {
+      installDuplicateTitleFetchMock(churnUs.dataset_slug);
+      renderAdminPage();
+
+      const selector = await screen.findByRole("button", { name: "Dataset" });
+      await waitFor(() => expect(selector).toHaveTextContent("Customer Churn"));
+
+      fireEvent.click(selector);
+      const listbox = screen.getByRole("listbox", { name: "Available datasets" });
+      const uniqueOption = within(listbox).getByRole("option", { name: "Nottingham Monthly Temperatures" });
+      expect(uniqueOption).toHaveTextContent("Nottingham Monthly Temperatures");
+      expect(uniqueOption).not.toHaveTextContent("nottingham-monthly-temperatures");
+
+      fireEvent.click(uniqueOption);
+
+      await waitFor(() =>
+        expect(
+          screen.getByRole("heading", { name: "Dataset — Nottingham Monthly Temperatures" }),
+        ).toBeInTheDocument(),
+      );
+      expect(selector).toHaveTextContent("Nottingham Monthly Temperatures");
+      expect(selector).not.toHaveTextContent("nottingham-monthly-temperatures");
+      // Trigger of the previously-selected colliding dataset kept its slug;
+      // after moving to a unique title it must not.
+      fireEvent.click(selector);
+      fireEvent.click(within(screen.getByRole("listbox", { name: "Available datasets" })).getByRole("option", {
+        name: "Customer Churn — customer-churn-us",
+      }));
+      await waitFor(() => expect(selector).toHaveTextContent("customer-churn-us"));
+    });
+
+    it("keeps title and slug filtering while requiring slug identity to commit among shared-title matches", async () => {
+      installDuplicateTitleFetchMock(churnUs.dataset_slug);
+      renderAdminPage();
+
+      const selector = await screen.findByRole("button", { name: "Dataset" });
+      await waitFor(() => expect(selector).toHaveTextContent("Customer Churn"));
+
+      fireEvent.click(selector);
+      const filter = screen.getByLabelText("Filter datasets");
+
+      // Shared-title filter returns both colliding datasets, excludes the
+      // unique one.
+      fireEvent.change(filter, { target: { value: "customer churn" } });
+      let listbox = screen.getByRole("listbox", { name: "Available datasets" });
+      expect(within(listbox).getByRole("option", { name: "Customer Churn — customer-churn-us" })).toBeInTheDocument();
+      expect(within(listbox).getByRole("option", { name: "Customer Churn — customer-churn-eu" })).toBeInTheDocument();
+      expect(within(listbox).queryByRole("option", { name: "Nottingham Monthly Temperatures" })).not.toBeInTheDocument();
+
+      // Slug filter narrows to exactly one; selecting it commits that slug.
+      fireEvent.change(filter, { target: { value: "customer-churn-eu" } });
+      listbox = screen.getByRole("listbox", { name: "Available datasets" });
+      const options = within(listbox).getAllByRole("option");
+      expect(options).toHaveLength(1);
+      fireEvent.click(options[0]);
+
+      await waitFor(() => expect(screen.getByLabelText("Dataset Detail visibility")).toHaveTextContent("Private"));
+      await waitFor(() => expect(selector).toHaveTextContent("customer-churn-eu"));
+    });
+
+    it("does not commit a dataset identity from free-form filter text equal to a shared display title", async () => {
+      // Initial selection is churnEu (Private). The first array match for the
+      // shared title "Customer Churn" is churnUs (Public) -- the old
+      // title-equality commit would switch to it.
+      installDuplicateTitleFetchMock(churnEu.dataset_slug);
+      renderAdminPage();
+
+      const selector = await screen.findByRole("button", { name: "Dataset" });
+      await waitFor(() => expect(screen.getByLabelText("Dataset Detail visibility")).toHaveTextContent("Private"));
+
+      fireEvent.click(selector);
+      const filter = screen.getByLabelText("Filter datasets");
+      fireEvent.change(filter, { target: { value: "Customer Churn" } });
+
+      // Both shared-title datasets still listed; selected identity unchanged.
+      const listbox = screen.getByRole("listbox", { name: "Available datasets" });
+      expect(within(listbox).getAllByRole("option")).toHaveLength(2);
+      expect(screen.getByLabelText("Dataset Detail visibility")).toHaveTextContent("Private");
+
+      await waitFor(() =>
+        expect(screen.getByRole("button", { name: "Open public Dataset Detail page" })).toBeEnabled(),
+      );
+      const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
+      fireEvent.click(screen.getByRole("button", { name: "Open public Dataset Detail page" }));
+      expect(openSpy).toHaveBeenCalledWith(
+        `/dataset/${encodeURIComponent("customer-churn-eu")}`,
+        "_blank",
+        "noopener,noreferrer",
+      );
+    });
+  });
+
   it("recomposes the Public Content tab as a blank authoring form seeded only with the Dataset Detail title (Project Spec S0056)", async () => {
     // Project Spec S0058 auto-loads the profile draft as soon as a Dataset
     // Detail is selected -- this test's blank-authoring-form baseline only

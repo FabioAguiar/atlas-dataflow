@@ -1,6 +1,12 @@
-import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, XAxis, YAxis } from "recharts";
+import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Card, EmptyState } from "../ui";
 import { getPerformanceMetricMetadata } from "../../lib/performanceMetricMetadata";
+import {
+  datasetChartTooltipProps,
+  formatTooltipCount,
+  useChartInteractionMode,
+  type DatasetChartTooltipModel,
+} from "./DatasetChartTooltip";
 import type { VisualizationsPayload } from "./TargetDistribution";
 
 type ForecastingDiagnosticsProps = {
@@ -42,7 +48,11 @@ type ValidSelectedMetric = {
   metricId: string;
   label: string;
   byOrigin: Array<{ label: string; value: number }>;
-  byHorizon: Array<{ label: string; value: number }>;
+  // Project Spec S0277: the already-public, already-validated per-horizon
+  // observation_count is preserved on each by-horizon point so the tooltip can
+  // expose it. It is never fabricated -- a v7 metric_diagnostics entry always
+  // carries it (getValidSelectedMetric fails closed without it).
+  byHorizon: Array<{ label: string; value: number; observationCount: number }>;
 };
 
 type MetricSelection =
@@ -55,7 +65,11 @@ type MetricSelection =
   | { kind: "unavailable" };
 
 type ValidSeasonalProfile = {
-  points: Array<{ label: string; mean_target: number }>;
+  // Project Spec S0277: the already-public seasonal-profile observation_count
+  // is preserved through validation when present (and valid) so the tooltip
+  // can expose it. A historical point without it renders without it -- the
+  // count is never inferred.
+  points: Array<{ label: string; mean_target: number; observationCount?: number }>;
 };
 
 type ValidFoldMetric = {
@@ -86,9 +100,9 @@ function getValidSeasonalProfile(points: RawSeasonalPoint[] | undefined): ValidS
   if (!points || points.length === 0) {
     return null;
   }
-  const validated: Array<{ label: string; mean_target: number }> = [];
+  const validated: Array<{ label: string; mean_target: number; observationCount?: number }> = [];
   for (const point of points) {
-    const { season_position: position, mean_target: meanTarget } = point;
+    const { season_position: position, mean_target: meanTarget, observation_count: observationCount } = point;
     if (
       typeof position !== "number" ||
       !Number.isInteger(position) ||
@@ -98,7 +112,17 @@ function getValidSeasonalProfile(points: RawSeasonalPoint[] | undefined): ValidS
     ) {
       return null;
     }
-    validated.push({ label: `Position ${position}`, mean_target: meanTarget });
+    if (
+      observationCount !== undefined &&
+      (typeof observationCount !== "number" || !Number.isInteger(observationCount) || observationCount < 1)
+    ) {
+      return null;
+    }
+    validated.push({
+      label: `Position ${position}`,
+      mean_target: meanTarget,
+      ...(observationCount !== undefined ? { observationCount } : {}),
+    });
   }
   return { points: validated };
 }
@@ -225,7 +249,7 @@ function getValidSelectedMetric(entry: RawMetricDiagnosticEntry | undefined): Va
   if (!Array.isArray(horizonPoints) || horizonPoints.length === 0) {
     return null;
   }
-  const byHorizon: Array<{ label: string; value: number }> = [];
+  const byHorizon: Array<{ label: string; value: number; observationCount: number }> = [];
   const seenSteps = new Set<number>();
   for (const point of horizonPoints) {
     if (!point || typeof point !== "object") {
@@ -242,7 +266,7 @@ function getValidSelectedMetric(entry: RawMetricDiagnosticEntry | undefined): Va
     if (typeof observationCount !== "number" || !Number.isInteger(observationCount) || observationCount < 1) {
       return null;
     }
-    byHorizon.push({ label: `h+${step}`, value });
+    byHorizon.push({ label: `h+${step}`, value, observationCount });
   }
 
   return { metricId, label, byOrigin, byHorizon };
@@ -258,7 +282,7 @@ function getValidSelectedMetric(entry: RawMetricDiagnosticEntry | undefined): Va
  *     fallback to backtesting_fold_metric.metric_id, requiring a coherent
  *     matching v7 entry; otherwise unavailable
  */
-function resolveMetricSelection(
+export function resolveMetricSelection(
   diagnostics: NonNullable<VisualizationsPayload["forecasting_diagnostics"]> | null,
   highlightedScoreId: string | null | undefined,
 ): MetricSelection {
@@ -285,6 +309,91 @@ function resolveMetricSelection(
     }
   }
   return { kind: "unavailable" };
+}
+
+// ---------------------------------------------------------------------------
+// Project Spec S0277: bounded device-adaptive tooltip content for the
+// forecasting diagnostic charts. Each builder consumes only an
+// already-validated chart datum plus the currently rendered metric identity
+// -- it selects no metric, relabels nothing, computes no MAE/RMSE/Seasonal-MASE
+// (or any error statistic), and never fabricates an observation count.
+// ---------------------------------------------------------------------------
+
+export function buildForecastVsActualTooltipModel(
+  datum: Record<string, unknown>,
+): DatasetChartTooltipModel | null {
+  const label = typeof datum.label === "string" && datum.label ? datum.label : null;
+  const actual = typeof datum.actual === "number" && Number.isFinite(datum.actual) ? datum.actual : null;
+  const forecast = typeof datum.forecast === "number" && Number.isFinite(datum.forecast) ? datum.forecast : null;
+  if (label === null || actual === null || forecast === null) {
+    return null;
+  }
+  return {
+    title: label,
+    rows: [
+      { label: "Period", value: label },
+      { label: "Actual", value: formatValue(actual) },
+      { label: "Forecast", value: formatValue(forecast) },
+    ],
+  };
+}
+
+export function buildBacktestingTooltipModel(
+  seriesLabel: string | null,
+  datum: Record<string, unknown>,
+): DatasetChartTooltipModel | null {
+  const label = typeof datum.label === "string" && datum.label ? datum.label : null;
+  const value = typeof datum.value === "number" && Number.isFinite(datum.value) ? datum.value : null;
+  if (!seriesLabel || label === null || value === null) {
+    return null;
+  }
+  return {
+    title: label,
+    rows: [
+      { label: "Forecast origin", value: label },
+      { label: seriesLabel, value: formatValue(value) },
+    ],
+  };
+}
+
+export function buildHorizonTooltipModel(
+  seriesLabel: string,
+  datum: Record<string, unknown>,
+): DatasetChartTooltipModel | null {
+  const label = typeof datum.label === "string" && datum.label ? datum.label : null;
+  const value = typeof datum.value === "number" && Number.isFinite(datum.value) ? datum.value : null;
+  if (!seriesLabel || label === null || value === null) {
+    return null;
+  }
+  const rows = [
+    { label: "Horizon step", value: label },
+    { label: seriesLabel, value: formatValue(value) },
+  ];
+  const observationCount = datum.observationCount;
+  if (typeof observationCount === "number" && Number.isInteger(observationCount) && observationCount >= 1) {
+    rows.push({ label: "Observations", value: formatTooltipCount(observationCount) });
+  }
+  return { title: label, rows };
+}
+
+export function buildSeasonalProfileTooltipModel(
+  datum: Record<string, unknown>,
+): DatasetChartTooltipModel | null {
+  const label = typeof datum.label === "string" && datum.label ? datum.label : null;
+  const meanTarget =
+    typeof datum.mean_target === "number" && Number.isFinite(datum.mean_target) ? datum.mean_target : null;
+  if (label === null || meanTarget === null) {
+    return null;
+  }
+  const rows = [
+    { label: "Season position", value: label },
+    { label: "Mean target", value: formatValue(meanTarget) },
+  ];
+  const observationCount = datum.observationCount;
+  if (typeof observationCount === "number" && Number.isInteger(observationCount) && observationCount >= 1) {
+    rows.push({ label: "Observations", value: formatTooltipCount(observationCount) });
+  }
+  return { title: label, rows };
 }
 
 // ---------------------------------------------------------------------------
@@ -450,6 +559,7 @@ function getValidForecastingEvaluation(
  * present but fails validation.
  */
 export function ForecastingEvaluationOverview({ visualizations }: ForecastingDiagnosticsProps) {
+  const interactionMode = useChartInteractionMode();
   const rawEvaluation = visualizations?.forecasting_evaluation;
   if (rawEvaluation === undefined || rawEvaluation === null) {
     return null;
@@ -505,6 +615,11 @@ export function ForecastingEvaluationOverview({ visualizations }: ForecastingDia
               <CartesianGrid stroke={CHART_GRID} strokeDasharray="3 3" vertical={false} />
               <XAxis dataKey="label" tick={{ fontSize: 11 }} />
               <YAxis width={48} />
+              <Tooltip
+                {...datasetChartTooltipProps(interactionMode, ({ datum }) =>
+                  buildForecastVsActualTooltipModel(datum),
+                )}
+              />
               <Line
                 dataKey="actual"
                 dot={{ r: 3 }}
@@ -553,6 +668,7 @@ export function ForecastingEvaluationOverview({ visualizations }: ForecastingDia
 // and Horizon from the single governed metric entry that score selects --
 // both cards always the same metric, titled with the shared metadata label.
 export default function ForecastingDiagnostics({ visualizations, highlightedScoreId }: ForecastingDiagnosticsProps) {
+  const interactionMode = useChartInteractionMode();
   const diagnostics = visualizations?.forecasting_diagnostics ?? null;
   const seasonalProfile = getValidSeasonalProfile(diagnostics?.seasonal_profile?.points);
 
@@ -580,6 +696,8 @@ export default function ForecastingDiagnostics({ visualizations, highlightedScor
   // Horizon: the selected v7 metric wins; otherwise legacy Horizon MAE
   // (never relabeled); otherwise a fail-closed empty state.
   const horizonTitle = selectedMetric ? `Horizon ${selectedMetric.label}` : "Horizon MAE";
+  // The legacy series is MAE and is never relabeled.
+  const horizonSeriesLabel = selectedMetric ? selectedMetric.label : "MAE";
   const horizonPoints = selectedMetric
     ? selectedMetric.byHorizon
     : legacyHorizonMae
@@ -604,6 +722,11 @@ export default function ForecastingDiagnostics({ visualizations, highlightedScor
                   <CartesianGrid stroke={CHART_GRID} strokeDasharray="3 3" vertical={false} />
                   <XAxis dataKey="label" tick={{ fontSize: 11 }} />
                   <YAxis width={40} />
+                  <Tooltip
+                    {...datasetChartTooltipProps(interactionMode, ({ datum }) =>
+                      buildBacktestingTooltipModel(backtestingSeriesLabel, datum),
+                    )}
+                  />
                   <Line
                     dataKey="value"
                     dot={{ r: 3 }}
@@ -647,6 +770,11 @@ export default function ForecastingDiagnostics({ visualizations, highlightedScor
                   <CartesianGrid stroke={CHART_GRID} strokeDasharray="3 3" vertical={false} />
                   <XAxis dataKey="label" tick={{ fontSize: 11 }} />
                   <YAxis width={40} />
+                  <Tooltip
+                    {...datasetChartTooltipProps(interactionMode, ({ datum }) =>
+                      buildHorizonTooltipModel(horizonSeriesLabel, datum),
+                    )}
+                  />
                   <Bar dataKey="value" fill={CHART_SECONDARY} isAnimationActive={false} />
                 </BarChart>
               </ResponsiveContainer>
@@ -681,6 +809,11 @@ export default function ForecastingDiagnostics({ visualizations, highlightedScor
                   <CartesianGrid stroke={CHART_GRID} strokeDasharray="3 3" vertical={false} />
                   <XAxis dataKey="label" tick={{ fontSize: 11 }} />
                   <YAxis width={40} />
+                  <Tooltip
+                    {...datasetChartTooltipProps(interactionMode, ({ datum }) =>
+                      buildSeasonalProfileTooltipModel(datum),
+                    )}
+                  />
                   <Bar dataKey="mean_target" fill={CHART_PRIMARY} isAnimationActive={false} />
                 </BarChart>
               </ResponsiveContainer>

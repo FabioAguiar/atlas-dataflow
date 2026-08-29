@@ -1656,6 +1656,62 @@ h1 {
 }
 
 /*
+ * Project Spec S0277: the shared device-adaptive Dataset Detail chart tooltip.
+ * Bounded styling only -- it reuses the existing Atlas surface/border/text/
+ * spacing/radius/shadow tokens rather than introducing a second design system,
+ * stays legible in every light/dark/theme context, wraps long labels, never
+ * pins a dataset-specific color, and never depends on hover CSS for
+ * visibility. It does not restyle the chart or card layout.
+ */
+.dataset-chart-tooltip {
+  max-width: min(20rem, 80vw);
+  display: grid;
+  gap: var(--atlas-space-2);
+  padding: var(--atlas-space-3);
+  border: 1px solid var(--atlas-color-border-strong);
+  border-radius: var(--atlas-radius-md);
+  background: var(--atlas-color-surface);
+  color: var(--atlas-color-text);
+  box-shadow: var(--atlas-shadow-md);
+  font-size: var(--atlas-text-sm);
+  line-height: var(--atlas-line-normal);
+}
+
+.dataset-chart-tooltip__title {
+  margin: 0;
+  font-weight: 700;
+  color: var(--atlas-color-text);
+  overflow-wrap: anywhere;
+}
+
+.dataset-chart-tooltip__rows {
+  margin: 0;
+  display: grid;
+  gap: var(--atlas-space-1);
+}
+
+.dataset-chart-tooltip__row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--atlas-space-3);
+}
+
+.dataset-chart-tooltip__row-label {
+  color: var(--atlas-color-text-muted);
+  overflow-wrap: anywhere;
+}
+
+.dataset-chart-tooltip__row-value {
+  margin: 0;
+  flex: 0 0 auto;
+  font-weight: 700;
+  color: var(--atlas-color-text);
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+/*
  * Project Spec S0215: normalized multiclass confusion matrix. Percentage
  * text is always the primary channel in every cell; the accent-intensity
  * background (driven by --confusion-matrix-cell-intensity, set inline per

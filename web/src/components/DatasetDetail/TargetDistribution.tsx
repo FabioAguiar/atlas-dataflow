@@ -1,5 +1,11 @@
-import { Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, XAxis, YAxis } from "recharts";
+import { Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Card, EmptyState } from "../ui";
+import {
+  datasetChartTooltipProps,
+  formatTooltipCount,
+  useChartInteractionMode,
+  type DatasetChartTooltipModel,
+} from "./DatasetChartTooltip";
 
 type ChartDataPoint = {
   name: string;
@@ -204,10 +210,61 @@ function formatPercent(value: number, total: number): string {
   return `${((value / total) * 100).toFixed(1)}%`;
 }
 
+/**
+ * Project Spec S0277: bounded tooltip content for the active classification
+ * donut slice -- category, count, and the share computed by the same existing
+ * `formatPercent(value, total)` presentation authority the persistent legend
+ * already uses. No second percentage authority is created.
+ */
+export function buildDonutTooltipModel(
+  total: number,
+  datum: Record<string, unknown>,
+): DatasetChartTooltipModel | null {
+  const name = typeof datum.name === "string" && datum.name ? datum.name : null;
+  const value =
+    typeof datum.value === "number" && Number.isFinite(datum.value) && datum.value >= 0 ? datum.value : null;
+  if (name === null || value === null || !(total > 0)) {
+    return null;
+  }
+  return {
+    title: name,
+    rows: [
+      { label: "Category", value: name },
+      { label: "Count", value: formatTooltipCount(value) },
+      { label: "Share", value: formatPercent(value, total) },
+    ],
+  };
+}
+
+/**
+ * Project Spec S0277: bounded tooltip content for the active continuous
+ * histogram bar -- the projected human-readable bin label and its count only.
+ * Numeric bin bounds are never inferred from the label.
+ */
+export function buildHistogramTooltipModel(
+  datum: Record<string, unknown>,
+): DatasetChartTooltipModel | null {
+  const name = typeof datum.name === "string" && datum.name ? datum.name : null;
+  const value =
+    typeof datum.value === "number" && Number.isFinite(datum.value) && datum.value >= 0 ? datum.value : null;
+  if (name === null || value === null) {
+    return null;
+  }
+  return {
+    title: name,
+    rows: [
+      { label: "Bin", value: name },
+      { label: "Count", value: formatTooltipCount(value) },
+    ],
+  };
+}
+
 export default function TargetDistribution({ visualizations }: TargetDistributionProps) {
   const chart = visualizations?.charts?.find(matchesTargetDistribution) ?? null;
   const distribution = getValidDistribution(chart);
   const isContinuousHistogram = visualizations?.target_distribution_kind === "continuous_histogram";
+  const interactionMode = useChartInteractionMode();
+  const donutTotal = distribution?.total ?? 0;
 
   return (
     <Card
@@ -233,6 +290,9 @@ export default function TargetDistribution({ visualizations }: TargetDistributio
                   <CartesianGrid stroke={CHART_GRID} strokeDasharray="3 3" vertical={false} />
                   <XAxis angle={-30} dataKey="name" height={48} interval={0} textAnchor="end" tick={{ fontSize: 11 }} />
                   <YAxis allowDecimals={false} width={40} />
+                  <Tooltip
+                    {...datasetChartTooltipProps(interactionMode, ({ datum }) => buildHistogramTooltipModel(datum))}
+                  />
                   <Bar dataKey="value" fill={CHART_PRIMARY} isAnimationActive={false} />
                 </BarChart>
               </ResponsiveContainer>
@@ -270,6 +330,11 @@ export default function TargetDistribution({ visualizations }: TargetDistributio
                       <Cell key={point.name} fill={DONUT_PALETTE[index % DONUT_PALETTE.length]} />
                     ))}
                   </Pie>
+                  <Tooltip
+                    {...datasetChartTooltipProps(interactionMode, ({ datum }) =>
+                      buildDonutTooltipModel(donutTotal, datum),
+                    )}
+                  />
                 </PieChart>
               </ResponsiveContainer>
             </div>

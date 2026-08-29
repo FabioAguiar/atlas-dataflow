@@ -19,7 +19,20 @@ import {
   type DatasetDetailMetadataItem,
 } from ".";
 import FeatureImportance from "./FeatureImportance";
-import TargetDistribution from "./TargetDistribution";
+import TargetDistribution, { buildDonutTooltipModel, buildHistogramTooltipModel } from "./TargetDistribution";
+import RegressionDiagnostics, {
+  buildActualVsPredictedTooltipModel,
+  buildResidualTooltipModel,
+} from "./RegressionDiagnostics";
+import ForecastingDiagnostics, {
+  ForecastingEvaluationOverview,
+  buildBacktestingTooltipModel,
+  buildForecastVsActualTooltipModel,
+  buildHorizonTooltipModel,
+  buildSeasonalProfileTooltipModel,
+  resolveMetricSelection,
+} from "./ForecastingDiagnostics";
+import { resolveChartInteractionMode } from "./DatasetChartTooltip";
 import ConfusionMatrix from "./ConfusionMatrix";
 import { presentDatasetDateOnly, safePublicSourceUrl } from "../../lib/datasetPresentation";
 import { isPerformanceFocusApplicable } from "../../lib/performanceMetricMetadata";
@@ -1653,5 +1666,347 @@ describe("PerformanceSummary optimization orientation (Project Spec S0200)", () 
       "PR-AUC",
       "Gini coefficient",
     ]);
+  });
+});
+
+// Project Spec S0277: the shared Dataset Detail renderers gain a device-adaptive
+// tooltip layer. jsdom cannot exercise real Recharts pointer geometry, so these
+// tests assert (1) the persistent value lists / semantics survive S0277 and
+// (2) the exported tooltip content builders each derive from the same
+// already-validated public chart data the chart itself draws -- never a new
+// metric, an inferred bound, a fabricated count, or a color-only signal.
+describe("Dataset Detail device-adaptive chart tooltips (Project Spec S0277)", () => {
+  const donutVisualizations = {
+    charts: [
+      {
+        id: "target_distribution",
+        type: "bar" as const,
+        data: [
+          { name: "No", value: 30 },
+          { name: "Yes", value: 10 },
+        ],
+      },
+    ],
+  };
+
+  const histogramVisualizations = {
+    target_distribution_kind: "continuous_histogram" as const,
+    charts: [
+      {
+        id: "target_distribution",
+        type: "bar" as const,
+        data: [
+          { name: "[0, 10)", value: 12 },
+          { name: "[10, 20)", value: 8 },
+        ],
+      },
+    ],
+  };
+
+  const regressionVisualizations = {
+    regression_diagnostics: {
+      actual_vs_predicted: {
+        points: [
+          { actual_mean: 1, predicted_mean: 1.2, count: 5 },
+          { actual_mean: 3, predicted_mean: 2.7, count: 8 },
+        ],
+      },
+      residual_distribution: {
+        bins: [
+          { label: "[-1, 0)", count: 4 },
+          { label: "[0, 1)", count: 9 },
+        ],
+      },
+    },
+  };
+
+  const evaluationVisualizations = {
+    forecasting_diagnostics: { forecast_horizon: 3 },
+    forecasting_evaluation: {
+      index_value_kind: "period",
+      frequency: "monthly",
+      development_boundary: { start_index: "T-03", end_index: "T-01", observation_count: 3 },
+      final_holdout_boundary: { start_index: "H-01", end_index: "H-03", observation_count: 3 },
+      evaluation: {
+        split_name: "final_holdout",
+        evaluation_count: 1,
+        model_frozen_before_open: true,
+        forecast_generated_before_target_open: true,
+      },
+      points: [
+        { time_index: "H-01", actual: 10, forecast: 9 },
+        { time_index: "H-02", actual: 12, forecast: 11 },
+        { time_index: "H-03", actual: 11, forecast: 12 },
+      ],
+    },
+  };
+
+  const v7ForecastingDiagnostics = {
+    forecasting_diagnostics: {
+      forecast_horizon: 2,
+      frequency: "monthly",
+      seasonal_profile: {
+        seasonal_period: 2,
+        points: [
+          { season_position: 0, mean_target: 5, observation_count: 4 },
+          { season_position: 1, mean_target: 7, observation_count: 4 },
+        ],
+      },
+      backtesting_fold_metric: {
+        metric_id: "mae",
+        direction: "lower_is_better",
+        points: [
+          { fold_index: 1, forecast_origin: "L-1", value: 8.11 },
+          { fold_index: 2, forecast_origin: "L-2", value: 8.22 },
+        ],
+      },
+      horizon_mae: {
+        points: [
+          { horizon_step: 1, mae: 7.01 },
+          { horizon_step: 2, mae: 7.02 },
+        ],
+      },
+      metric_diagnostics: {
+        metrics: [
+          {
+            metric_id: "mae",
+            direction: "lower_is_better",
+            backtesting_by_origin: {
+              points: [
+                { fold_index: 0, forecast_origin: "O-1", value: 1.11 },
+                { fold_index: 1, forecast_origin: "O-2", value: 1.22 },
+              ],
+            },
+            by_horizon: {
+              points: [
+                { horizon_step: 1, value: 1.01, observation_count: 3 },
+                { horizon_step: 2, value: 1.02, observation_count: 3 },
+              ],
+            },
+          },
+          {
+            metric_id: "rmse",
+            direction: "lower_is_better",
+            backtesting_by_origin: {
+              points: [
+                { fold_index: 0, forecast_origin: "O-1", value: 2.71 },
+                { fold_index: 1, forecast_origin: "O-2", value: 2.82 },
+              ],
+            },
+            by_horizon: {
+              points: [
+                { horizon_step: 1, value: 2.01, observation_count: 3 },
+                { horizon_step: 2, value: 2.02, observation_count: 3 },
+              ],
+            },
+          },
+        ],
+      },
+    },
+  };
+
+  const legacyForecastingDiagnostics = {
+    forecasting_diagnostics: {
+      forecast_horizon: 2,
+      frequency: "monthly",
+      seasonal_profile: {
+        seasonal_period: 2,
+        points: [
+          { season_position: 0, mean_target: 5 },
+          { season_position: 1, mean_target: 7 },
+        ],
+      },
+      backtesting_fold_metric: {
+        metric_id: "mae",
+        direction: "lower_is_better",
+        points: [
+          { fold_index: 1, forecast_origin: "L-1", value: 8.11 },
+          { fold_index: 2, forecast_origin: "L-2", value: 8.22 },
+        ],
+      },
+      horizon_mae: {
+        points: [
+          { horizon_step: 1, mae: 7.01 },
+          { horizon_step: 2, mae: 7.02 },
+        ],
+      },
+    },
+  };
+
+  it("keeps the existing persistent value lists rendered for every shared renderer", () => {
+    const { unmount: unmountDonut } = render(<TargetDistribution visualizations={donutVisualizations} />);
+    expect(screen.getByText("(30)")).toBeInTheDocument();
+    expect(screen.getByText("(10)")).toBeInTheDocument();
+    unmountDonut();
+
+    const { unmount: unmountRegression } = render(
+      <RegressionDiagnostics visualizations={regressionVisualizations} />,
+    );
+    expect(screen.getByText("n=5")).toBeInTheDocument();
+    expect(screen.getByText("[0, 1)")).toBeInTheDocument();
+    unmountRegression();
+
+    render(<ForecastingDiagnostics visualizations={v7ForecastingDiagnostics} highlightedScoreId="rmse" />);
+    expect(screen.getByText("RMSE: 2.71")).toBeInTheDocument();
+    expect(screen.getByText("Position 0")).toBeInTheDocument();
+  });
+
+  it("Target Distribution donut tooltip exposes category/count/percentage from the existing percentage authority", () => {
+    // 30 / (30 + 10) -> the same formatPercent(value, total) the legend uses.
+    expect(buildDonutTooltipModel(40, { name: "No", value: 30 })).toEqual({
+      title: "No",
+      rows: [
+        { label: "Category", value: "No" },
+        { label: "Count", value: "30" },
+        { label: "Share", value: "75.0%" },
+      ],
+    });
+    expect(buildDonutTooltipModel(0, { name: "No", value: 0 })).toBeNull();
+  });
+
+  it("continuous Target Distribution tooltip exposes bin/count without inferring numeric bounds", () => {
+    const model = buildHistogramTooltipModel({ name: "[10, 20)", value: 8 });
+    expect(model?.rows).toEqual([
+      { label: "Bin", value: "[10, 20)" },
+      { label: "Count", value: "8" },
+    ]);
+    // The label is passed through verbatim -- no parsed 10 / 20 bound appears.
+    expect(model?.rows.some((row) => row.value === "10" || row.value === "20")).toBe(false);
+  });
+
+  it("Actual vs Predicted tooltip exposes actual/predicted/count and never treats the identity line as an observation", () => {
+    expect(
+      buildActualVsPredictedTooltipModel({ datum: { actual: 1, predicted: 1.2, count: 5 }, items: [] }),
+    ).toEqual({
+      title: "Observation",
+      rows: [
+        { label: "Actual", value: "1" },
+        { label: "Predicted", value: "1.2" },
+        { label: "Observations", value: "5" },
+      ],
+    });
+    // An identity-reference-line datum carries no count -> no tooltip.
+    expect(
+      buildActualVsPredictedTooltipModel({
+        datum: { actual: 2, predicted: 2 },
+        items: [{ payload: { actual: 2, predicted: 2 } }],
+      }),
+    ).toBeNull();
+  });
+
+  it("Residual Distribution tooltip exposes residual-bin/count without a new statistic", () => {
+    expect(buildResidualTooltipModel({ label: "[0, 1)", count: 9 })).toEqual({
+      title: "Residual bin",
+      rows: [
+        { label: "Residual bin", value: "[0, 1)" },
+        { label: "Count", value: "9" },
+      ],
+    });
+  });
+
+  it("Forecast vs Actual tooltip exposes period/actual/forecast and computes no error metric", () => {
+    const model = buildForecastVsActualTooltipModel({ label: "H-02", actual: 12, forecast: 11 });
+    expect(model?.rows).toEqual([
+      { label: "Period", value: "H-02" },
+      { label: "Actual", value: "12" },
+      { label: "Forecast", value: "11" },
+    ]);
+    // No absolute/squared error, MAE, or RMSE row is synthesized.
+    expect(model?.rows).toHaveLength(3);
+    render(<ForecastingEvaluationOverview visualizations={evaluationVisualizations} />);
+    expect(screen.getByText("Actual 10 · Forecast 9")).toBeInTheDocument();
+  });
+
+  it("v7 highlighted RMSE diagnostics use one selected metric identity for the chart heading, legend, and tooltip", () => {
+    render(<ForecastingDiagnostics visualizations={v7ForecastingDiagnostics} highlightedScoreId="rmse" />);
+    expect(screen.getByRole("heading", { name: "Backtesting by Origin — RMSE" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Horizon RMSE" })).toBeInTheDocument();
+
+    const selection = resolveMetricSelection(v7ForecastingDiagnostics.forecasting_diagnostics, "rmse");
+    expect(selection.kind).toBe("selected");
+    if (selection.kind !== "selected") {
+      throw new Error("expected a selected metric");
+    }
+    expect(selection.metric.label).toBe("RMSE");
+    expect(selection.metric.byHorizon[0].observationCount).toBe(3);
+
+    expect(buildBacktestingTooltipModel(selection.metric.label, { label: "O-1", value: 2.71 })?.rows).toEqual([
+      { label: "Forecast origin", value: "O-1" },
+      { label: "RMSE", value: "2.71" },
+    ]);
+    expect(
+      buildHorizonTooltipModel(selection.metric.label, { label: "h+1", value: 2.01, observationCount: 3 })?.rows,
+    ).toEqual([
+      { label: "Horizon step", value: "h+1" },
+      { label: "RMSE", value: "2.01" },
+      { label: "Observations", value: "3" },
+    ]);
+  });
+
+  it("legacy Horizon MAE stays MAE, is not relabeled, and never fabricates an observation count", () => {
+    render(<ForecastingDiagnostics visualizations={legacyForecastingDiagnostics} />);
+    expect(screen.getByRole("heading", { name: "Horizon MAE" })).toBeInTheDocument();
+
+    const model = buildHorizonTooltipModel("MAE", { label: "h+1", value: 7.01 });
+    expect(model?.rows).toEqual([
+      { label: "Horizon step", value: "h+1" },
+      { label: "MAE", value: "7.01" },
+    ]);
+    expect(model?.rows.some((row) => row.label === "Observations")).toBe(false);
+  });
+
+  it("Seasonal Profile tooltip exposes numeric season position and mean target, with observation count only when public", () => {
+    expect(buildSeasonalProfileTooltipModel({ label: "Position 0", mean_target: 5, observationCount: 4 })?.rows).toEqual([
+      { label: "Season position", value: "Position 0" },
+      { label: "Mean target", value: "5" },
+      { label: "Observations", value: "4" },
+    ]);
+    // A historical seasonal point without a public count renders without one --
+    // never an inferred month name, never a fabricated count.
+    const withoutCount = buildSeasonalProfileTooltipModel({ label: "Position 0", mean_target: 5 });
+    expect(withoutCount?.rows).toHaveLength(2);
+    expect(withoutCount?.rows[0].value).toBe("Position 0");
+  });
+
+  it("does not turn Feature Importance or Confusion Matrix into tooltip-dependent surfaces", () => {
+    const featureVisualizations = {
+      charts: [{ id: "feature_importance", type: "bar" as const, data: [{ name: "tenure", value: 0.7 }] }],
+    };
+    const { unmount } = render(<FeatureImportance visualizations={featureVisualizations} />);
+    expect(screen.getByText("tenure")).toBeInTheDocument();
+    expect(document.querySelector(".dataset-chart-tooltip")).not.toBeInTheDocument();
+    unmount();
+
+    render(
+      <ConfusionMatrix
+        visualizations={{
+          confusion_matrix: {
+            ordered_class_ids: ["a", "b", "c"],
+            matrix: [
+              [1, 0, 0],
+              [0, 1, 0],
+              [0, 0, 1],
+            ],
+            row_axis: "true_class",
+            column_axis: "predicted_class",
+          },
+        }}
+      />,
+    );
+    expect(screen.getByRole("table", { name: "Confusion matrix" })).toBeInTheDocument();
+    expect(document.querySelector(".dataset-chart-tooltip")).not.toBeInTheDocument();
+  });
+
+  it("renders the shared charts without crashing when pointer-capability detection is unavailable", () => {
+    const originalMatchMedia = window.matchMedia;
+    // @ts-expect-error -- deliberately removing the API to exercise the fallback
+    delete window.matchMedia;
+    try {
+      expect(resolveChartInteractionMode()).toBe("click");
+      render(<TargetDistribution visualizations={donutVisualizations} />);
+      expect(screen.getByText("(30)")).toBeInTheDocument();
+    } finally {
+      window.matchMedia = originalMatchMedia;
+    }
   });
 });

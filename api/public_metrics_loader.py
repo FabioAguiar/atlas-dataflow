@@ -79,6 +79,10 @@ _INTERNAL_CONTINUOUS_REGRESSION_METRICS_SCHEMA_VERSION_V3 = "training-metrics.v3
 # Project Spec S0247: the internal (Atlas-native) univariate-forecasting
 # fixed-configuration training-metrics profile, dispatched on explicitly.
 _INTERNAL_FORECASTING_METRICS_SCHEMA_VERSION_V4 = "training-metrics.v4"
+# Project Spec S0279: the internal (Atlas-native) binary fixed-configuration
+# training-metrics profile (Project Specs S0258/S0259), dispatched on
+# explicitly -- never inferred from loose field detection.
+_INTERNAL_NATIVE_BINARY_METRICS_SCHEMA_VERSION_V5 = "training-metrics.v5"
 
 # Top-level keys that are never themselves metric declarations, used only
 # by the bounded flat top-level fallback (case 3 below) to avoid mistaking
@@ -599,6 +603,67 @@ def _project_internal_forecasting_metrics_v4(payload: dict) -> dict:
     }
 
 
+def _project_internal_native_binary_metrics_v5(payload: dict) -> dict:
+    """Project Spec S0279: public projector for training-metrics.v5 (internal
+    Atlas-native binary fixed-configuration training, Project Specs
+    S0258/S0259).
+
+    Partition selection is the same bounded binary discipline already used by
+    the external fitted-model v1 / internal multiclass v2 / continuous-
+    regression v3 projectors:
+
+        selected =
+          final_test_evaluation
+            when it is a dict and its `completed` is exactly True
+          otherwise validation_evaluation
+
+    This profile carries no cross_validation_summary / train partition at all,
+    so a training/fitting partition can never be selected. Validation and
+    final-test metrics are never combined and no score is recomputed.
+
+    Only the selected partition's `partition_role` (-> split_name),
+    `row_count` (-> sample_size, when a real int), and bounded alias-
+    normalized name/value metric entries are projected. The v5 schema
+    designates no public primary metric, so `primary_metric_id` is never
+    fabricated and remains None. `classification_evidence`, `path_references`,
+    `hashes`, `training_run_identity`, and `evidence_policy` are validated
+    upstream but are never read into the public projection.
+    """
+    final_test = payload.get("final_test_evaluation")
+    validation = payload.get("validation_evaluation")
+    selected = (
+        final_test
+        if isinstance(final_test, dict) and final_test.get("completed") is True
+        else validation
+    )
+
+    split_name = None
+    sample_size = None
+    entries: list[tuple[Any, Any, bool]] = []
+    if isinstance(selected, dict):
+        split_name = _optional_str(selected.get("partition_role"))
+        sample_size = _optional_int(selected.get("row_count"))
+        raw_metrics = selected.get("metrics")
+        if isinstance(raw_metrics, list):
+            entries = [
+                (item.get("name"), item.get("value"), False)
+                for item in raw_metrics
+                if isinstance(item, dict)
+            ]
+
+    metrics, metric_order = _project_metric_entries(entries)
+
+    return {
+        "evaluation": {
+            "split_name": split_name,
+            "sample_size": sample_size,
+            "primary_metric_id": None,
+            "metrics": metrics,
+            "metric_order": metric_order,
+        }
+    }
+
+
 def _project_public_metrics(payload: dict) -> dict:
     if payload.get("schema_version") == _EXTERNAL_FITTED_MODEL_METRICS_SCHEMA_VERSION:
         return _project_external_fitted_model_metrics(payload)
@@ -610,6 +675,8 @@ def _project_public_metrics(payload: dict) -> dict:
         return _project_internal_continuous_regression_metrics_v3(payload)
     if payload.get("schema_version") == _INTERNAL_FORECASTING_METRICS_SCHEMA_VERSION_V4:
         return _project_internal_forecasting_metrics_v4(payload)
+    if payload.get("schema_version") == _INTERNAL_NATIVE_BINARY_METRICS_SCHEMA_VERSION_V5:
+        return _project_internal_native_binary_metrics_v5(payload)
     metrics_block = payload.get("metrics")
     if isinstance(metrics_block, dict) and isinstance(metrics_block.get("primary_metric"), dict):
         return _project_training_metrics_v1(payload)

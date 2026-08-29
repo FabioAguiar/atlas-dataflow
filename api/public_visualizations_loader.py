@@ -47,6 +47,16 @@ _ANALYTICAL_VISUALIZATIONS_INTERNAL_SCHEMA_VERSION_V2 = "analytical-visualizatio
 # residual_distribution) and an explicit continuous target-distribution
 # discriminator -- never a confusion_matrix.
 _ANALYTICAL_VISUALIZATIONS_INTERNAL_SCHEMA_VERSION_V3 = "analytical-visualizations.v3"
+# Project Spec S0279: the internal (Atlas-native) binary fixed-configuration
+# visualizations profile (Project Specs S0258/S0259). It deliberately
+# preserves the identical bounded Target Distribution / Feature Importance
+# canonical chart shape as v1/v2/v3, so it is admitted to the canonical chart
+# projector below and reuses the existing S0205 prepared-dataset
+# dataset-statistics derivation unchanged. Its extra classification_evidence /
+# feature_importance_method / target_distribution_method blocks are provenance
+# authorities only and are never read into the public projection. It never
+# gains a confusion_matrix, regression_diagnostics, or any forecasting field.
+_ANALYTICAL_VISUALIZATIONS_INTERNAL_SCHEMA_VERSION_V5 = "analytical-visualizations.v5"
 # Project Spec S0248: the internal (Atlas-native) univariate-forecasting
 # fixed-configuration visualizations profile. Unlike v1/v2/v3, it carries no
 # `charts`/`target_distribution_method`/`feature_importance_method` at all --
@@ -84,6 +94,7 @@ _ACCEPTED_ANALYTICAL_VISUALIZATIONS_SCHEMA_VERSIONS = (
     _ANALYTICAL_VISUALIZATIONS_EXTERNAL_SCHEMA_VERSION_V2,
     _ANALYTICAL_VISUALIZATIONS_INTERNAL_SCHEMA_VERSION_V2,
     _ANALYTICAL_VISUALIZATIONS_INTERNAL_SCHEMA_VERSION_V3,
+    _ANALYTICAL_VISUALIZATIONS_INTERNAL_SCHEMA_VERSION_V5,
 )
 _MAX_FORECASTING_SEASONAL_POINTS = 64
 _MAX_FORECASTING_FOLD_POINTS = 64
@@ -185,9 +196,12 @@ def _canonical_public_charts(visualizations: Any) -> list[dict[str, Any]] | None
     chart structure before any projection is built. Returns exactly the
     two required charts (target_distribution, feature_importance), in that
     order, or None when the artifact is not a valid, canonical
-    analytical-visualizations.v1 (Project Spec S0128) or
-    analytical-visualizations.external-fitted-model.v1 (Project Spec
-    S0193) document. Both profiles project the identical bounded shape."""
+    analytical-visualizations document whose schema_version is in
+    _ACCEPTED_ANALYTICAL_VISUALIZATIONS_SCHEMA_VERSIONS -- the historical
+    v1 (Project Spec S0128), the external fitted-model v1 (Project Spec
+    S0193), external v2 / internal v2 / internal v3, and the Atlas-native
+    binary fixed-configuration v5 (Project Spec S0279). Every accepted
+    profile projects the identical bounded public chart shape."""
     if not isinstance(visualizations, dict):
         return None
     if visualizations.get("schema_version") not in _ACCEPTED_ANALYTICAL_VISUALIZATIONS_SCHEMA_VERSIONS:

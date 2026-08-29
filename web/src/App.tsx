@@ -1,5 +1,5 @@
 import { lazy, Suspense } from "react";
-import { Route, Routes, useParams } from "react-router-dom";
+import { Navigate, Route, Routes, useParams } from "react-router-dom";
 import "./App.css";
 import PublicShell from "./layouts/PublicShell";
 import DatasetPage from "./pages/DatasetPage";
@@ -35,10 +35,18 @@ function renderAdminRoutes() {
     return <Route path="/admin/*" element={null} />;
   }
 
+  // Project Spec S0278: Dashboard and Dataset Detail authoring each have one
+  // canonical Admin route (/admin/dashboard, /admin/dataset-detail). The bare
+  // /admin index and the legacy /admin/dataset-admin path are redirect aliases
+  // only -- they never render a second copy of a canonical page. Both Navigate
+  // targets resolve within this same AdminShell parent, so the shell is not
+  // unmounted mid-redirect and the aliases cannot loop.
   return (
     <Route path="/admin" element={<AdminShell />}>
-      <Route index element={<DashboardPage />} />
-      <Route path="dataset-admin" element={<DatasetAdminPage />} />
+      <Route index element={<Navigate replace to="/admin/dashboard" />} />
+      <Route path="dashboard" element={<DashboardPage />} />
+      <Route path="dataset-detail" element={<DatasetAdminPage />} />
+      <Route path="dataset-admin" element={<Navigate replace to="/admin/dataset-detail" />} />
       <Route path="settings" element={<SettingsPage />} />
       <Route path="help" element={<HelpPage />} />
     </Route>

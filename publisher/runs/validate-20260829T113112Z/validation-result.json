@@ -3,7 +3,7 @@
   "validation_kind": "release_candidate_cross_artifact_consistency",
   "candidate_identity": {
     "dataset_slug": "telco-customer-churn",
-    "release_id": "release-20260812-001",
+    "release_id": "release-20260829-002",
     "release_version": "1.0.0-rc.1"
   },
   "source_candidate": {
@@ -21,7 +21,7 @@
       "manifest_input",
       "candidate_metadata"
     ],
-    "candidate_reference": "release-candidate-v1:telco-customer-churn/release-20260812-001"
+    "candidate_reference": "release-candidate-v1:telco-customer-churn/release-20260829-002"
   },
   "validation_outcome": "accepted",
   "required_artifact_role_results": {
@@ -137,6 +137,11 @@
   "cross_artifact_consistency": {
     "checked": true,
     "identity_checks": [
+      {
+        "artifact_role": "metrics",
+        "identity": "dataset_slug",
+        "consistent": true
+      },
       {
         "artifact_role": "model_card",
         "identity": "dataset_slug",
@@ -266,10 +271,11 @@
     "source": "bundle_only",
     "decision_reference": null,
     "sha256": null,
-    "operational_validity": "unconfirmed",
-    "operational_threshold_status": "unresolved",
-    "operational_prediction_available": false,
-    "decision_valid": false
+    "operational_validity": null,
+    "operational_threshold_status": null,
+    "operational_prediction_available": null,
+    "decision_valid": false,
+    "decision_strategy": null
   },
   "evidence_safety": {
     "reduced_evidence_only": true,

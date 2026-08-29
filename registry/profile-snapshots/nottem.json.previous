@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0.0",
   "dataset_slug": "nottem",
-  "published_at": "2026-08-29T10:12:37Z",
+  "published_at": "2026-08-29T10:12:44Z",
   "active_release_at_publish_time": "release-20260828t211723z",
   "profile": {
     "display": {
@@ -47,7 +47,7 @@
       ]
     },
     "theme": {
-      "preset": "atlas-green"
+      "preset": "aurora"
     },
     "result_card": {
       "schema_version": "univariate-forecasting-result-presentation.v1",

@@ -1,0 +1,112 @@
+{
+  "artifact_kind": "analytical_visualizations",
+  "charts": [
+    {
+      "data": [
+        {
+          "name": "No",
+          "value": 5174
+        },
+        {
+          "name": "Yes",
+          "value": 1869
+        }
+      ],
+      "id": "target_distribution",
+      "title": "Target Distribution",
+      "type": "bar",
+      "x_label": "Churn",
+      "y_label": "Rows"
+    },
+    {
+      "data": [
+        {
+          "name": "Contract",
+          "value": 0.4176368604181857
+        },
+        {
+          "name": "tenure",
+          "value": 0.2514942159613379
+        },
+        {
+          "name": "MonthlyCharges",
+          "value": 0.09452636800431503
+        },
+        {
+          "name": "InternetService",
+          "value": 0.06026467944426176
+        },
+        {
+          "name": "TotalCharges",
+          "value": 0.03183045388354301
+        },
+        {
+          "name": "OnlineSecurity",
+          "value": 0.029149538702251763
+        },
+        {
+          "name": "PaymentMethod",
+          "value": 0.0275368395699761
+        },
+        {
+          "name": "TechSupport",
+          "value": 0.020620410404123896
+        },
+        {
+          "name": "PaperlessBilling",
+          "value": 0.016835438061766683
+        },
+        {
+          "name": "MultipleLines",
+          "value": 0.012873901083208877
+        }
+      ],
+      "id": "feature_importance",
+      "title": "Feature Importance",
+      "type": "bar",
+      "x_label": "Feature",
+      "y_label": "Importance"
+    }
+  ],
+  "classification_evidence": {
+    "positive_class_id": "Yes",
+    "problem_type": "binary_classification",
+    "result_semantics_schema_version": "binary-result-semantics.v1"
+  },
+  "created_at": "2026-08-29T11:28:35.897693Z",
+  "evidence_policy": {
+    "model_bytes_embedded": false,
+    "notebook_state_embedded": false,
+    "raw_api_payloads_prohibited": true,
+    "raw_dataset_embedded": false,
+    "raw_logs_prohibited": true,
+    "raw_runtime_prohibited": true,
+    "raw_transformed_matrices_embedded": false,
+    "reduced_and_sanitized": true,
+    "secrets_prohibited": true,
+    "serialized_estimator_state_embedded": false
+  },
+  "feature_importance_method": {
+    "method": "permutation_importance",
+    "model_family": "hist_gradient_boosting",
+    "n_repeats": 5,
+    "omitted_source_feature_count": 9,
+    "population_kind": "finalized_fit_population",
+    "public_row_limit": 10,
+    "random_seed_source": "execution_contract.random_seed",
+    "scoring": "roc_auc",
+    "source": "sklearn.inspection.permutation_importance",
+    "total_source_feature_count": 19
+  },
+  "schema_version": "analytical-visualizations.v5",
+  "target_distribution_method": {
+    "population_kind": "prepared_dataset",
+    "row_count": 7043,
+    "target_column": "Churn"
+  },
+  "training_run_identity": {
+    "dataset_slug": "telco-customer-churn",
+    "output_directory": "pipeline/training-runs/telco-customer-churn/train-20260829T112835Z/",
+    "run_id": "train-20260829T112835Z"
+  }
+}

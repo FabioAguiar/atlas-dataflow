@@ -20,7 +20,7 @@ const primaryNavItems: NavItem[] = [
       </svg>
     ),
     label: "Dashboard",
-    to: "/admin",
+    to: "/admin/dashboard",
   },
   {
     end: true,
@@ -42,7 +42,7 @@ const primaryNavItems: NavItem[] = [
       </svg>
     ),
     label: "Dataset Detail",
-    to: "/admin/dataset-admin",
+    to: "/admin/dataset-detail",
   },
 ];
 

@@ -1,8 +1,8 @@
 {
   "schema_version": "1.0.0",
   "dataset_slug": "telco-customer-churn",
-  "published_at": "2026-08-15T15:51:20Z",
-  "active_release_at_publish_time": "release-20260812-001",
+  "published_at": "2026-08-29T11:37:50Z",
+  "active_release_at_publish_time": "release-20260829-002",
   "profile": {
     "display": {
       "title": "Telco Customer Churn",
@@ -11,12 +11,12 @@
       "problem_summary_body": "This study examines how customer profile, service usage, contract, and billing characteristics are associated with churn in a telecommunications customer snapshot. It also develops and evaluates an educational binary-classification model that estimates churn risk from 19 customer features.",
       "source_name": "Kaggle",
       "source_url": "https://www.kaggle.com/datasets/blastchar/telco-customer-churn",
-      "release_date_label": "2026-08-11",
+      "release_date_label": "2026-08-28",
       "date_format": "dd/mm/yyyy",
       "canonical_name_fallback": true
     },
     "home_card": {
-      "background_image_ref": "/media/home-cards/2ff31331bfb548b6936a9e5cadb68d20.png",
+      "background_image_ref": "/media/home-cards/410721b28be34de2930cdc061f0423b7.jpg",
       "short_description": "Explore the factors associated with customer churn and an educational machine-learning model that estimates churn risk from customer, service, contract, and billing characteristics.",
       "primary_metric_key": null
     },

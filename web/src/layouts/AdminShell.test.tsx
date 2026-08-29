@@ -1,7 +1,7 @@
 import "@testing-library/jest-dom/vitest";
 import { render, screen, within } from "@testing-library/react";
 import { useEffect, type ReactNode } from "react";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter, Navigate, Route, Routes } from "react-router-dom";
 import { describe, expect, it } from "vitest";
 
 import AdminShell from "./AdminShell";
@@ -15,12 +15,19 @@ function DisplayNameSetter({ name }: { name: string }) {
   return null;
 }
 
-function renderAdminShell(indexElement: ReactNode = null) {
+// Project Spec S0278: the shell is exercised under the canonical Admin route
+// structure -- bare /admin redirects to /admin/dashboard, and Dashboard /
+// Dataset Detail each resolve at their single canonical path.
+function renderAdminShell(indexElement: ReactNode = null, initialPath = "/admin/dashboard") {
   return render(
-    <MemoryRouter initialEntries={["/admin"]}>
+    <MemoryRouter initialEntries={[initialPath]}>
       <Routes>
         <Route element={<AdminShell />} path="/admin">
-          <Route element={indexElement} index />
+          <Route element={<Navigate replace to="/admin/dashboard" />} index />
+          <Route element={indexElement} path="dashboard" />
+          <Route element={null} path="dataset-detail" />
+          <Route element={null} path="settings" />
+          <Route element={null} path="help" />
         </Route>
       </Routes>
     </MemoryRouter>,
@@ -33,11 +40,26 @@ describe("AdminShell profile block", () => {
 
     expect(screen.getByText("Atlas DataFlow")).toBeInTheDocument();
     expect(screen.getAllByText("Admin").length).toBeGreaterThan(0);
-    expect(screen.getByRole("link", { name: "Dashboard" })).toHaveAttribute("href", "/admin");
+    expect(screen.getByRole("link", { name: "Dashboard" })).toHaveAttribute("href", "/admin/dashboard");
     expect(screen.getByRole("link", { name: "Public Home" })).toHaveAttribute("href", "/");
-    expect(screen.getByRole("link", { name: "Dataset Detail" })).toHaveAttribute("href", "/admin/dataset-admin");
+    expect(screen.getByRole("link", { name: "Dataset Detail" })).toHaveAttribute("href", "/admin/dataset-detail");
     expect(screen.getByRole("link", { name: "Settings" })).toHaveAttribute("href", "/admin/settings");
     expect(screen.getByRole("link", { name: "Help" })).toHaveAttribute("href", "/admin/help");
+  });
+
+  it("marks only the Dashboard link active at its canonical route", () => {
+    renderAdminShell(null, "/admin/dashboard");
+
+    expect(screen.getByRole("link", { name: "Dashboard" })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("link", { name: "Dataset Detail" })).not.toHaveAttribute("aria-current");
+    expect(screen.getByRole("link", { name: "Settings" })).not.toHaveAttribute("aria-current");
+  });
+
+  it("marks the Dataset Detail link active at its canonical route without leaking to Dashboard", () => {
+    renderAdminShell(null, "/admin/dataset-detail");
+
+    expect(screen.getByRole("link", { name: "Dataset Detail" })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("link", { name: "Dashboard" })).not.toHaveAttribute("aria-current");
   });
 
   it("renders the Atlas logo brand mark as a decorative image", () => {

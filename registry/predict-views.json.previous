@@ -2,36 +2,6 @@
   "schema_version": "atlas.dataflow.predict-views.v1",
   "predict_views": [
     {
-      "schema_version": "1.0.0",
-      "view_id": "churn-risk-overview",
-      "dataset_slug": "telco-customer-churn",
-      "display": {
-        "title": "Churn Risk Overview",
-        "summary": "Estimate whether a telecommunications customer is likely to churn.",
-        "description": "A public prediction experience focused on customer churn risk interpretation.",
-        "tags": [
-          "churn",
-          "retention"
-        ]
-      },
-      "intent": {
-        "prediction_goal": "Estimate customer churn likelihood from the canonical dataset contract inputs.",
-        "audience": "Public visitors evaluating churn risk examples.",
-        "usage_notes": "Use the canonical dataset contracts for required fields, accepted values, and runtime validation."
-      },
-      "binding": {
-        "dataset_slug": "telco-customer-churn",
-        "release": {
-          "mode": "active"
-        }
-      },
-      "contract_precedence": {
-        "canonical_contracts_are_source_of_truth": true,
-        "view_metadata_defines_runtime_validation": false,
-        "view_metadata_duplicates_contract": false
-      }
-    },
-    {
       "binding": {
         "dataset_slug": "dry-bean",
         "release": {
@@ -92,6 +62,37 @@
       },
       "schema_version": "1.0.0",
       "view_id": "concrete-compressive-strength-regression"
+    },
+    {
+      "binding": {
+        "dataset_slug": "nottem",
+        "release": {
+          "mode": "active"
+        }
+      },
+      "contract_precedence": {
+        "canonical_contracts_are_source_of_truth": true,
+        "view_metadata_defines_runtime_validation": false,
+        "view_metadata_duplicates_contract": false
+      },
+      "dataset_slug": "nottem",
+      "display": {
+        "description": "A univariate forecasting experience using the governed Nottingham Monthly Temperatures history-series input contract.",
+        "summary": "Forecast future Nottingham monthly average air temperatures from the governed history series.",
+        "tags": [
+          "nottem",
+          "forecasting",
+          "univariate"
+        ],
+        "title": "Nottingham Temperature Forecast"
+      },
+      "intent": {
+        "audience": "Users exploring Nottingham Monthly Temperatures univariate forecasting.",
+        "prediction_goal": "Forecast future Nottingham monthly average air temperature from the canonical history-series dataset contract inputs.",
+        "usage_notes": "Use the canonical dataset contracts for history-series structure, temporal validation, fixed forecast horizon, and runtime validation."
+      },
+      "schema_version": "1.0.0",
+      "view_id": "nottem-temperature-forecast"
     }
   ]
 }

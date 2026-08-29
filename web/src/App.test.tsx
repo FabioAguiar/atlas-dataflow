@@ -1,6 +1,6 @@
 import "@testing-library/jest-dom/vitest";
 import { act, fireEvent, render, screen } from "@testing-library/react";
-import { MemoryRouter, useNavigate, type NavigateFunction } from "react-router-dom";
+import { MemoryRouter, useLocation, useNavigate, type NavigateFunction } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 type MockResponse = {
@@ -143,11 +143,50 @@ async function renderApp(route: string, enableAdmin: boolean) {
 
   const { default: App } = await import("./App");
 
-  return render(
+  const utils = render(
     <MemoryRouter initialEntries={[route]}>
       <App />
     </MemoryRouter>,
   );
+
+  // The Admin route tree is code-split behind React.lazy + Suspense; let the
+  // pending dynamic imports settle so route assertions observe the resolved
+  // Admin shell (or its deterministic absence) rather than the null fallback.
+  await act(async () => {
+    await vi.dynamicImportSettled();
+    await Promise.resolve();
+  });
+
+  return utils;
+}
+
+// Project Spec S0278: legacy Admin URLs are redirect aliases only. A
+// LocationProbe reads the live React Router location so compatibility tests
+// can assert the browser ends at the canonical path, using public Router
+// behavior rather than implementation internals.
+async function renderAppWithLocation(route: string, enableAdmin: boolean) {
+  vi.resetModules();
+  vi.stubEnv("VITE_ENABLE_ADMIN", enableAdmin ? "true" : "false");
+
+  const { default: App } = await import("./App");
+
+  function LocationProbe() {
+    const location = useLocation();
+    return <span data-testid="location-pathname">{location.pathname}</span>;
+  }
+
+  const utils = render(
+    <MemoryRouter initialEntries={[route]}>
+      <LocationProbe />
+      <App />
+    </MemoryRouter>,
+  );
+
+  await act(async () => {
+    await vi.dynamicImportSettled();
+  });
+
+  return utils;
 }
 
 // Project Spec S0139: route-entry reset must be proven by navigating within
@@ -201,41 +240,65 @@ describe("App admin routing", () => {
     vi.resetModules();
   });
 
-  it("renders Dataset Admin only inside the private admin shell", async () => {
-    await renderApp("/admin/dataset-admin", true);
+  it("renders Dataset Detail authoring at its canonical /admin/dataset-detail route", async () => {
+    await renderApp("/admin/dataset-detail", true);
 
-    expect(screen.getByRole("navigation", { name: "Admin sections" })).toBeInTheDocument();
+    expect(await screen.findByRole("navigation", { name: "Admin sections" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Dataset Detail" })).toHaveAttribute(
       "href",
-      "/admin/dataset-admin",
+      "/admin/dataset-detail",
     );
-    expect(screen.getByRole("button", { name: "Publishing unavailable" })).toBeDisabled();
+    expect(screen.getByRole("link", { name: "Dataset Detail" })).toHaveAttribute("aria-current", "page");
     expect(
-      await screen.findByRole("heading", { name: "Dataset -- Telco Customer Churn" }),
+      await screen.findByRole("heading", { name: "Dataset — Telco Customer Churn" }),
+    ).toBeInTheDocument();
+  });
+
+  it("redirects the legacy /admin/dataset-admin alias to canonical Dataset Detail", async () => {
+    await renderAppWithLocation("/admin/dataset-admin", true);
+
+    // The legacy alias resolves to the canonical Dataset Detail location, and
+    // the canonical Dataset Detail route element (DatasetAdminPage) is what
+    // renders there -- proven by its active canonical nav link and heading.
+    expect(await screen.findByRole("navigation", { name: "Admin sections" })).toBeInTheDocument();
+    expect(screen.getByTestId("location-pathname")).toHaveTextContent("/admin/dataset-detail");
+    expect(screen.getByRole("link", { name: "Dataset Detail" })).toHaveAttribute("aria-current", "page");
+    expect(
+      await screen.findByRole("heading", { name: "Dataset — Telco Customer Churn" }),
     ).toBeInTheDocument();
   });
 
   it("renders Settings only inside the private admin shell", async () => {
     await renderApp("/admin/settings", true);
 
-    expect(screen.getByRole("navigation", { name: "Admin sections" })).toBeInTheDocument();
+    expect(await screen.findByRole("navigation", { name: "Admin sections" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Settings" })).toHaveAttribute("href", "/admin/settings");
-    expect(screen.getByRole("heading", { name: /Admin settings/i })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: /Admin settings/i })).toBeInTheDocument();
   });
 
   it("renders Help only inside the private admin shell", async () => {
     await renderApp("/admin/help", true);
 
-    expect(screen.getByRole("navigation", { name: "Admin sections" })).toBeInTheDocument();
+    expect(await screen.findByRole("navigation", { name: "Admin sections" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Help" })).toHaveAttribute("href", "/admin/help");
-    expect(screen.getByRole("heading", { name: /Admin help/i })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: /Admin help/i })).toBeInTheDocument();
   });
 
-  it("renders the Dashboard only inside the private admin shell", async () => {
-    await renderApp("/admin", true);
+  it("renders the Dashboard at its canonical /admin/dashboard route", async () => {
+    await renderApp("/admin/dashboard", true);
 
-    expect(screen.getByRole("navigation", { name: "Admin sections" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Dashboard" })).toBeInTheDocument();
+    expect(await screen.findByRole("navigation", { name: "Admin sections" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Dashboard" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Dashboard" })).toHaveAttribute("href", "/admin/dashboard");
+  });
+
+  it("redirects the bare /admin route to canonical /admin/dashboard", async () => {
+    await renderAppWithLocation("/admin", true);
+
+    expect(await screen.findByRole("navigation", { name: "Admin sections" })).toBeInTheDocument();
+    expect(screen.getByTestId("location-pathname")).toHaveTextContent("/admin/dashboard");
+    expect(screen.getByRole("link", { name: "Dashboard" })).toHaveAttribute("aria-current", "page");
+    expect(await screen.findByRole("heading", { name: "Dashboard" })).toBeInTheDocument();
   });
 
   it("renders the public Dataset Detail page for /dataset/:slug", async () => {
@@ -269,14 +332,23 @@ describe("App admin routing", () => {
     expect(homeMain).toHaveAttribute("data-main-mode", "constrained");
   });
 
-  it("does not render admin shell or admin navigation for direct admin URLs when admin is disabled", async () => {
-    const { container } = await renderApp("/admin/dataset-admin", false);
+  // Project Spec S0278: canonical and legacy Admin routes share one
+  // fail-closed behavior -- no Admin shell, navigation, or lazy Admin content
+  // renders through the React app when Admin is disabled.
+  it.each(["/admin", "/admin/dashboard", "/admin/dataset-detail", "/admin/dataset-admin"])(
+    "does not render admin shell or admin navigation for %s when admin is disabled",
+    async (route) => {
+      const { container } = await renderApp(route, false);
 
-    expect(screen.queryByRole("navigation", { name: "Admin sections" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("navigation", { name: "Admin utilities" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Dataset -- Telco Customer Churn" })).not.toBeInTheDocument();
-    expect(container).toBeEmptyDOMElement();
-  });
+      expect(screen.queryByRole("navigation", { name: "Admin sections" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("navigation", { name: "Admin utilities" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: "Dashboard" })).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("heading", { name: "Dataset — Telco Customer Churn" }),
+      ).not.toBeInTheDocument();
+      expect(container).toBeEmptyDOMElement();
+    },
+  );
 
   it("does not render admin shell or admin navigation for the bare /admin route when admin is disabled", async () => {
     const { container } = await renderApp("/admin", false);

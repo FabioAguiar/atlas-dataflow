@@ -604,7 +604,7 @@ function promotionOutcomeMessage(entry: {
 }
 
 const PROMOTION_CONSEQUENCE =
-  "Creates a new Dataset Detail entry with a deterministic unique public slug, leaving any existing entry untouched.";
+  "Promotes the run to the matching Dataset Detail when its dataset slug already exists; otherwise creates a new Dataset Detail for that slug.";
 
 function canPromoteRun(run: AdminRunSummary): boolean {
   if (run.status === "available") {
@@ -1102,13 +1102,14 @@ export default function DashboardPage() {
   function promoteRun(runId: string) {
     setPromotionState((previous) => ({ ...previous, [runId]: { status: "promoting" } }));
 
-    // Project Spec S0047: Admin Dashboard promotion always requests
-    // create_new_dataset_detail -- there is no operator-facing choice
-    // between updating an existing Dataset Detail and creating a new one.
+    // Project Spec S0280 supersedes the S0047 create-new-only choice: generic
+    // Admin Dashboard promotion has one deterministic meaning -- rebind an
+    // existing Dataset Detail to the promoted release, otherwise create one new
+    // Dataset Detail for that slug. There is no operator-facing mode choice, so
+    // this request sends no promotion-mode body; the backend route is the sole
+    // authority and always applies update-existing-or-create semantics.
     fetch(`${apiBaseUrl}/admin/runs/${encodeURIComponent(runId)}/promote`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ mode: "create_new_dataset_detail" }),
     })
       .then(async (res) => {
         const body = (await res.json().catch(() => null)) as AdminRunPromotionResponse | null;

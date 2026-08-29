@@ -786,7 +786,7 @@ describe("DashboardPage", () => {
       expect(within(table).getByRole("button", { name: "Promote" })).not.toBeDisabled();
     });
 
-    it("does not render a promotion mode selector or offer Update existing Dataset Detail as an option", async () => {
+    it("does not render a promotion mode selector or offer an update/create Dataset Detail option, and its consequence copy describes update-existing-or-create semantics", async () => {
       installSoleEligibleRunFetchMock();
       render(<DashboardPage />);
       await loadRuns();
@@ -797,9 +797,19 @@ describe("DashboardPage", () => {
       ).not.toBeInTheDocument();
       expect(within(table).queryByRole("combobox")).not.toBeInTheDocument();
       expect(screen.queryByText("Update existing Dataset Detail")).not.toBeInTheDocument();
+      expect(screen.queryByText("Create new Dataset Detail")).not.toBeInTheDocument();
+
+      // Project Spec S0280: the operator-facing consequence copy (Promote
+      // button title) must describe update-existing-or-create semantics and no
+      // longer claim every Promote creates a new unique Dataset Detail.
+      const promoteButton = within(table).getByRole("button", { name: "Promote" });
+      const consequence = promoteButton.getAttribute("title") ?? "";
+      expect(consequence).toMatch(/when its dataset slug already exists/i);
+      expect(consequence).toMatch(/otherwise creates a new Dataset Detail/i);
+      expect(consequence).not.toMatch(/unique/i);
     });
 
-    it("always sends create_new_dataset_detail in the Promote request body, never update_existing_or_create", async () => {
+    it("sends the generic Promote request without requesting create-new behavior", async () => {
       const fetchMock = installSoleEligibleRunFetchMock();
       fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input);
@@ -809,8 +819,8 @@ describe("DashboardPage", () => {
             promoted: true,
             dataset_slug: "telco-customer-churn",
             release_id: "release-20260710t101438z",
-            registry_action: "created",
-            public_dataset_slug: "telco-customer-churn1",
+            registry_action: "updated",
+            public_dataset_slug: "telco-customer-churn",
             errors: [],
           });
         }
@@ -840,15 +850,21 @@ describe("DashboardPage", () => {
       fireEvent.click(within(table).getByRole("button", { name: "Promote" }));
 
       const status = await within(table).findByRole("status");
-      expect(status).toHaveTextContent(/created a new registry entry/i);
-      expect(status).not.toHaveTextContent(/updated the existing registry entry/i);
+      expect(status).toHaveTextContent(/updated the existing registry entry/i);
 
       const promoteCall = fetchMock.mock.calls[callCountAfterLoad];
       expect(promoteCall[0]).toContain("/admin/runs/run-agnostic-solo/promote");
       const requestInit = promoteCall[1] as RequestInit;
-      const sentBody = JSON.parse(requestInit.body as string);
-      expect(sentBody).toEqual({ mode: "create_new_dataset_detail" });
-      expect(sentBody.mode).not.toBe("update_existing_or_create");
+      expect((requestInit.method ?? "").toUpperCase()).toBe("POST");
+
+      // Project Spec S0280: the generic Promote request must never ask for
+      // create-new behavior. Sending no promotion-mode body is preferred; the
+      // only acceptable explicit body is {"mode":"update_existing_or_create"}.
+      const rawBody = requestInit.body == null ? "" : String(requestInit.body);
+      expect(rawBody).not.toContain("create_new_dataset_detail");
+      if (rawBody !== "") {
+        expect(JSON.parse(rawBody)).toEqual({ mode: "update_existing_or_create" });
+      }
     });
 
     it("displays the final public Dataset Detail slug when it differs from the candidate slug", async () => {

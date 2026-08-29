@@ -310,7 +310,7 @@ from registry.resolve import (  # noqa: E402
     resolve_dataset,
 )
 from registry.update import (  # noqa: E402
-    MODE_CREATE_NEW_DATASET_DETAIL,
+    MODE_UPDATE_EXISTING_OR_CREATE,
     remove_dataset_entry,
     rename_dataset_slug,
 )
@@ -1245,16 +1245,22 @@ def promote_admin_run_route(run_id: str, request: Request, payload: dict | None 
     if not _admin_request_authorized(request):
         return _admin_route_not_found_response()
 
-    # Project Spec S0047: Admin Dashboard promotion is create-new-only. A
-    # colliding base dataset_slug must never silently (or explicitly, via a
-    # legacy/unknown request body mode) update an existing Dataset Detail
-    # through this route, so no request-body mode is read or forwarded here
-    # -- this route always promotes with MODE_CREATE_NEW_DATASET_DETAIL,
-    # regardless of what (if anything) the request body contains.
-    # promote_admin_run's own `mode` parameter and PROMOTION_MODE_INVALID
-    # validation remain reachable for direct/non-Admin callers (tests,
-    # scripts), just never through this route.
-    result = promote_admin_run(run_id, mode=MODE_CREATE_NEW_DATASET_DETAIL)
+    # Project Spec S0280 supersedes the S0047 generic-route choice: the generic
+    # Admin Dashboard promotion route now has one deterministic product meaning
+    # -- rebind an existing Dataset Detail to the promoted release when its base
+    # dataset_slug already exists, otherwise create one new Dataset Detail for
+    # that slug. This route therefore always promotes with
+    # MODE_UPDATE_EXISTING_OR_CREATE and never reads or forwards a request-body
+    # `mode`, so a stale/legacy `{"mode": "create_new_dataset_detail"}` or an
+    # unknown mode value can neither force create-new behavior nor surface a
+    # lower-level mode-selection error through this endpoint. The `payload`
+    # parameter is retained only for request-body compatibility and is
+    # intentionally ignored.
+    # The lower-level explicit create-new capability is preserved:
+    # promote_admin_run(..., mode=registry_update.MODE_CREATE_NEW_DATASET_DETAIL)
+    # and its PROMOTION_MODE_INVALID validation remain reachable for
+    # direct/specialized callers (tests, scripts), just never through this route.
+    result = promote_admin_run(run_id, mode=MODE_UPDATE_EXISTING_OR_CREATE)
     if not result["promoted"]:
         return ADMIN_RUN_PROMOTION_FAILED.response(errors=result["errors"])
 

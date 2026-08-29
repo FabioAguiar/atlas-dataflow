@@ -198,10 +198,61 @@ def _public_dataset_slug_for_release(release_id: str) -> str | None:
     return None
 
 
+def _registry_entry_for_dataset_slug(dataset_slug: str) -> dict | None:
+    """Project Spec S0282: resolve a live registry entry by *exact* dataset_slug.
+
+    Used to tell whether the Dataset Detail a completed historical promotion
+    recorded still exists in the live registry (and, if so, which release it
+    now points at). No title matching and no normalization beyond the
+    slug-pattern validation already used across this module. The entry is
+    returned only when it is well-formed enough to reconcile against: a valid
+    dataset_slug and a string active_release matching the registry's
+    release-id convention. Registry/release/promotion artifacts stay
+    read-only to this projection.
+    """
+    if not isinstance(dataset_slug, str) or not _DATASET_SLUG_PATTERN.match(dataset_slug):
+        return None
+    for entry in _registry_dataset_entries():
+        if not isinstance(entry, dict) or entry.get("dataset_slug") != dataset_slug:
+            continue
+        active_release = entry.get("active_release")
+        if not isinstance(active_release, str) or not RELEASE_ID_PATTERN.match(active_release):
+            return None
+        return entry
+    return None
+
+
+def _historical_public_dataset_slug(
+    promotion_result: dict, candidate_identity: dict
+) -> str | None:
+    """Project Spec S0282: the final public slug this promotion actually
+    allocated, used only to decide whether the same recorded Dataset Detail
+    identity still exists after this run's promoted release is no longer
+    active. promotion-result.json's registry_update_record.public_dataset_slug
+    is authoritative when present and valid (an older create-new-mode
+    promotion may have allocated a numbered slug different from the candidate
+    base slug); otherwise the candidate base slug is the historical identity.
+    """
+    record = promotion_result.get("registry_update_record")
+    if isinstance(record, dict):
+        recorded = record.get("public_dataset_slug")
+        if isinstance(recorded, str) and _DATASET_SLUG_PATTERN.match(recorded):
+            return recorded
+    fallback = candidate_identity.get("dataset_slug")
+    if isinstance(fallback, str) and _DATASET_SLUG_PATTERN.match(fallback):
+        return fallback
+    return None
+
+
 _REGISTRY_BOUND_REASON = "This run has already been promoted as a Dataset Detail."
 _REGISTRY_ORPHANED_REASON = (
     "The Dataset Detail associated with this run's promoted release is no "
     "longer in the registry, so this run can be promoted again."
+)
+_REGISTRY_SUPERSEDED_REASON = (
+    'This run was promoted to release "{release_id}". That release is '
+    'preserved, but release "{current_active_release_id}" is now the active '
+    'release for "{public_dataset_slug}".'
 )
 
 
@@ -240,16 +291,36 @@ def _promotion_summary_from(run_dir: Path) -> dict | None:
 
     Project Spec S0048 adds registry_bound/can_promote/can_remove/reason so
     the Dashboard no longer has to infer button behavior from the presence of
-    public_dataset_slug alone: registry_bound is true exactly when the live
-    registry still points at this promoted release (a "registry_bound_promoted"
-    run -- Promote stays clickable but only informational, Remove stays
-    active), and false when it no longer does but historical applied evidence
-    proves the promotion completed at some point (a "promotion_result_orphaned"
-    run -- historical promotion evidence exists but the Dataset Detail is
-    gone, so the run is promotable again). can_remove is always true here:
-    removing a run only ever deletes its run artifact/directory (see
-    remove_admin_run, which never inspects promotion state at all) and never
-    mutates the registry, releases, or Dataset Details.
+    public_dataset_slug alone. can_remove is always true here: removing a run
+    only ever deletes its run artifact/directory (see remove_admin_run, which
+    never inspects promotion state at all) and never mutates the registry,
+    releases, or Dataset Details.
+
+    Project Spec S0282 reconciles a completed historical promotion against the
+    live registry into an explicit registry_state, so a promotion whose
+    release is no longer active is no longer collapsed with a promotion whose
+    Dataset Detail is gone:
+
+      - "active": the live registry still binds this exact release
+        (_public_dataset_slug_for_release). This stays authoritative even when
+        the Dataset Detail slug was renamed after promotion. registry_bound
+        true, can_promote false, public_dataset_slug + registry_action="reused".
+      - "superseded": the release is not currently active, but historical
+        applied evidence proves completion, and the recorded final public slug
+        still resolves to a live registry entry whose active_release is a
+        different (valid) release. registry_bound false, can_promote false,
+        public_dataset_slug + current_active_release_id. The historical release
+        is preserved and this run is not re-promotable through generic
+        eligibility.
+      - "missing": historical applied evidence proves completion, the release
+        is not currently active, and the recorded final public slug has no
+        live registry entry -- preserves S0048: registry_bound false,
+        can_promote true.
+
+    A run with no live binding and no matching historical applied evidence is
+    a never-completed registry activation (Project Spec S0262), not a
+    completed promotion: this function returns None so the run keeps surfacing
+    in its existing retryable Admin state instead of being misreported.
     """
     promotion_result = _read_json_object(run_dir / _RUN_ARTIFACT_PROMOTION_RESULT)
     if promotion_result is None or promotion_result.get("promotion_outcome") != "promoted":
@@ -266,33 +337,72 @@ def _promotion_summary_from(run_dir: Path) -> dict | None:
     if not isinstance(release_id, str) or not RELEASE_ID_PATTERN.match(release_id):
         return None
 
-    public_dataset_slug = _public_dataset_slug_for_release(release_id)
-    registry_bound = public_dataset_slug is not None
-
-    if not registry_bound:
-        registry_update_record = promotion_result.get("registry_update_record")
-        historically_applied = (
-            isinstance(registry_update_record, dict)
-            and registry_update_record.get("update_applied") is True
-            and registry_update_record.get("new_active_release_id") == release_id
-        )
-        if not historically_applied:
-            return None
-
     summary = {
         "promotion_outcome": "promoted",
         "release_id": release_id,
         "dataset_slug": dataset_slug,
-        "registry_bound": registry_bound,
-        "can_promote": not registry_bound,
         "can_remove": True,
-        "reason": _REGISTRY_BOUND_REASON if registry_bound else _REGISTRY_ORPHANED_REASON,
     }
 
-    if registry_bound:
-        summary["public_dataset_slug"] = public_dataset_slug
-        summary["registry_action"] = "reused"
+    # --- active: the live registry still binds this exact release ---
+    live_public_slug = _public_dataset_slug_for_release(release_id)
+    if live_public_slug is not None:
+        summary.update(
+            {
+                "registry_state": "active",
+                "registry_bound": True,
+                "can_promote": False,
+                "public_dataset_slug": live_public_slug,
+                "registry_action": "reused",
+                "reason": _REGISTRY_BOUND_REASON,
+            }
+        )
+        return summary
 
+    # --- not live-bound: require proven historical applied evidence (S0262) ---
+    registry_update_record = promotion_result.get("registry_update_record")
+    historically_applied = (
+        isinstance(registry_update_record, dict)
+        and registry_update_record.get("update_applied") is True
+        and registry_update_record.get("new_active_release_id") == release_id
+    )
+    if not historically_applied:
+        return None
+
+    historical_slug = _historical_public_dataset_slug(promotion_result, candidate_identity)
+    registry_entry = (
+        _registry_entry_for_dataset_slug(historical_slug) if historical_slug else None
+    )
+
+    if registry_entry is not None:
+        current_active_release_id = registry_entry.get("active_release")
+        if current_active_release_id != release_id:
+            # --- superseded: Dataset Detail still exists, newer release active ---
+            summary.update(
+                {
+                    "registry_state": "superseded",
+                    "registry_bound": False,
+                    "can_promote": False,
+                    "public_dataset_slug": historical_slug,
+                    "current_active_release_id": current_active_release_id,
+                    "reason": _REGISTRY_SUPERSEDED_REASON.format(
+                        release_id=release_id,
+                        current_active_release_id=current_active_release_id,
+                        public_dataset_slug=historical_slug,
+                    ),
+                }
+            )
+            return summary
+
+    # --- missing: historically promoted, Dataset Detail no longer in registry ---
+    summary.update(
+        {
+            "registry_state": "missing",
+            "registry_bound": False,
+            "can_promote": True,
+            "reason": _REGISTRY_ORPHANED_REASON,
+        }
+    )
     return summary
 
 

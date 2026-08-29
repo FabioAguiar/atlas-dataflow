@@ -1127,6 +1127,7 @@ describe("DashboardPage", () => {
                 promotion_outcome: "promoted",
                 release_id: "release-20260701-001",
                 dataset_slug: "synthetic-retail-forecast",
+                registry_state: "active",
                 public_dataset_slug: "synthetic-retail-forecast",
                 registry_action: "reused",
                 registry_bound: true,
@@ -1249,6 +1250,7 @@ describe("DashboardPage", () => {
                 promotion_outcome: "promoted",
                 release_id: "release-20260710t101438z",
                 dataset_slug: "telco-customer-churn",
+                registry_state: "active",
                 public_dataset_slug: "telco-customer-churn1",
                 registry_action: "created",
                 registry_bound: true,
@@ -1295,6 +1297,7 @@ describe("DashboardPage", () => {
                 promotion_outcome: "promoted",
                 release_id: "release-20260702-001",
                 dataset_slug: "synthetic-energy-usage",
+                registry_state: "missing",
                 registry_bound: false,
                 can_promote: true,
                 can_remove: true,
@@ -1340,6 +1343,7 @@ describe("DashboardPage", () => {
                 promotion_outcome: "promoted",
                 release_id: "release-20260702-001",
                 dataset_slug: "synthetic-energy-usage",
+                registry_state: "missing",
                 registry_bound: false,
                 can_promote: true,
                 can_remove: true,
@@ -1383,6 +1387,7 @@ describe("DashboardPage", () => {
                 promotion_outcome: "promoted",
                 release_id: "release-20260701-001",
                 dataset_slug: "synthetic-retail-forecast",
+                registry_state: "missing",
                 registry_bound: false,
                 can_promote: true,
                 can_remove: true,
@@ -1436,6 +1441,7 @@ describe("DashboardPage", () => {
                   promotion_outcome: "promoted",
                   release_id: "release-20260701-001",
                   dataset_slug: "synthetic-retail-forecast",
+                  registry_state: "missing",
                   registry_bound: false,
                   can_promote: true,
                   can_remove: true,
@@ -1507,6 +1513,7 @@ describe("DashboardPage", () => {
               promotion_outcome: "promoted" as const,
               release_id: "release-20260825-001",
               dataset_slug: "synthetic-telco-churn",
+              registry_state: "active" as const,
               public_dataset_slug: "synthetic-telco-churn",
               registry_action: "reused" as const,
               registry_bound: true,
@@ -2246,6 +2253,7 @@ describe("DashboardPage", () => {
                   promotion_outcome: "promoted",
                   release_id: "release-20260702-001",
                   dataset_slug: "synthetic-energy-usage",
+                  registry_state: "missing",
                   registry_bound: false,
                   can_promote: true,
                   can_remove: true,
@@ -2388,6 +2396,9 @@ describe("DashboardPage", () => {
                 promotion_outcome: "promoted",
                 release_id: "release-20260710t191735z",
                 dataset_slug: "synthetic-retail-forecast",
+                registry_state: "active",
+                public_dataset_slug: "synthetic-retail-forecast",
+                registry_action: "reused",
                 registry_bound: true,
                 can_promote: false,
                 can_remove: true,
@@ -2449,6 +2460,9 @@ describe("DashboardPage", () => {
                   promotion_outcome: "promoted",
                   release_id: "release-20260710t191735z",
                   dataset_slug: "synthetic-retail-forecast",
+                  registry_state: "active",
+                  public_dataset_slug: "synthetic-retail-forecast",
+                  registry_action: "reused",
                   registry_bound: true,
                   can_promote: false,
                   can_remove: true,
@@ -2515,6 +2529,203 @@ describe("DashboardPage", () => {
       const removeButton = within(table).getByRole("button", { name: "Remove" });
 
       expect(promoteButton.style.width).toBe(removeButton.style.width);
+    });
+  });
+
+  describe("Superseded promotion history reflection (Project Spec S0282)", () => {
+    const supersededRun = {
+      schema_version: "admin-run-summary.v1",
+      run_id: "validate-20260829T113112Z",
+      status: "promoted",
+      dataset_candidate: "telco-customer-churn",
+      created_at: "2026-08-29T11:31:12Z",
+      trace_reference: "trace/validate-20260829T113112Z",
+      validation_summary: { outcome: "accepted" },
+      promotion_summary: {
+        promotion_outcome: "promoted",
+        release_id: "release-20260829-002",
+        dataset_slug: "telco-customer-churn",
+        registry_state: "superseded",
+        public_dataset_slug: "telco-customer-churn",
+        current_active_release_id: "release-20260829-003",
+        registry_bound: false,
+        can_promote: false,
+        can_remove: true,
+        reason:
+          'This run was promoted to release "release-20260829-002". That release is preserved, but release "release-20260829-003" is now the active release for "telco-customer-churn".',
+      },
+    };
+    const activeRun = {
+      schema_version: "admin-run-summary.v1",
+      run_id: "validate-20260829T144328Z",
+      status: "promoted",
+      dataset_candidate: "telco-customer-churn",
+      created_at: "2026-08-29T14:43:28Z",
+      trace_reference: "trace/validate-20260829T144328Z",
+      validation_summary: { outcome: "accepted" },
+      promotion_summary: {
+        promotion_outcome: "promoted",
+        release_id: "release-20260829-003",
+        dataset_slug: "telco-customer-churn",
+        registry_state: "active",
+        public_dataset_slug: "telco-customer-churn",
+        registry_action: "reused",
+        registry_bound: true,
+        can_promote: false,
+        can_remove: true,
+      },
+    };
+    const missingRun = {
+      schema_version: "admin-run-summary.v1",
+      run_id: "validate-20260101T000000Z",
+      status: "promoted",
+      dataset_candidate: "retired-dataset",
+      created_at: "2026-01-01T00:00:00Z",
+      trace_reference: "trace/validate-20260101T000000Z",
+      validation_summary: { outcome: "accepted" },
+      promotion_summary: {
+        promotion_outcome: "promoted",
+        release_id: "release-20260101-001",
+        dataset_slug: "retired-dataset",
+        registry_state: "missing",
+        registry_bound: false,
+        can_promote: true,
+        can_remove: true,
+      },
+    };
+
+    function installFetchMock() {
+      const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/admin/runs")) {
+          return jsonResponse({
+            runs_root_status: "available",
+            runs: [activeRun, supersededRun, missingRun],
+          });
+        }
+        if (url.endsWith("/admin/datasets")) {
+          return jsonResponse({
+            datasets: [
+              {
+                dataset_slug: "telco-customer-churn",
+                title: "Telco Customer Churn",
+                publication_status: "ready",
+                last_updated: "2026-08-29T14:43:28Z",
+              },
+            ],
+          });
+        }
+        if (init?.method === "POST" && url.includes("/promote")) {
+          return jsonResponse({ run_id: "x", promoted: true, dataset_slug: null, release_id: null, registry_action: null, public_dataset_slug: null, errors: [] });
+        }
+        return jsonResponse({}, 404);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      return fetchMock;
+    }
+
+    it("marks the superseded run visibly distinct from an active promoted run", async () => {
+      installFetchMock();
+      render(<DashboardPage />);
+      await loadRuns();
+
+      const table = await screen.findByRole("table", { name: "Run summaries" });
+      expect(within(table).getAllByText("Superseded").length).toBeGreaterThanOrEqual(1);
+
+      const supersededAction = within(table).getByRole("button", { name: "Superseded" });
+      expect(supersededAction).toHaveAttribute("data-run-action", "superseded");
+      expect(supersededAction).not.toBeDisabled();
+
+      // The active Telco run keeps its informational "Promoted" action.
+      expect(within(table).getByRole("button", { name: "Promoted" })).toHaveAttribute(
+        "data-run-action",
+        "promoted",
+      );
+    });
+
+    it("still counts the superseded run in Promoted runs alongside the active run", async () => {
+      installFetchMock();
+      render(<DashboardPage />);
+      await loadRuns();
+      await screen.findByRole("table", { name: "Run summaries" });
+
+      // active + superseded + missing == 3 promoted runs.
+      expect(screen.getByLabelText("Promoted runs")).toHaveAttribute("data-summary-count", "3");
+      // Published datasets stays registry-backed and independent.
+      expect(screen.getByLabelText("Published datasets")).toHaveAttribute("data-summary-count", "1");
+    });
+
+    it("never calls /promote when the superseded action is clicked", async () => {
+      const fetchMock = installFetchMock();
+      render(<DashboardPage />);
+      await loadRuns();
+
+      const table = await screen.findByRole("table", { name: "Run summaries" });
+      const callsBefore = fetchMock.mock.calls.length;
+      fireEvent.click(within(table).getByRole("button", { name: "Superseded" }));
+
+      expect(fetchMock.mock.calls.length).toBe(callsBefore);
+      expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("/promote"))).toHaveLength(0);
+    });
+
+    it("names the historical and current active releases in the superseded informational modal", async () => {
+      installFetchMock();
+      render(<DashboardPage />);
+      await loadRuns();
+
+      const table = await screen.findByRole("table", { name: "Run summaries" });
+      fireEvent.click(within(table).getByRole("button", { name: "Superseded" }));
+
+      const dialog = await screen.findByRole("dialog", { name: /promotion status/i });
+      expect(within(dialog).getByText(/release-20260829-002/)).toBeInTheDocument();
+      expect(within(dialog).getByText(/release-20260829-003/)).toBeInTheDocument();
+      expect(within(dialog).getByText(/telco-customer-churn/)).toBeInTheDocument();
+    });
+
+    it("keeps Remove available for the superseded run", async () => {
+      installFetchMock();
+      render(<DashboardPage />);
+      await loadRuns();
+
+      const table = await screen.findByRole("table", { name: "Run summaries" });
+      const rows = within(table).getAllByRole("row");
+      const supersededRow = rows.find((row) => within(row).queryByText("20260829T113112Z"));
+      expect(supersededRow).toBeDefined();
+      expect(within(supersededRow as HTMLElement).getByRole("button", { name: "Remove" })).not.toBeDisabled();
+    });
+
+    it("keeps the missing promoted run's functional Promote action", async () => {
+      installFetchMock();
+      render(<DashboardPage />);
+      await loadRuns();
+
+      const table = await screen.findByRole("table", { name: "Run summaries" });
+      const promoteButton = within(table).getByRole("button", { name: "Promote" });
+      expect(promoteButton).toHaveAttribute("data-run-action", "promote");
+      expect(promoteButton).not.toBeDisabled();
+    });
+
+    it("rejects a cross-state malformed superseded payload rather than rendering an unsafe Promote action", async () => {
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/admin/runs")) {
+          return jsonResponse({
+            runs_root_status: "available",
+            runs: [
+              {
+                ...supersededRun,
+                promotion_summary: { ...supersededRun.promotion_summary, can_promote: true },
+              },
+            ],
+          });
+        }
+        return jsonResponse({}, 404);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      render(<DashboardPage />);
+      await loadRuns();
+
+      expect(await screen.findByRole("alert", { name: "Invalid run summary response" })).toBeInTheDocument();
     });
   });
 });

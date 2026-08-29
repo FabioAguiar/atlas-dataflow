@@ -9,11 +9,20 @@ type RunStatus = "available" | "unavailable" | "invalid" | "promoted";
 type RunsRootStatus = "available" | "unavailable";
 type ValidationOutcome = "accepted" | "rejected" | "failed" | "unknown";
 
+// Project Spec S0282: registry_state is the reconciliation of a completed
+// historical promotion against the live registry -- "active" (this release is
+// still bound), "superseded" (the Dataset Detail exists but a newer release is
+// active), or "missing" (the Dataset Detail is gone, so the run is
+// re-promotable). current_active_release_id is present only for "superseded".
+type RegistryState = "active" | "superseded" | "missing";
+
 type PromotionSummary = {
   promotion_outcome: "promoted";
   release_id: string;
   dataset_slug: string;
+  registry_state: RegistryState;
   public_dataset_slug?: string;
+  current_active_release_id?: string;
   registry_action?: "created" | "updated" | "reused";
   registry_bound: boolean;
   can_promote: boolean;
@@ -478,6 +487,35 @@ function isValidationSummary(value: unknown): value is AdminRunSummary["validati
 }
 
 const promotionRegistryActions: Array<NonNullable<PromotionSummary["registry_action"]>> = ["created", "updated", "reused"];
+const registryStates: RegistryState[] = ["active", "superseded", "missing"];
+
+// Project Spec S0282: a malformed cross-state promotion payload must fail
+// closed here (the whole run summary is rejected) rather than reach the row
+// and render an unsafe Promote action. Each registry_state carries a fixed
+// set of invariants the backend always satisfies; anything else is not a
+// trustworthy promoted projection.
+function hasValidRegistryStateInvariants(record: Partial<PromotionSummary>): boolean {
+  const publicSlugPresent =
+    typeof record.public_dataset_slug === "string" && record.public_dataset_slug.length > 0;
+  const currentActiveReleasePresent =
+    typeof record.current_active_release_id === "string" && record.current_active_release_id.length > 0;
+
+  switch (record.registry_state) {
+    case "active":
+      return record.registry_bound === true && record.can_promote === false && publicSlugPresent;
+    case "superseded":
+      return (
+        record.registry_bound === false &&
+        record.can_promote === false &&
+        publicSlugPresent &&
+        currentActiveReleasePresent
+      );
+    case "missing":
+      return record.registry_bound === false && record.can_promote === true;
+    default:
+      return false;
+  }
+}
 
 function isPromotionSummary(value: unknown): value is PromotionSummary {
   if (!value || typeof value !== "object") {
@@ -488,6 +526,9 @@ function isPromotionSummary(value: unknown): value is PromotionSummary {
   const validRegistryAction =
     record.registry_action === undefined ||
     promotionRegistryActions.includes(record.registry_action as NonNullable<PromotionSummary["registry_action"]>);
+  const validRegistryState =
+    record.registry_state !== undefined &&
+    registryStates.includes(record.registry_state as RegistryState);
 
   return (
     record.promotion_outcome === "promoted" &&
@@ -496,11 +537,14 @@ function isPromotionSummary(value: unknown): value is PromotionSummary {
     typeof record.dataset_slug === "string" &&
     record.dataset_slug.length > 0 &&
     (record.public_dataset_slug === undefined || typeof record.public_dataset_slug === "string") &&
+    (record.current_active_release_id === undefined || typeof record.current_active_release_id === "string") &&
     validRegistryAction &&
+    validRegistryState &&
     typeof record.registry_bound === "boolean" &&
     typeof record.can_promote === "boolean" &&
     typeof record.can_remove === "boolean" &&
-    (record.reason === undefined || typeof record.reason === "string")
+    (record.reason === undefined || typeof record.reason === "string") &&
+    hasValidRegistryStateInvariants(record)
   );
 }
 
@@ -641,16 +685,45 @@ function canRemoveRun(run: AdminRunSummary): boolean {
   return false;
 }
 
-function isRegistryBoundPromoted(run: AdminRunSummary): boolean {
-  return run.status === "promoted" && run.promotion_summary?.registry_bound === true;
+// Project Spec S0282: the promoted run's registry_state, or null when this is
+// not a completed promoted run. Decisions must derive from this, never from
+// the button label or the top-level status alone.
+function promotedRegistryState(run: AdminRunSummary): RegistryState | null {
+  if (run.status !== "promoted") {
+    return null;
+  }
+  return run.promotion_summary?.registry_state ?? null;
+}
+
+// Project Spec S0282 sections O/Q/P: "active" and "superseded" promoted runs
+// both get an informational action that never POSTs /promote; only "missing"
+// keeps the functional Promote action (S0048 re-promotion).
+function isInformationalPromotedRun(run: AdminRunSummary): boolean {
+  const state = promotedRegistryState(run);
+  return state === "active" || state === "superseded";
+}
+
+function isSupersededPromotedRun(run: AdminRunSummary): boolean {
+  return promotedRegistryState(run) === "superseded";
 }
 
 const ALREADY_PROMOTED_HEADLINE = "This run has already been promoted as a Dataset Detail.";
 
 // Project Spec S0050: this message is only ever shown on demand, inside the
-// informational modal opened by clicking Promoted -- never as a persistent
-// row-level legend.
+// informational modal opened by clicking the promoted-state action -- never
+// as a persistent row-level legend.
 function promotedInfoMessage(summary: PromotionSummary): string {
+  // Project Spec S0282: a superseded run's modal must identify the historical
+  // release, the public Dataset Detail slug, and the release now active.
+  if (summary.registry_state === "superseded") {
+    const { release_id, public_dataset_slug, current_active_release_id } = summary;
+    return (
+      `This run was promoted to release "${release_id}". That release is preserved, ` +
+      `but release "${current_active_release_id}" is now the active release for ` +
+      `"${public_dataset_slug}".`
+    );
+  }
+
   const { release_id, dataset_slug, public_dataset_slug, reason } = summary;
   const slugPart =
     public_dataset_slug && public_dataset_slug !== dataset_slug
@@ -835,6 +908,11 @@ export default function DashboardPage() {
       // Counts every run currently presented in the Runs card after
       // filtering, promoted or not -- not just runs with status "available".
       runsAvailable: filteredRuns.length,
+      // Project Spec S0282: this count intentionally includes every completed
+      // historical promotion state -- active, superseded, and missing -- so
+      // e.g. an active Telco run plus its superseded predecessor both
+      // contribute. The formula stays `status === "promoted"`; it is not
+      // narrowed to currently-active releases.
       promotedRuns: filteredRuns.filter((run) => run.status === "promoted").length,
       // Derived from the Admin-projected publication status (Ready / Needs
       // review) of the currently presented Dataset Details rows.
@@ -1438,15 +1516,18 @@ export default function DashboardPage() {
                       const promotionSuccessMessage =
                         promotionEntry?.status === "success" ? promotionOutcomeMessage(promotionEntry) : null;
                       const promotionEligible = canPromoteRun(run);
-                      const registryBoundPromoted = isRegistryBoundPromoted(run);
-                      // Project Spec S0048: a registry-bound promoted run's
-                      // Promote action remains clickable (never disabled) --
-                      // it is just informational and never calls the
-                      // promotion endpoint. Every other run's Promote action
-                      // is disabled unless it is currently promotion-eligible.
-                      const promoteDisabled = registryBoundPromoted ? false : !promotionEligible || isPromoting;
+                      // Project Spec S0048/S0282: an "active" or "superseded"
+                      // promoted run's action remains clickable (never
+                      // disabled) but is informational only -- it never calls
+                      // the promotion endpoint. A "missing" promoted run keeps
+                      // the functional Promote action; every other run's
+                      // Promote is disabled unless currently promotion-eligible.
+                      const informationalPromoted = isInformationalPromotedRun(run);
+                      const supersededPromoted = isSupersededPromotedRun(run);
+                      const promoteDisabled = informationalPromoted ? false : !promotionEligible || isPromoting;
                       const removeEligible = canRemoveRun(run);
                       const alreadyPromoted = run.status === "promoted";
+                      const promotedActionLabel = supersededPromoted ? "Superseded" : "Promoted";
                       // Project Spec S0050: the already-promoted explanation
                       // is intentionally excluded here -- it is shown only
                       // on demand inside the informational modal opened by
@@ -1467,7 +1548,11 @@ export default function DashboardPage() {
                         <div data-run-status={run.status} style={runRowContentStyle}>
                           <span style={{ display: "flex", alignItems: "center", gap: "var(--atlas-space-2)" }}>
                             <strong>{displayRunId(run.run_id)}</strong>
-                            {alreadyPromoted && <StatusPill tone="success">Promoted</StatusPill>}
+                            {supersededPromoted ? (
+                              <StatusPill tone="warning">Superseded</StatusPill>
+                            ) : (
+                              alreadyPromoted && <StatusPill tone="success">Promoted</StatusPill>
+                            )}
                           </span>
                           <span>{run.dataset_candidate ?? "Not resolved"}</span>
                           <span>{formatCreatedAt(run.created_at)}</span>
@@ -1475,22 +1560,23 @@ export default function DashboardPage() {
                           <span style={stackedActionGroupStyle}>
                             <Button
                               data-run-action={
-                                registryBoundPromoted
-                                  ? "promoted"
-                                  : !promotionEligible
-                                    ? "promote-disabled"
-                                    : isPromoting
-                                      ? "promote-loading"
-                                      : "promote"
+                                supersededPromoted
+                                  ? "superseded"
+                                  : informationalPromoted
+                                    ? "promoted"
+                                    : !promotionEligible
+                                      ? "promote-disabled"
+                                      : isPromoting
+                                        ? "promote-loading"
+                                        : "promote"
                               }
                               disabled={promoteDisabled}
                               onClick={() => {
-                                // Project Spec S0050: a registry-bound
-                                // promoted run's Promoted action opens an
-                                // informational modal instead of a no-op --
-                                // it must never call the promotion endpoint
-                                // again.
-                                if (registryBoundPromoted) {
+                                // Project Spec S0050/S0282: an "active" or
+                                // "superseded" promoted run's action opens an
+                                // informational modal instead of a no-op -- it
+                                // must never call the promotion endpoint again.
+                                if (informationalPromoted) {
                                   if (run.promotion_summary) {
                                     openPromotedInfoModal(run.run_id, run.promotion_summary);
                                   }
@@ -1499,23 +1585,25 @@ export default function DashboardPage() {
                                 promoteRun(run.run_id);
                               }}
                               style={
-                                promotionEligible || registryBoundPromoted
+                                promotionEligible || informationalPromoted
                                   ? runActionButtonStyle
                                   : disabledRunActionButtonStyle
                               }
                               title={
-                                registryBoundPromoted
-                                  ? "This run has already been promoted as a Dataset Detail. Clicking shows the current promotion status and does not trigger another promotion."
-                                  : promotionEligible
-                                    ? PROMOTION_CONSEQUENCE
-                                    : "Promote is only available for eligible runs."
+                                supersededPromoted
+                                  ? "This run was promoted to a release that is now superseded by a newer active release for the same Dataset Detail. Clicking shows the promotion history and does not trigger another promotion."
+                                  : informationalPromoted
+                                    ? "This run has already been promoted as a Dataset Detail. Clicking shows the current promotion status and does not trigger another promotion."
+                                    : promotionEligible
+                                      ? PROMOTION_CONSEQUENCE
+                                      : "Promote is only available for eligible runs."
                               }
                               variant="secondary"
                             >
                               <span aria-hidden="true" style={actionIconStyle}>
                                 <PromoteActionIcon />
                               </span>
-                              {isPromoting ? "Promoting..." : registryBoundPromoted ? "Promoted" : "Promote"}
+                              {isPromoting ? "Promoting..." : informationalPromoted ? promotedActionLabel : "Promote"}
                             </Button>
                             <Button
                               data-run-action={removeEligible ? "remove" : "remove-disabled"}

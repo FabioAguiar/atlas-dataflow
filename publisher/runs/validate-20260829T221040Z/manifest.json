@@ -1,0 +1,115 @@
+{
+  "schema_version": "release-manifest.v1",
+  "manifest_kind": "release_manifest",
+  "dataset_identity": {
+    "dataset_slug": "telco-customer-churn",
+    "dataset_title": "Telco Customer Churn"
+  },
+  "release_identity": {
+    "release_id": "release-20260829-006",
+    "release_version": "1.0.0-rc.1",
+    "created_at": "2026-08-29T22:10:40Z"
+  },
+  "artifacts": [
+    {
+      "role": "contracts",
+      "reference": "contracts/runtime-contract.json",
+      "hash_algorithm": "sha256",
+      "hash_value": "90731caba3076080f8a75ec469f68dbeb636bea8b0b6f178dee71f7854a31ff8"
+    },
+    {
+      "role": "public_contract",
+      "reference": "contracts/public-contract.json",
+      "hash_algorithm": "sha256",
+      "hash_value": "90c1854c872f4dfe072db945493157e0d8cba33df2aab146bb2ff4fe34aca513"
+    },
+    {
+      "role": "predictive_bundle",
+      "reference": "predictions/bundle.json",
+      "hash_algorithm": "sha256",
+      "hash_value": "06c72493b5588b25e38a1aaec4b6cc87a5f0bf00134b962edb32388d5489f041"
+    },
+    {
+      "role": "model_artifact",
+      "reference": "models/model.pkl",
+      "hash_algorithm": "sha256",
+      "hash_value": "1ce4554194c42ddfb4f08ccb8fb94f91fb91fe94e6b4c53143d7fdb34f86b0d7"
+    },
+    {
+      "role": "metrics",
+      "reference": "metrics/metrics.json",
+      "hash_algorithm": "sha256",
+      "hash_value": "adf1dfc91f02e84a6db2e810fc4d953ea3a8f0d05e3af4e28f7616d6158a4f21"
+    },
+    {
+      "role": "model_card",
+      "reference": "model-card.json",
+      "hash_algorithm": "sha256",
+      "hash_value": "d1c40616e339498753ad0b0b323bea7b6a2e9aa30a10293ea378ffdcf2bc48f3"
+    },
+    {
+      "role": "public_context",
+      "reference": "public-context.json",
+      "hash_algorithm": "sha256",
+      "hash_value": "ea67349a4e826455c287ec496eb3be8773d95fab16568614146f4721e67ef3ae"
+    },
+    {
+      "role": "visualizations",
+      "reference": "visualizations/visualizations.json",
+      "hash_algorithm": "sha256",
+      "hash_value": "3ce7fe5a884d77b279a8d8277eea605538af02f116f1010e40521b5f2858f7cf"
+    },
+    {
+      "role": "manifest_input",
+      "reference": "manifest-input.json",
+      "hash_algorithm": "sha256",
+      "hash_value": "e75b07ef4f959af48f84a07d71d5b612484cfe4b541f731ecf62dff2663aaedb"
+    },
+    {
+      "role": "candidate_metadata",
+      "reference": "release-candidate.json",
+      "hash_algorithm": "sha256",
+      "hash_value": "30f20d04c5bdcb6633c7045d4341b19902406af35eabb238bc59354701efd352"
+    }
+  ],
+  "required_hash_coverage": {
+    "hash_algorithm": "sha256",
+    "required_artifact_roles": [
+      "contracts",
+      "public_contract",
+      "predictive_bundle",
+      "model_artifact",
+      "metrics",
+      "model_card",
+      "public_context",
+      "visualizations",
+      "manifest_input",
+      "candidate_metadata"
+    ],
+    "missing_required_hashes_reject_manifest": true
+  },
+  "validation_policy": {
+    "missing_schema_version_rejects": true,
+    "missing_required_hash_rejects": true,
+    "dataset_identity_mismatch_rejects": true,
+    "release_identity_mismatch_rejects": true,
+    "unsafe_reference_rejects": true
+  },
+  "safety_boundaries": {
+    "raw_artifact_contents_embedded": false,
+    "raw_logs_persisted": false,
+    "raw_runtime_persisted": false,
+    "raw_api_payloads_persisted": false,
+    "secrets_persisted": false,
+    "sensitive_local_paths_persisted": false,
+    "unstable_temporary_paths_persisted": false,
+    "hash_calculation_implemented": false,
+    "signing_or_key_management_implemented": false,
+    "storage_migration_implemented": false,
+    "runtime_loading_implemented": false,
+    "public_endpoint_exposed": false,
+    "release_promoted": false,
+    "registry_updated": false,
+    "github_publication_performed": false
+  }
+}

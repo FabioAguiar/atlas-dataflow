@@ -77,11 +77,12 @@
         "promotion_outcome",
         "release_id",
         "dataset_slug",
+        "registry_state",
         "registry_bound",
         "can_promote",
         "can_remove"
       ],
-      "description": "Sanitized promoted-state projection derived from this run's promotion-result.json, re-checked against the live dataset registry for a safe idempotence/reuse signal. Required and non-null when status is 'promoted'; absent otherwise. Present only for a registry-completed promotion -- see the 'status' field and 'registry_bound' below for how completion is resolved. Must never expose raw filesystem paths, raw registry dumps, or promotion-result.json's internal registry_update_record verbatim.",
+      "description": "Sanitized promoted-state projection derived from this run's promotion-result.json, re-checked against the live dataset registry for a safe idempotence/reuse signal. Required and non-null when status is 'promoted'; absent otherwise. Present only for a registry-completed promotion -- see the 'status' field, 'registry_state', and 'registry_bound' below for how completion is resolved. Must never expose raw filesystem paths, raw registry dumps, or promotion-result.json's internal registry_update_record verbatim.",
       "properties": {
         "promotion_outcome": {
           "type": "string",
@@ -93,6 +94,16 @@
           "minLength": 1,
           "pattern": "^release-(?:[0-9]{8}-[0-9]{3}|[0-9]{8}t[0-9]{6}z)$",
           "description": "Stable release identifier, carried verbatim from promotion-result.json's candidate_identity.release_id. Accepts both registry-normalized release id conventions (registry/validate.py's RELEASE_ID_PATTERN)."
+        },
+        "registry_state": {
+          "type": "string",
+          "enum": ["active", "superseded", "missing"],
+          "description": "Reconciliation of this completed historical promotion against the live dataset registry (Project Spec S0282). 'active': the registry's Dataset Detail still binds this exact release as its active_release. 'superseded': the recorded Dataset Detail still exists but a different release is now its active_release -- this run stays historically promoted and its release is preserved, but it is no longer the current binding and is not re-promotable through generic eligibility. 'missing': the recorded Dataset Detail is no longer in the registry, so this run is promotable again (preserves Project Spec S0048). All three remain top-level status 'promoted'."
+        },
+        "current_active_release_id": {
+          "type": "string",
+          "pattern": "^release-(?:[0-9]{8}-[0-9]{3}|[0-9]{8}t[0-9]{6}z)$",
+          "description": "The release_id currently bound as the live registry Dataset Detail's active_release when it differs from this run's release_id. Present only for registry_state 'superseded'; never a guessed or historical value, and never equal to release_id at the producer level."
         },
         "dataset_slug": {
           "type": "string",
@@ -131,22 +142,49 @@
       "allOf": [
         {
           "if": {
-            "properties": {"registry_bound": {"const": true}},
-            "required": ["registry_bound"]
+            "properties": {"registry_state": {"const": "active"}},
+            "required": ["registry_state"]
           },
           "then": {
             "required": ["public_dataset_slug", "registry_action"],
-            "properties": {"can_promote": {"const": false}}
+            "properties": {
+              "registry_bound": {"const": true},
+              "can_promote": {"const": false}
+            },
+            "not": {"required": ["current_active_release_id"]}
           }
         },
         {
           "if": {
-            "properties": {"registry_bound": {"const": false}},
-            "required": ["registry_bound"]
+            "properties": {"registry_state": {"const": "superseded"}},
+            "required": ["registry_state"]
           },
           "then": {
-            "not": {"required": ["public_dataset_slug"]},
-            "properties": {"can_promote": {"const": true}}
+            "required": ["public_dataset_slug", "current_active_release_id"],
+            "properties": {
+              "registry_bound": {"const": false},
+              "can_promote": {"const": false}
+            },
+            "not": {"required": ["registry_action"]}
+          }
+        },
+        {
+          "if": {
+            "properties": {"registry_state": {"const": "missing"}},
+            "required": ["registry_state"]
+          },
+          "then": {
+            "properties": {
+              "registry_bound": {"const": false},
+              "can_promote": {"const": true}
+            },
+            "not": {
+              "anyOf": [
+                {"required": ["public_dataset_slug"]},
+                {"required": ["current_active_release_id"]},
+                {"required": ["registry_action"]}
+              ]
+            }
           }
         }
       ]

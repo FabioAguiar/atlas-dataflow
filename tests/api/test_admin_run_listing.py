@@ -472,6 +472,7 @@ def test_run_with_valid_promoted_promotion_result_is_summarized_as_promoted(tmp_
         "promotion_outcome": "promoted",
         "release_id": "release-20260701-001",
         "dataset_slug": "example-dataset",
+        "registry_state": "active",
         "public_dataset_slug": "example-dataset",
         "registry_action": "reused",
         "registry_bound": True,
@@ -483,6 +484,9 @@ def test_run_with_valid_promoted_promotion_result_is_summarized_as_promoted(tmp_
 
 
 def test_run_with_valid_promoted_promotion_result_but_no_registry_match_omits_registry_fields(tmp_path):
+    # Project Spec S0282: a historically completed promotion whose recorded
+    # Dataset Detail slug has no live registry entry at all projects as
+    # registry_state == "missing" -- re-promotable, no public_dataset_slug.
     root = tmp_path / "runs"
     repo_root = tmp_path / "repo"
     root.mkdir()
@@ -506,6 +510,7 @@ def test_run_with_valid_promoted_promotion_result_but_no_registry_match_omits_re
         "promotion_outcome": "promoted",
         "release_id": "release-20260701-001",
         "dataset_slug": "example-dataset",
+        "registry_state": "missing",
         "registry_bound": False,
         "can_promote": True,
         "can_remove": True,
@@ -513,6 +518,7 @@ def test_run_with_valid_promoted_promotion_result_but_no_registry_match_omits_re
     }
     assert "public_dataset_slug" not in entry["promotion_summary"]
     assert "registry_action" not in entry["promotion_summary"]
+    assert "current_active_release_id" not in entry["promotion_summary"]
 
 
 def test_run_without_promotion_result_remains_available(tmp_path):
@@ -730,11 +736,15 @@ def test_promoted_run_becomes_repromotable_after_registry_entry_removed(tmp_path
         orphaned = admin_runs.list_admin_run_summaries()
         orphaned_entry = orphaned["runs"][0]
         assert orphaned_entry["status"] == "promoted"
+        # Project Spec S0282: the recorded Dataset Detail slug has no live
+        # registry entry -> registry_state == "missing" (S0048 re-promotable).
+        assert orphaned_entry["promotion_summary"]["registry_state"] == "missing"
         assert orphaned_entry["promotion_summary"]["registry_bound"] is False
         assert orphaned_entry["promotion_summary"]["can_promote"] is True
         assert orphaned_entry["promotion_summary"]["can_remove"] is True
         assert "public_dataset_slug" not in orphaned_entry["promotion_summary"]
         assert "registry_action" not in orphaned_entry["promotion_summary"]
+        assert "current_active_release_id" not in orphaned_entry["promotion_summary"]
 
         second = admin_runs.promote_admin_run("promote-then-orphan")
         assert second["promoted"] is True
@@ -742,9 +752,192 @@ def test_promoted_run_becomes_repromotable_after_registry_entry_removed(tmp_path
 
         registry = json.loads((repo_root / "registry" / "datasets.json").read_text())
         assert any(entry["dataset_slug"] == "orphan-dataset" for entry in registry["datasets"])
+
+        # Project Spec S0282: once its release is current again the run
+        # reconciles back to registry_state == "active".
+        rebound = admin_runs.list_admin_run_summaries()["runs"][0]
+        assert rebound["promotion_summary"]["registry_state"] == "active"
+        assert rebound["promotion_summary"]["registry_bound"] is True
+        assert rebound["promotion_summary"]["can_promote"] is False
     finally:
         admin_runs._admin_runs_root = original_root
         admin_runs._REPO_ROOT = original_repo_root
+
+
+# ---------------------------------------------------------------------------
+# Project Spec S0282: superseded promotion history and active-release
+# run-state reconciliation
+# ---------------------------------------------------------------------------
+
+def _published_entry(dataset_slug: str, active_release: str) -> dict:
+    return {
+        "dataset_slug": dataset_slug,
+        "active_release": active_release,
+        "public_metadata": {
+            "title": "Example Dataset",
+            "summary": "Published dataset.",
+            "domain": "general",
+            "visibility": "public",
+            "tags": [],
+        },
+    }
+
+
+def test_run_promoted_to_a_now_superseded_release_projects_superseded_and_is_not_repromotable(tmp_path):
+    root = tmp_path / "runs"
+    repo_root = tmp_path / "repo"
+    root.mkdir()
+    run_dir = _write_run_dir(root, "superseded-run", _VALID_MANIFEST, _ACCEPTED_VALIDATION_RESULT)
+    # _PROMOTED_PROMOTION_RESULT: dataset "example-dataset", release
+    # release-20260701-001, with proven historical applied evidence.
+    _write_json(run_dir / "promotion-result.json", _PROMOTED_PROMOTION_RESULT)
+    # The recorded Dataset Detail still exists, but a newer release is active.
+    _write_registry(repo_root, [_published_entry("example-dataset", "release-20260702-005")])
+
+    original_root = admin_runs._admin_runs_root
+    original_repo_root = admin_runs._REPO_ROOT
+    try:
+        admin_runs._admin_runs_root = lambda: root
+        admin_runs._REPO_ROOT = repo_root
+        result = admin_runs.list_admin_run_summaries()
+    finally:
+        admin_runs._admin_runs_root = original_root
+        admin_runs._REPO_ROOT = original_repo_root
+
+    entry = result["runs"][0]
+    assert entry["status"] == "promoted"
+    promotion_summary = entry["promotion_summary"]
+    assert promotion_summary["registry_state"] == "superseded"
+    assert promotion_summary["release_id"] == "release-20260701-001"
+    assert promotion_summary["registry_bound"] is False
+    # Project Spec S0282 section M: a superseded run is never re-promotable
+    # through generic eligibility.
+    assert promotion_summary["can_promote"] is False
+    assert promotion_summary["can_remove"] is True
+    assert promotion_summary["public_dataset_slug"] == "example-dataset"
+    assert promotion_summary["current_active_release_id"] == "release-20260702-005"
+    assert "registry_action" not in promotion_summary
+    assert promotion_summary["reason"]
+    _assert_no_private_markers(entry)
+
+
+def test_superseded_projection_honors_historical_public_dataset_slug_from_registry_update_record(tmp_path):
+    root = tmp_path / "runs"
+    repo_root = tmp_path / "repo"
+    root.mkdir()
+    run_dir = _write_run_dir(root, "superseded-numbered", _VALID_MANIFEST, _ACCEPTED_VALIDATION_RESULT)
+    promotion_result = json.loads(json.dumps(_PROMOTED_PROMOTION_RESULT))
+    # An older MODE_CREATE_NEW_DATASET_DETAIL promotion allocated a numbered
+    # public slug distinct from the candidate base slug.
+    promotion_result["registry_update_record"]["public_dataset_slug"] = "example-dataset1"
+    _write_json(run_dir / "promotion-result.json", promotion_result)
+    _write_registry(
+        repo_root,
+        [
+            # The base slug exists too (bound to an unrelated release), but the
+            # run's Dataset Detail is the numbered one -- base/title matching
+            # must not be used.
+            _published_entry("example-dataset", "release-20260705-001"),
+            _published_entry("example-dataset1", "release-20260703-009"),
+        ],
+    )
+
+    original_root = admin_runs._admin_runs_root
+    original_repo_root = admin_runs._REPO_ROOT
+    try:
+        admin_runs._admin_runs_root = lambda: root
+        admin_runs._REPO_ROOT = repo_root
+        result = admin_runs.list_admin_run_summaries()
+    finally:
+        admin_runs._admin_runs_root = original_root
+        admin_runs._REPO_ROOT = original_repo_root
+
+    promotion_summary = result["runs"][0]["promotion_summary"]
+    assert promotion_summary["registry_state"] == "superseded"
+    assert promotion_summary["public_dataset_slug"] == "example-dataset1"
+    assert promotion_summary["current_active_release_id"] == "release-20260703-009"
+
+
+def test_active_then_superseded_promotion_lifecycle_reconciles_both_run_states(tmp_path):
+    """Project Spec S0282 section K: a synthetic two-promotion lifecycle over
+    the real promotion flow. run A then run B (same base slug,
+    update-existing-or-create) leaves run A superseded and run B active, with
+    exactly one Dataset Detail for the base slug."""
+    root = tmp_path / "runs"
+    repo_root = tmp_path / "repo"
+    root.mkdir()
+    base_slug = "lifecycle-dataset"
+    _write_promotable_run(root, repo_root, "run-a", base_slug, "release-20260710t101438z")
+    _write_promotable_run(root, repo_root, "run-b", base_slug, "release-20260711t090000z")
+
+    original_root = admin_runs._admin_runs_root
+    original_repo_root = admin_runs._REPO_ROOT
+    try:
+        admin_runs._admin_runs_root = lambda: root
+        admin_runs._REPO_ROOT = repo_root
+
+        first = admin_runs.promote_admin_run("run-a")
+        assert first["promoted"] is True
+
+        after_a = {e["run_id"]: e for e in admin_runs.list_admin_run_summaries()["runs"]}
+        assert after_a["run-a"]["promotion_summary"]["registry_state"] == "active"
+
+        second = admin_runs.promote_admin_run(
+            "run-b", mode=registry_update.MODE_UPDATE_EXISTING_OR_CREATE
+        )
+        assert second["promoted"] is True
+
+        runs = {e["run_id"]: e for e in admin_runs.list_admin_run_summaries()["runs"]}
+        run_a = runs["run-a"]["promotion_summary"]
+        run_b = runs["run-b"]["promotion_summary"]
+
+        assert runs["run-a"]["status"] == "promoted"
+        assert run_a["registry_state"] == "superseded"
+        assert run_a["registry_bound"] is False
+        assert run_a["can_promote"] is False
+        assert run_a["can_remove"] is True
+        assert run_a["public_dataset_slug"] == base_slug
+        assert run_a["current_active_release_id"] == "release-20260711t090000z"
+        assert "registry_action" not in run_a
+
+        assert runs["run-b"]["status"] == "promoted"
+        assert run_b["registry_state"] == "active"
+        assert run_b["registry_bound"] is True
+        assert run_b["can_promote"] is False
+
+        registry = json.loads((repo_root / "registry" / "datasets.json").read_text())
+        base_entries = [e for e in registry["datasets"] if e["dataset_slug"] == base_slug]
+        assert len(base_entries) == 1
+        assert base_entries[0]["active_release"] == "release-20260711t090000z"
+    finally:
+        admin_runs._admin_runs_root = original_root
+        admin_runs._REPO_ROOT = original_repo_root
+
+
+def test_never_completed_promotion_is_not_confused_with_missing_under_s0282(tmp_path):
+    # Project Spec S0282 section J: S0262 stays authoritative -- a
+    # promotion_outcome: promoted record with update_applied != true and no
+    # live binding is never-completed/retryable, not registry_state "missing".
+    root = tmp_path / "runs"
+    repo_root = tmp_path / "repo"
+    root.mkdir()
+    run_dir = _write_run_dir(root, "never-completed-s0282", _VALID_MANIFEST, _ACCEPTED_VALIDATION_RESULT)
+    _write_json(run_dir / "promotion-result.json", _NEVER_COMPLETED_PROMOTION_RESULT)
+    _write_registry(repo_root, [])
+
+    original_root = admin_runs._admin_runs_root
+    original_repo_root = admin_runs._REPO_ROOT
+    try:
+        admin_runs._admin_runs_root = lambda: root
+        admin_runs._REPO_ROOT = repo_root
+        result = admin_runs.list_admin_run_summaries()
+    finally:
+        admin_runs._admin_runs_root = original_root
+        admin_runs._REPO_ROOT = original_repo_root
+
+    entry = result["runs"][0]
+    assert entry["status"] == "available"
+    assert "promotion_summary" not in entry
 
 
 def test_run_with_live_registry_binding_projects_promoted_even_when_finalizer_evidence_lags(tmp_path):
@@ -1747,6 +1940,7 @@ def test_promote_then_list_reflects_promoted_state_end_to_end(tmp_path):
             "promotion_outcome": "promoted",
             "release_id": "release-20260710t101438z",
             "dataset_slug": "before-and-after-dataset",
+            "registry_state": "active",
             "public_dataset_slug": "before-and-after-dataset",
             "registry_action": "reused",
             "registry_bound": True,

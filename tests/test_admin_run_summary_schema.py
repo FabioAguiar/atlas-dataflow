@@ -255,18 +255,22 @@ def _valid_active_example() -> dict:
 
 
 def _valid_superseded_example() -> dict:
+    # Project Spec S0283: a superseded run is eligible for safe create-new
+    # recovery, so can_promote is now true (registry_bound stays false).
     example = _promoted_example()
     promotion_summary = example["promotion_summary"]
     promotion_summary["registry_state"] = "superseded"
     promotion_summary["registry_bound"] = False
-    promotion_summary["can_promote"] = False
+    promotion_summary["can_promote"] = True
     promotion_summary.pop("registry_action", None)
     promotion_summary["public_dataset_slug"] = "telco-customer-churn"
     promotion_summary["current_active_release_id"] = _SUPERSEDED_RELEASE_ID
     promotion_summary["reason"] = (
-        'This run was promoted to release "release-20260620-001". That release '
-        'is preserved, but release "release-20260620-002" is now the active '
-        'release for "telco-customer-churn".'
+        'This run was promoted to release "release-20260620-001". That '
+        'historical release is preserved; release "release-20260620-002" is '
+        'currently active for "telco-customer-churn". Promote may create a new '
+        'Dataset Detail for this historical release without replacing the '
+        'current binding.'
     )
     return example
 
@@ -303,7 +307,8 @@ def test_valid_superseded_promotion_summary_matches_schema():
     promotion_summary = example["promotion_summary"]
     assert promotion_summary["registry_state"] == "superseded"
     assert promotion_summary["registry_bound"] is False
-    assert promotion_summary["can_promote"] is False
+    # Project Spec S0283: superseded now requires can_promote == true.
+    assert promotion_summary["can_promote"] is True
     assert promotion_summary["can_remove"] is True
     assert promotion_summary["public_dataset_slug"]
     assert promotion_summary["current_active_release_id"] == _SUPERSEDED_RELEASE_ID
@@ -366,7 +371,8 @@ _INVALID_STATE_CASES = {
         _set(current_active_release_id=_SUPERSEDED_RELEASE_ID),
     ),
     # superseded
-    "superseded_can_promote_true": (_valid_superseded_example, _set(can_promote=True)),
+    # Project Spec S0283: superseded + can_promote=false is now invalid.
+    "superseded_can_promote_false": (_valid_superseded_example, _set(can_promote=False)),
     "superseded_registry_bound_true": (
         _valid_superseded_example,
         _set(registry_bound=True),

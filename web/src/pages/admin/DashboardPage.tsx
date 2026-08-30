@@ -504,9 +504,12 @@ function hasValidRegistryStateInvariants(record: Partial<PromotionSummary>): boo
     case "active":
       return record.registry_bound === true && record.can_promote === false && publicSlugPresent;
     case "superseded":
+      // Project Spec S0283: a superseded run is eligible for safe create-new
+      // recovery, so can_promote must be true. A superseded payload with
+      // can_promote=false is malformed and fails closed.
       return (
         record.registry_bound === false &&
-        record.can_promote === false &&
+        record.can_promote === true &&
         publicSlugPresent &&
         currentActiveReleasePresent
       );
@@ -647,8 +650,14 @@ function promotionOutcomeMessage(entry: {
   return `Promoted ${datasetPart}${releasePart} — ${actionPart}.${slugPart}`;
 }
 
+// Project Spec S0283: the generic Admin Promote route always creates a new
+// Dataset Detail for the run. If the base dataset slug is free it is used
+// as-is; if it is already in use the backend allocates the next available
+// numeric slug without replacing the existing Dataset Detail. No specific
+// suffix is promised here -- the actual allocated slug comes back in the
+// promotion response.
 const PROMOTION_CONSEQUENCE =
-  "Promotes the run to the matching Dataset Detail when its dataset slug already exists; otherwise creates a new Dataset Detail for that slug.";
+  "Promotes the run as its own Dataset Detail. If the base dataset slug is already in use, Atlas allocates the next available numeric slug without replacing the existing Dataset Detail.";
 
 function canPromoteRun(run: AdminRunSummary): boolean {
   if (run.status === "available") {
@@ -695,14 +704,18 @@ function promotedRegistryState(run: AdminRunSummary): RegistryState | null {
   return run.promotion_summary?.registry_state ?? null;
 }
 
-// Project Spec S0282 sections O/Q/P: "active" and "superseded" promoted runs
-// both get an informational action that never POSTs /promote; only "missing"
-// keeps the functional Promote action (S0048 re-promotion).
+// Project Spec S0283 (supersedes S0282 sections O/Q/P for this route): only an
+// "active" promoted run gets the informational action that never POSTs
+// /promote. "superseded" and "missing" both keep a functional Promote action
+// -- superseded via safe create-new recovery (S0283), missing via S0048
+// re-promotion. can_promote remains the backend-projected action authority.
 function isInformationalPromotedRun(run: AdminRunSummary): boolean {
-  const state = promotedRegistryState(run);
-  return state === "active" || state === "superseded";
+  return promotedRegistryState(run) === "active";
 }
 
+// Project Spec S0283: a superseded run still shows its historical "Superseded"
+// status pill, but its action button is a functional Promote (not an
+// informational "Superseded" button).
 function isSupersededPromotedRun(run: AdminRunSummary): boolean {
   return promotedRegistryState(run) === "superseded";
 }
@@ -713,17 +726,9 @@ const ALREADY_PROMOTED_HEADLINE = "This run has already been promoted as a Datas
 // informational modal opened by clicking the promoted-state action -- never
 // as a persistent row-level legend.
 function promotedInfoMessage(summary: PromotionSummary): string {
-  // Project Spec S0282: a superseded run's modal must identify the historical
-  // release, the public Dataset Detail slug, and the release now active.
-  if (summary.registry_state === "superseded") {
-    const { release_id, public_dataset_slug, current_active_release_id } = summary;
-    return (
-      `This run was promoted to release "${release_id}". That release is preserved, ` +
-      `but release "${current_active_release_id}" is now the active release for ` +
-      `"${public_dataset_slug}".`
-    );
-  }
-
+  // Project Spec S0283: only an "active" promoted run reaches this
+  // informational modal; "superseded" now has a functional Promote action and
+  // never opens it.
   const { release_id, dataset_slug, public_dataset_slug, reason } = summary;
   const slugPart =
     public_dataset_slug && public_dataset_slug !== dataset_slug
@@ -908,11 +913,13 @@ export default function DashboardPage() {
       // Counts every run currently presented in the Runs card after
       // filtering, promoted or not -- not just runs with status "available".
       runsAvailable: filteredRuns.length,
-      // Project Spec S0282: this count intentionally includes every completed
-      // historical promotion state -- active, superseded, and missing -- so
-      // e.g. an active Telco run plus its superseded predecessor both
-      // contribute. The formula stays `status === "promoted"`; it is not
-      // narrowed to currently-active releases.
+      // Project Spec S0282/S0283: this count intentionally includes every
+      // completed historical promotion state -- active, superseded, and
+      // missing. A superseded run counts as promoted both before and after
+      // S0283 create-new recovery (recovery only adds a new Dataset Detail, so
+      // it lifts Published datasets, not this counter). The formula stays
+      // `status === "promoted"`; it is not narrowed to currently-active
+      // releases and the two counters are not forced to agree.
       promotedRuns: filteredRuns.filter((run) => run.status === "promoted").length,
       // Derived from the Admin-projected publication status (Ready / Needs
       // review) of the currently presented Dataset Details rows.
@@ -1180,12 +1187,13 @@ export default function DashboardPage() {
   function promoteRun(runId: string) {
     setPromotionState((previous) => ({ ...previous, [runId]: { status: "promoting" } }));
 
-    // Project Spec S0280 supersedes the S0047 create-new-only choice: generic
-    // Admin Dashboard promotion has one deterministic meaning -- rebind an
-    // existing Dataset Detail to the promoted release, otherwise create one new
-    // Dataset Detail for that slug. There is no operator-facing mode choice, so
-    // this request sends no promotion-mode body; the backend route is the sole
-    // authority and always applies update-existing-or-create semantics.
+    // Project Spec S0283 supersedes S0280 for this generic route: Admin
+    // Dashboard promotion has one deterministic meaning -- promote the run as
+    // its own Dataset Detail, allocating the next available numeric slug when
+    // the base slug is taken, never rebinding an existing Dataset Detail. There
+    // is no operator-facing mode choice, so this request sends no
+    // promotion-mode body; the backend route is the sole authority and always
+    // applies create-new semantics.
     fetch(`${apiBaseUrl}/admin/runs/${encodeURIComponent(runId)}/promote`, {
       method: "POST",
     })
@@ -1516,18 +1524,17 @@ export default function DashboardPage() {
                       const promotionSuccessMessage =
                         promotionEntry?.status === "success" ? promotionOutcomeMessage(promotionEntry) : null;
                       const promotionEligible = canPromoteRun(run);
-                      // Project Spec S0048/S0282: an "active" or "superseded"
-                      // promoted run's action remains clickable (never
-                      // disabled) but is informational only -- it never calls
-                      // the promotion endpoint. A "missing" promoted run keeps
-                      // the functional Promote action; every other run's
-                      // Promote is disabled unless currently promotion-eligible.
+                      // Project Spec S0283: only an "active" promoted run's
+                      // action is informational (clickable, never disabled,
+                      // never POSTs -- it opens the promotion-status modal).
+                      // "superseded" and "missing" promoted runs both keep a
+                      // functional Promote action; every other run's Promote is
+                      // disabled unless currently promotion-eligible.
                       const informationalPromoted = isInformationalPromotedRun(run);
                       const supersededPromoted = isSupersededPromotedRun(run);
                       const promoteDisabled = informationalPromoted ? false : !promotionEligible || isPromoting;
                       const removeEligible = canRemoveRun(run);
                       const alreadyPromoted = run.status === "promoted";
-                      const promotedActionLabel = supersededPromoted ? "Superseded" : "Promoted";
                       // Project Spec S0050: the already-promoted explanation
                       // is intentionally excluded here -- it is shown only
                       // on demand inside the informational modal opened by
@@ -1560,22 +1567,22 @@ export default function DashboardPage() {
                           <span style={stackedActionGroupStyle}>
                             <Button
                               data-run-action={
-                                supersededPromoted
-                                  ? "superseded"
-                                  : informationalPromoted
-                                    ? "promoted"
-                                    : !promotionEligible
-                                      ? "promote-disabled"
-                                      : isPromoting
-                                        ? "promote-loading"
-                                        : "promote"
+                                informationalPromoted
+                                  ? "promoted"
+                                  : !promotionEligible
+                                    ? "promote-disabled"
+                                    : isPromoting
+                                      ? "promote-loading"
+                                      : "promote"
                               }
                               disabled={promoteDisabled}
                               onClick={() => {
-                                // Project Spec S0050/S0282: an "active" or
-                                // "superseded" promoted run's action opens an
-                                // informational modal instead of a no-op -- it
-                                // must never call the promotion endpoint again.
+                                // Project Spec S0283: only an "active" promoted
+                                // run's action opens the informational modal
+                                // instead of a no-op -- it must never call the
+                                // promotion endpoint again. A "superseded" or
+                                // "missing" run's Promote is functional and
+                                // POSTs to the generic promotion endpoint.
                                 if (informationalPromoted) {
                                   if (run.promotion_summary) {
                                     openPromotedInfoModal(run.run_id, run.promotion_summary);
@@ -1590,20 +1597,18 @@ export default function DashboardPage() {
                                   : disabledRunActionButtonStyle
                               }
                               title={
-                                supersededPromoted
-                                  ? "This run was promoted to a release that is now superseded by a newer active release for the same Dataset Detail. Clicking shows the promotion history and does not trigger another promotion."
-                                  : informationalPromoted
-                                    ? "This run has already been promoted as a Dataset Detail. Clicking shows the current promotion status and does not trigger another promotion."
-                                    : promotionEligible
-                                      ? PROMOTION_CONSEQUENCE
-                                      : "Promote is only available for eligible runs."
+                                informationalPromoted
+                                  ? "This run has already been promoted as a Dataset Detail. Clicking shows the current promotion status and does not trigger another promotion."
+                                  : promotionEligible
+                                    ? PROMOTION_CONSEQUENCE
+                                    : "Promote is only available for eligible runs."
                               }
                               variant="secondary"
                             >
                               <span aria-hidden="true" style={actionIconStyle}>
                                 <PromoteActionIcon />
                               </span>
-                              {isPromoting ? "Promoting..." : informationalPromoted ? promotedActionLabel : "Promote"}
+                              {isPromoting ? "Promoting..." : informationalPromoted ? "Promoted" : "Promote"}
                             </Button>
                             <Button
                               data-run-action={removeEligible ? "remove" : "remove-disabled"}

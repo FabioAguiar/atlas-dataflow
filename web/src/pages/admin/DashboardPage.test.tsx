@@ -786,7 +786,7 @@ describe("DashboardPage", () => {
       expect(within(table).getByRole("button", { name: "Promote" })).not.toBeDisabled();
     });
 
-    it("does not render a promotion mode selector or offer an update/create Dataset Detail option, and its consequence copy describes update-existing-or-create semantics", async () => {
+    it("does not render a promotion mode selector or offer an update/create Dataset Detail option, and its consequence copy describes create-new Dataset Detail semantics", async () => {
       installSoleEligibleRunFetchMock();
       render(<DashboardPage />);
       await loadRuns();
@@ -799,17 +799,19 @@ describe("DashboardPage", () => {
       expect(screen.queryByText("Update existing Dataset Detail")).not.toBeInTheDocument();
       expect(screen.queryByText("Create new Dataset Detail")).not.toBeInTheDocument();
 
-      // Project Spec S0280: the operator-facing consequence copy (Promote
-      // button title) must describe update-existing-or-create semantics and no
-      // longer claim every Promote creates a new unique Dataset Detail.
+      // Project Spec S0283: the operator-facing consequence copy (Promote
+      // button title) describes create-new Dataset Detail semantics plus
+      // collision-safe numeric slug allocation, and never promises a specific
+      // suffix or claims uniqueness beyond what the backend returns.
       const promoteButton = within(table).getByRole("button", { name: "Promote" });
       const consequence = promoteButton.getAttribute("title") ?? "";
-      expect(consequence).toMatch(/when its dataset slug already exists/i);
-      expect(consequence).toMatch(/otherwise creates a new Dataset Detail/i);
-      expect(consequence).not.toMatch(/unique/i);
+      expect(consequence).toMatch(/its own Dataset Detail/i);
+      expect(consequence).toMatch(/next available numeric slug/i);
+      expect(consequence).toMatch(/without replacing the existing Dataset Detail/i);
+      expect(consequence).not.toMatch(/rollback|rebind/i);
     });
 
-    it("sends the generic Promote request without requesting create-new behavior", async () => {
+    it("sends the generic Promote request mode-free and lets the backend apply create-new semantics", async () => {
       const fetchMock = installSoleEligibleRunFetchMock();
       fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input);
@@ -819,8 +821,8 @@ describe("DashboardPage", () => {
             promoted: true,
             dataset_slug: "telco-customer-churn",
             release_id: "release-20260710t101438z",
-            registry_action: "updated",
-            public_dataset_slug: "telco-customer-churn",
+            registry_action: "created",
+            public_dataset_slug: "telco-customer-churn1",
             errors: [],
           });
         }
@@ -850,21 +852,20 @@ describe("DashboardPage", () => {
       fireEvent.click(within(table).getByRole("button", { name: "Promote" }));
 
       const status = await within(table).findByRole("status");
-      expect(status).toHaveTextContent(/updated the existing registry entry/i);
+      expect(status).toHaveTextContent(/created a new registry entry/i);
 
       const promoteCall = fetchMock.mock.calls[callCountAfterLoad];
       expect(promoteCall[0]).toContain("/admin/runs/run-agnostic-solo/promote");
       const requestInit = promoteCall[1] as RequestInit;
       expect((requestInit.method ?? "").toUpperCase()).toBe("POST");
 
-      // Project Spec S0280: the generic Promote request must never ask for
-      // create-new behavior. Sending no promotion-mode body is preferred; the
-      // only acceptable explicit body is {"mode":"update_existing_or_create"}.
+      // Project Spec S0283: the generic Promote request stays mode-free -- the
+      // backend route is the sole create-new authority. No promotion-mode body
+      // is sent at all.
       const rawBody = requestInit.body == null ? "" : String(requestInit.body);
       expect(rawBody).not.toContain("create_new_dataset_detail");
-      if (rawBody !== "") {
-        expect(JSON.parse(rawBody)).toEqual({ mode: "update_existing_or_create" });
-      }
+      expect(rawBody).not.toContain("update_existing_or_create");
+      expect(rawBody).toBe("");
     });
 
     it("displays the final public Dataset Detail slug when it differs from the candidate slug", async () => {
@@ -2532,7 +2533,7 @@ describe("DashboardPage", () => {
     });
   });
 
-  describe("Superseded promotion history reflection (Project Spec S0282)", () => {
+  describe("Superseded run create-new recovery (Project Spec S0283)", () => {
     const supersededRun = {
       schema_version: "admin-run-summary.v1",
       run_id: "validate-20260829T113112Z",
@@ -2549,10 +2550,10 @@ describe("DashboardPage", () => {
         public_dataset_slug: "telco-customer-churn",
         current_active_release_id: "release-20260829-003",
         registry_bound: false,
-        can_promote: false,
+        can_promote: true,
         can_remove: true,
         reason:
-          'This run was promoted to release "release-20260829-002". That release is preserved, but release "release-20260829-003" is now the active release for "telco-customer-churn".',
+          'This run was promoted to release "release-20260829-002". That historical release is preserved; release "release-20260829-003" is currently active for "telco-customer-churn". Promote may create a new Dataset Detail for this historical release without replacing the current binding.',
       },
     };
     const activeRun = {
@@ -2624,62 +2625,74 @@ describe("DashboardPage", () => {
       return fetchMock;
     }
 
-    it("marks the superseded run visibly distinct from an active promoted run", async () => {
+    function supersededRowActionButton(table: HTMLElement): HTMLElement {
+      const rows = within(table).getAllByRole("row");
+      const row = rows.find((candidate) => within(candidate).queryByText("20260829T113112Z"));
+      expect(row).toBeDefined();
+      return within(row as HTMLElement).getByRole("button", { name: /Promote|Promoted|Superseded/ });
+    }
+
+    it("keeps the Superseded status visible while exposing a functional Promote action", async () => {
       installFetchMock();
       render(<DashboardPage />);
       await loadRuns();
 
       const table = await screen.findByRole("table", { name: "Run summaries" });
+      // The historical Superseded status pill stays visible -- history is not hidden.
       expect(within(table).getAllByText("Superseded").length).toBeGreaterThanOrEqual(1);
+      expect(within(table).queryByRole("button", { name: "Superseded" })).not.toBeInTheDocument();
 
-      const supersededAction = within(table).getByRole("button", { name: "Superseded" });
-      expect(supersededAction).toHaveAttribute("data-run-action", "superseded");
+      // Project Spec S0283: the superseded run's action button is a functional
+      // "Promote", not an informational "Superseded" button.
+      const supersededAction = supersededRowActionButton(table);
+      expect(supersededAction).toHaveTextContent("Promote");
+      expect(supersededAction).toHaveAttribute("data-run-action", "promote");
       expect(supersededAction).not.toBeDisabled();
+      expect(supersededAction.getAttribute("title") ?? "").toMatch(/next available numeric slug/i);
 
       // The active Telco run keeps its informational "Promoted" action.
       expect(within(table).getByRole("button", { name: "Promoted" })).toHaveAttribute(
         "data-run-action",
         "promoted",
       );
+
+      // No promotion-mode selector, no rollback/rebind wording anywhere.
+      expect(within(table).queryByRole("combobox")).not.toBeInTheDocument();
+      expect(within(table).queryByText(/rollback|rebind/i)).not.toBeInTheDocument();
     });
 
-    it("still counts the superseded run in Promoted runs alongside the active run", async () => {
+    it("still counts the superseded run in Promoted runs and coexists with an increased Published datasets count", async () => {
       installFetchMock();
       render(<DashboardPage />);
       await loadRuns();
       await screen.findByRole("table", { name: "Run summaries" });
 
-      // active + superseded + missing == 3 promoted runs.
+      // active + superseded + missing == 3 promoted runs, unchanged by recovery.
       expect(screen.getByLabelText("Promoted runs")).toHaveAttribute("data-summary-count", "3");
-      // Published datasets stays registry-backed and independent.
+      // Published datasets stays registry-backed and independent -- a recovery
+      // that adds a Dataset Detail lifts this counter without touching the
+      // Promoted runs count.
       expect(screen.getByLabelText("Published datasets")).toHaveAttribute("data-summary-count", "1");
     });
 
-    it("never calls /promote when the superseded action is clicked", async () => {
+    it("POSTs to the generic promote endpoint exactly once when the superseded Promote action is clicked", async () => {
       const fetchMock = installFetchMock();
       render(<DashboardPage />);
       await loadRuns();
 
       const table = await screen.findByRole("table", { name: "Run summaries" });
       const callsBefore = fetchMock.mock.calls.length;
-      fireEvent.click(within(table).getByRole("button", { name: "Superseded" }));
+      fireEvent.click(supersededRowActionButton(table));
 
-      expect(fetchMock.mock.calls.length).toBe(callsBefore);
-      expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("/promote"))).toHaveLength(0);
-    });
+      const promoteCalls = fetchMock.mock.calls
+        .slice(callsBefore)
+        .filter(([input, init]) => String(input).includes("/admin/runs/validate-20260829T113112Z/promote") && (init as RequestInit | undefined)?.method === "POST");
+      expect(promoteCalls).toHaveLength(1);
+      const rawBody = (promoteCalls[0][1] as RequestInit).body;
+      expect(rawBody == null ? "" : String(rawBody)).toBe("");
 
-    it("names the historical and current active releases in the superseded informational modal", async () => {
-      installFetchMock();
-      render(<DashboardPage />);
-      await loadRuns();
-
-      const table = await screen.findByRole("table", { name: "Run summaries" });
-      fireEvent.click(within(table).getByRole("button", { name: "Superseded" }));
-
-      const dialog = await screen.findByRole("dialog", { name: /promotion status/i });
-      expect(within(dialog).getByText(/release-20260829-002/)).toBeInTheDocument();
-      expect(within(dialog).getByText(/release-20260829-003/)).toBeInTheDocument();
-      expect(within(dialog).getByText(/telco-customer-churn/)).toBeInTheDocument();
+      // No informational modal is opened for a superseded run.
+      expect(screen.queryByRole("dialog", { name: /promotion status/i })).not.toBeInTheDocument();
     });
 
     it("keeps Remove available for the superseded run", async () => {
@@ -2694,18 +2707,22 @@ describe("DashboardPage", () => {
       expect(within(supersededRow as HTMLElement).getByRole("button", { name: "Remove" })).not.toBeDisabled();
     });
 
-    it("keeps the missing promoted run's functional Promote action", async () => {
+    it("keeps the missing promoted run's functional Promote action alongside the superseded one", async () => {
       installFetchMock();
       render(<DashboardPage />);
       await loadRuns();
 
       const table = await screen.findByRole("table", { name: "Run summaries" });
-      const promoteButton = within(table).getByRole("button", { name: "Promote" });
-      expect(promoteButton).toHaveAttribute("data-run-action", "promote");
-      expect(promoteButton).not.toBeDisabled();
+      // Both the superseded and missing runs expose a functional Promote.
+      const promoteButtons = within(table).getAllByRole("button", { name: "Promote" });
+      expect(promoteButtons).toHaveLength(2);
+      for (const button of promoteButtons) {
+        expect(button).toHaveAttribute("data-run-action", "promote");
+        expect(button).not.toBeDisabled();
+      }
     });
 
-    it("rejects a cross-state malformed superseded payload rather than rendering an unsafe Promote action", async () => {
+    it("rejects a superseded payload with can_promote=false rather than rendering an unsafe action", async () => {
       const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
         const url = String(input);
         if (url.endsWith("/admin/runs")) {
@@ -2714,7 +2731,7 @@ describe("DashboardPage", () => {
             runs: [
               {
                 ...supersededRun,
-                promotion_summary: { ...supersededRun.promotion_summary, can_promote: true },
+                promotion_summary: { ...supersededRun.promotion_summary, can_promote: false },
               },
             ],
           });

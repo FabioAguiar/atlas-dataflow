@@ -783,7 +783,7 @@ def _published_entry(dataset_slug: str, active_release: str) -> dict:
     }
 
 
-def test_run_promoted_to_a_now_superseded_release_projects_superseded_and_is_not_repromotable(tmp_path):
+def test_run_promoted_to_a_now_superseded_release_projects_superseded_and_is_repromotable(tmp_path):
     root = tmp_path / "runs"
     repo_root = tmp_path / "repo"
     root.mkdir()
@@ -810,9 +810,9 @@ def test_run_promoted_to_a_now_superseded_release_projects_superseded_and_is_not
     assert promotion_summary["registry_state"] == "superseded"
     assert promotion_summary["release_id"] == "release-20260701-001"
     assert promotion_summary["registry_bound"] is False
-    # Project Spec S0282 section M: a superseded run is never re-promotable
-    # through generic eligibility.
-    assert promotion_summary["can_promote"] is False
+    # Project Spec S0283: a superseded run is eligible for safe create-new
+    # recovery, so can_promote is now true (registry_bound stays false).
+    assert promotion_summary["can_promote"] is True
     assert promotion_summary["can_remove"] is True
     assert promotion_summary["public_dataset_slug"] == "example-dataset"
     assert promotion_summary["current_active_release_id"] == "release-20260702-005"
@@ -894,7 +894,8 @@ def test_active_then_superseded_promotion_lifecycle_reconciles_both_run_states(t
         assert runs["run-a"]["status"] == "promoted"
         assert run_a["registry_state"] == "superseded"
         assert run_a["registry_bound"] is False
-        assert run_a["can_promote"] is False
+        # Project Spec S0283: superseded is re-promotable via create-new recovery.
+        assert run_a["can_promote"] is True
         assert run_a["can_remove"] is True
         assert run_a["public_dataset_slug"] == base_slug
         assert run_a["current_active_release_id"] == "release-20260711t090000z"
@@ -2257,17 +2258,17 @@ def test_promote_route_maps_filesystem_failure_to_structured_error(tmp_path, mon
         admin_runs._REPO_ROOT = original_repo_root
 
 
-def test_promote_route_always_uses_update_existing_or_create_regardless_of_request_body_mode(tmp_path):
-    # Project Spec S0280 supersedes the S0047 create-new-only generic-route
-    # choice: the generic Admin route never reads or forwards a request-body
-    # mode -- it always promotes with MODE_UPDATE_EXISTING_OR_CREATE. A
-    # colliding base dataset_slug therefore rebinds the existing entry's
-    # active_release in place (never a new numbered slug), and a stale
-    # {"mode": "create_new_dataset_detail"} or an unrecognized mode value can
-    # neither force create-new behavior nor surface a lower-level
+def test_promote_route_always_uses_create_new_dataset_detail_regardless_of_request_body_mode(tmp_path):
+    # Project Spec S0283 supersedes S0280 for this generic route: it never
+    # reads or forwards a request-body mode -- it always promotes with
+    # MODE_CREATE_NEW_DATASET_DETAIL. A colliding base dataset_slug therefore
+    # allocates the next available numbered slug for a brand-new Dataset Detail
+    # (never rebinding the existing entry), and a stale
+    # {"mode": "update_existing_or_create"} or an unrecognized mode value can
+    # neither force update-existing behavior nor surface a lower-level
     # mode-selection error through this route. The lower-level explicit
-    # create-new capability stays reachable for direct callers and is exercised
-    # by test_promote_admin_run_create_new_mode_* above.
+    # update-existing capability stays reachable for direct callers and is
+    # exercised by test_promote_admin_run_updates_existing_registry_entry above.
     os.environ["ATLAS_ADMIN_ENABLED"] = "true"
     os.environ.pop("ADMIN_API_TOKEN", None)
     root = tmp_path / "runs"
@@ -2291,8 +2292,8 @@ def test_promote_route_always_uses_update_existing_or_create_regardless_of_reque
         for run_id, payload in (
             ("route-promote-no-body", None),
             ("route-promote-empty-body", {}),
-            ("route-promote-explicit-continuity", {"mode": registry_update.MODE_UPDATE_EXISTING_OR_CREATE}),
-            ("route-promote-stale-create-new", {"mode": registry_update.MODE_CREATE_NEW_DATASET_DETAIL}),
+            ("route-promote-explicit-create-new", {"mode": registry_update.MODE_CREATE_NEW_DATASET_DETAIL}),
+            ("route-promote-stale-update-existing", {"mode": registry_update.MODE_UPDATE_EXISTING_OR_CREATE}),
             ("route-promote-unknown-mode", {"mode": "not_a_real_mode"}),
         ):
             run_root = root / run_id
@@ -2313,14 +2314,155 @@ def test_promote_route_always_uses_update_existing_or_create_regardless_of_reque
             response = api_main.promote_admin_run_route(run_id, request, payload)
 
             assert response["promoted"] is True, payload
-            assert response["registry_action"] == "updated", payload
-            assert response["public_dataset_slug"] == "telco-customer-churn", payload
+            assert response["registry_action"] == "created", payload
+            assert response["public_dataset_slug"] == "telco-customer-churn1", payload
 
             registry = json.loads((run_repo_root / "registry" / "datasets.json").read_text())
-            assert [e["dataset_slug"] for e in registry["datasets"]] == ["telco-customer-churn"], payload
-            entry = registry["datasets"][0]
-            assert entry["active_release"] == "release-20260710t101438z", payload
-            assert entry["public_metadata"]["title"] == "Telco Customer Churn", payload
+            slugs = sorted(e["dataset_slug"] for e in registry["datasets"])
+            assert slugs == ["telco-customer-churn", "telco-customer-churn1"], payload
+            base = next(e for e in registry["datasets"] if e["dataset_slug"] == "telco-customer-churn")
+            allocated = next(e for e in registry["datasets"] if e["dataset_slug"] == "telco-customer-churn1")
+            # The existing Dataset Detail's active_release is never touched.
+            assert base["active_release"] == "release-20260601-001", payload
+            assert base["public_metadata"]["title"] == "Telco Customer Churn", payload
+            assert allocated["active_release"] == "release-20260710t101438z", payload
+    finally:
+        os.environ.pop("ATLAS_ADMIN_ENABLED", None)
+        os.environ.pop("ADMIN_API_TOKEN", None)
+        admin_runs._admin_runs_root = original_root
+        admin_runs._REPO_ROOT = original_repo_root
+
+
+def test_promote_route_allocates_sequential_numbered_slugs_for_distinct_runs_on_the_same_base(tmp_path):
+    # Project Spec S0283: first run on a free base slug creates the base
+    # Dataset Detail; a second distinct run/release on the same base creates
+    # base1; a third creates base2 -- none of the earlier Dataset Details'
+    # active_release values change, and every allocation reports created.
+    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
+    os.environ.pop("ADMIN_API_TOKEN", None)
+    root = tmp_path / "runs"
+    repo_root = tmp_path / "repo"
+    root.mkdir()
+
+    triples = [
+        ("route-seq-run-1", "release-20260710t101438z", "sequential-base"),
+        ("route-seq-run-2", "release-20260711t101438z", "sequential-base1"),
+        ("route-seq-run-3", "release-20260712t101438z", "sequential-base2"),
+    ]
+
+    # _write_promotable_run resets registry/datasets.json, so build every
+    # fixture run first, then promote them in order against one live registry.
+    for run_id, release_id, _ in triples:
+        _write_promotable_run(root, repo_root, run_id, "sequential-base", release_id)
+
+    original_root = admin_runs._admin_runs_root
+    original_repo_root = admin_runs._REPO_ROOT
+    try:
+        admin_runs._admin_runs_root = lambda: root
+        admin_runs._REPO_ROOT = repo_root
+        for run_id, release_id, expected_slug in triples:
+            request = _make_promote_request(run_id, {})
+            response = api_main.promote_admin_run_route(run_id, request, None)
+
+            assert response["promoted"] is True, run_id
+            assert response["registry_action"] == "created", run_id
+            assert response["public_dataset_slug"] == expected_slug, run_id
+
+        registry = json.loads((repo_root / "registry" / "datasets.json").read_text())
+        by_slug = {e["dataset_slug"]: e["active_release"] for e in registry["datasets"]}
+        assert by_slug == {
+            "sequential-base": "release-20260710t101438z",
+            "sequential-base1": "release-20260711t101438z",
+            "sequential-base2": "release-20260712t101438z",
+        }
+    finally:
+        os.environ.pop("ATLAS_ADMIN_ENABLED", None)
+        os.environ.pop("ADMIN_API_TOKEN", None)
+        admin_runs._admin_runs_root = original_root
+        admin_runs._REPO_ROOT = original_repo_root
+
+
+def test_promote_route_recovers_a_superseded_run_into_a_new_numbered_dataset_detail(tmp_path):
+    # Project Spec S0283: synthetic legacy/S0280-style state -- run A promoted
+    # to base / release A (update-existing), then run B update-existing promoted
+    # to the same base / release B, so run A projects superseded. Invoking the
+    # generic route for run A must create base1 / release A, leave base bound to
+    # release B, and after a run-list refresh project run A active at base1 and
+    # run B active at base.
+    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
+    os.environ.pop("ADMIN_API_TOKEN", None)
+    root = tmp_path / "runs"
+    repo_root = tmp_path / "repo"
+    root.mkdir()
+    base_slug = "recovery-base"
+    _write_promotable_run(root, repo_root, "recovery-run-a", base_slug, "release-20260710t101438z")
+    _write_promotable_run(root, repo_root, "recovery-run-b", base_slug, "release-20260711t090000z")
+
+    original_root = admin_runs._admin_runs_root
+    original_repo_root = admin_runs._REPO_ROOT
+    try:
+        admin_runs._admin_runs_root = lambda: root
+        admin_runs._REPO_ROOT = repo_root
+
+        # Legacy state: both A and B promoted through the lower-level
+        # update-existing behavior, so B rebinds the single base Dataset Detail.
+        assert admin_runs.promote_admin_run("recovery-run-a")["promoted"] is True
+        assert admin_runs.promote_admin_run(
+            "recovery-run-b", mode=registry_update.MODE_UPDATE_EXISTING_OR_CREATE
+        )["promoted"] is True
+
+        pre = {e["run_id"]: e for e in admin_runs.list_admin_run_summaries()["runs"]}
+        assert pre["recovery-run-a"]["promotion_summary"]["registry_state"] == "superseded"
+        assert pre["recovery-run-a"]["promotion_summary"]["can_promote"] is True
+
+        # Generic Admin route recovery for run A.
+        request = _make_promote_request("recovery-run-a", {})
+        response = api_main.promote_admin_run_route("recovery-run-a", request, None)
+        assert response["promoted"] is True
+        assert response["registry_action"] == "created"
+        assert response["public_dataset_slug"] == f"{base_slug}1"
+
+        registry = json.loads((repo_root / "registry" / "datasets.json").read_text())
+        by_slug = {e["dataset_slug"]: e["active_release"] for e in registry["datasets"]}
+        assert by_slug == {
+            base_slug: "release-20260711t090000z",
+            f"{base_slug}1": "release-20260710t101438z",
+        }
+
+        post = {e["run_id"]: e for e in admin_runs.list_admin_run_summaries()["runs"]}
+        run_a = post["recovery-run-a"]["promotion_summary"]
+        run_b = post["recovery-run-b"]["promotion_summary"]
+        assert run_a["registry_state"] == "active"
+        assert run_a["registry_bound"] is True
+        assert run_a["can_promote"] is False
+        assert run_a["public_dataset_slug"] == f"{base_slug}1"
+        assert run_b["registry_state"] == "active"
+        assert run_b["public_dataset_slug"] == base_slug
+
+        # promotion-result.json for run A is synchronized to the new binding.
+        promotion_result = json.loads(
+            (root / "recovery-run-a" / "promotion-result.json").read_text()
+        )
+        record = promotion_result["registry_update_record"]
+        assert record["public_dataset_slug"] == f"{base_slug}1"
+        assert record["registry_action"] == "created"
+
+        # A repeated Promote for the now-active recovered release stays
+        # idempotent -- no new entry, no contradictory record rewrite.
+        repeat = api_main.promote_admin_run_route("recovery-run-a", request, None)
+        assert repeat["promoted"] is True
+        assert repeat["registry_action"] == "reused"
+        assert repeat["public_dataset_slug"] == f"{base_slug}1"
+        registry_after = json.loads((repo_root / "registry" / "datasets.json").read_text())
+        assert sorted(e["dataset_slug"] for e in registry_after["datasets"]) == [
+            base_slug,
+            f"{base_slug}1",
+        ]
+        record_after = json.loads(
+            (root / "recovery-run-a" / "promotion-result.json").read_text()
+        )["registry_update_record"]
+        assert record_after["registry_action"] == "created"
+        assert record_after["public_dataset_slug"] == f"{base_slug}1"
     finally:
         os.environ.pop("ATLAS_ADMIN_ENABLED", None)
         os.environ.pop("ADMIN_API_TOKEN", None)
@@ -2329,11 +2471,10 @@ def test_promote_route_always_uses_update_existing_or_create_regardless_of_reque
 
 
 def test_promote_route_creates_one_base_slug_entry_for_new_dataset(tmp_path):
-    # Project Spec S0280: when the promoted run's base dataset_slug has no
-    # existing registry entry, the generic route creates exactly one new
-    # Dataset Detail using the free base slug (no numbered suffix) and reports
-    # registry_action == created -- even when a stale create-new mode body is
-    # supplied, since the route ignores the body entirely.
+    # Project Spec S0283: when the promoted run's base dataset_slug has no
+    # existing registry entry, the generic create-new route creates exactly one
+    # new Dataset Detail using the free base slug (no numbered suffix) and
+    # reports registry_action == created -- the request body is ignored.
     os.environ["ATLAS_ADMIN_ENABLED"] = "true"
     os.environ.pop("ADMIN_API_TOKEN", None)
     root = tmp_path / "runs"
@@ -2370,11 +2511,11 @@ def test_promote_route_creates_one_base_slug_entry_for_new_dataset(tmp_path):
 
 
 def test_promote_route_repeat_promotion_is_idempotent_and_reused(tmp_path):
-    # Project Spec S0280: promoting the same run twice through the generic
-    # route stays idempotent -- the second call reuses the already-promoted
-    # registry entry (registry_action == reused), reports the same
-    # public_dataset_slug, and never creates a duplicate entry or allocates a
-    # numbered slug.
+    # Project Spec S0283: promoting the same run twice through the generic
+    # create-new route stays idempotent -- the second call reuses the
+    # already-promoted registry entry (registry_action == reused), reports the
+    # same public_dataset_slug, and never creates a duplicate entry or
+    # allocates another numbered slug.
     os.environ["ATLAS_ADMIN_ENABLED"] = "true"
     os.environ.pop("ADMIN_API_TOKEN", None)
     root = tmp_path / "runs"

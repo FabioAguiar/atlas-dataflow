@@ -379,13 +379,26 @@ def finalize_promotion_result_after_registry_update(
 
     Idempotent by design: if registry_update_record already shows
     update_applied=true with new_active_release_id equal to this
-    registry_result's release_id, the file is left untouched and returned
-    as-is. Without this check, a repeated finalize call for an
-    already-synchronized release would recompute previous_active_release_id
-    as equal to release_id itself (the registry's current state, not the
-    state before the original update) and overwrite a correct record with a
-    contradictory one -- exactly the "idempotent retry rewrites
-    contradictory registry metadata" failure this spec forbids.
+    registry_result's release_id AND the same final public Dataset Detail
+    binding (the persisted public_dataset_slug matches the slug this
+    registry_result resolves to -- both absent for a base-slug binding, or
+    both equal to the same allocated numbered slug), the file is left
+    untouched and returned as-is. Without the release-id check, a repeated
+    finalize call would recompute previous_active_release_id as equal to
+    release_id itself (the registry's current state, not the state before
+    the original update) and overwrite a correct record with a
+    contradictory one. Without the binding check (Project Spec S0283), a
+    successful create-new recovery that moves the same release from its
+    original base-slug binding to a new numbered Dataset Detail would be
+    mistaken for an already-synchronized no-op and never recorded.
+    Conversely, a same-binding retry that the registry now classifies as
+    "reused" must not overwrite the original recovery's "created"
+    registry_action / promoted_at -- the same-binding early return preserves
+    that record verbatim.
+
+    This record is the latest successful registry synchronization for this
+    run, not an append-only history log: when the binding genuinely changed
+    it is rewritten to the new successful application below.
 
     Raises RuntimeError if promotion-result.json is missing, unreadable, or
     does not show promotion_outcome == "promoted". Raises ValueError if
@@ -416,13 +429,12 @@ def finalize_promotion_result_after_registry_update(
         )
 
     release_id = registry_result.get("release_id")
-    existing_record = result.get("registry_update_record") or {}
-    if (
-        existing_record.get("update_applied") is True
-        and existing_record.get("new_active_release_id") == release_id
-    ):
-        return result
 
+    # The successful final public Dataset Detail binding for this registry
+    # application, using the same persisted convention as the rewrite below:
+    # an allocated slug that differs from the base slug is the public slug;
+    # otherwise the binding is the base slug and no public_dataset_slug is
+    # persisted.
     dataset_slug = registry_result.get("dataset_slug")
     allocated_dataset_slug = registry_result.get("allocated_dataset_slug")
     public_dataset_slug = (
@@ -430,6 +442,14 @@ def finalize_promotion_result_after_registry_update(
         if allocated_dataset_slug and allocated_dataset_slug != dataset_slug
         else None
     )
+
+    existing_record = result.get("registry_update_record") or {}
+    if (
+        existing_record.get("update_applied") is True
+        and existing_record.get("new_active_release_id") == release_id
+        and existing_record.get("public_dataset_slug") == public_dataset_slug
+    ):
+        return result
 
     registry_update_record = {
         "update_applied": True,

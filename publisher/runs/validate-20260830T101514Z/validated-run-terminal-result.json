@@ -1,0 +1,54 @@
+{
+  "artifact_kind": "validated_run_terminal_result",
+  "boundary_confirmations": {
+    "educational_threshold_reinterpreted_as_operational": false,
+    "publisher_promotion_invoked": false,
+    "registry_state_written": false
+  },
+  "durable_references": {
+    "inference_bundle": {
+      "path": "pipeline/inference-bundles/telco-customer-churn/inference-bundle.json",
+      "sha256": "2f60696534e908cfd9340ee14ae7d4bd2356707f16ccf21e6e59468dfa3ff590"
+    },
+    "manifest": {
+      "path": "publisher/runs/validate-20260830T101514Z/manifest.json",
+      "sha256": "130d11f9bcf81033db9dab677d1227ad4b4d07b45e469ad687292dee85a8d02c"
+    },
+    "materialization_result": null,
+    "operational_readiness_source": null,
+    "publisher_validation_result": {
+      "path": "publisher/runs/validate-20260830T101514Z/validation-result.json",
+      "sha256": "0bd8ef9a4c0ea3213bf922b7c5eafc220a4b9087c10a89b24c57303934529c2c"
+    },
+    "release_candidate": {
+      "path": "releases/candidates/telco-customer-churn/release-20260830-001/release-candidate.json",
+      "sha256": "b2cd5cf7e2b59732e34a123db82906b936da7c52eb95c0cb59e8c23de1d47a0d"
+    }
+  },
+  "manifest_outcome": {
+    "manifest_generated": true,
+    "manifest_path": "publisher/runs/validate-20260830T101514Z/manifest.json"
+  },
+  "model_source_mode": "atlas_internal_training",
+  "operational_readiness": {
+    "operational_prediction_available": false,
+    "operational_threshold": {
+      "status": "not_applicable",
+      "value": null
+    },
+    "operational_validity": "not_applicable"
+  },
+  "promotion_eligibility": true,
+  "reasons": [],
+  "run_identity": {
+    "created_at": "2026-08-30T10:15:14+00:00",
+    "dataset_slug": "telco-customer-churn",
+    "run_id": "train-20260830T101503Z"
+  },
+  "schema_version": "validated-run-terminal-result.v1",
+  "status": "completed",
+  "structural_validation": {
+    "checked": true,
+    "validation_outcome": "accepted"
+  }
+}

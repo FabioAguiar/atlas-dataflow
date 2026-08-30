@@ -1,0 +1,187 @@
+{
+  "classification_evidence": {
+    "ordered_class_labels": [
+      "No",
+      "Yes"
+    ],
+    "positive_class_id": "Yes",
+    "positive_class_probability_index": 1,
+    "problem_type": "binary_classification",
+    "result_semantics_schema_version": "binary-result-semantics.v1",
+    "threshold": 0.5
+  },
+  "consumed_inputs": {
+    "dataset_path": "pipeline/prepared/telco-customer-churn/prepared-data.csv",
+    "execution_contract_dataset_id": "telco-customer-churn",
+    "execution_contract_path": "contracts/telco-customer-churn/execution-contract.json",
+    "prepared_dataset_dataset_id": "telco-customer-churn"
+  },
+  "controlled_entrypoint_provenance": {
+    "entrypoint": "pipeline.training.train_from_paths",
+    "execution_contract_sha256": "60aa94d814cfff1d08a6db0a3fad32b25d4a7453d8c15200d6e370abca5d0635",
+    "generated_at": "2026-08-30T10:16:42.954178Z",
+    "marker_id": "bc3180b2848ecc70c5cec348779d7a55738afab06c54e3dea13421929fff5126",
+    "marker_kind": "controlled_training_entrypoint",
+    "marker_version": "controlled-entrypoint-provenance.v1",
+    "output_directory": "pipeline/training-runs/telco-customer-churn/train-20260830T101642Z/",
+    "prepared_dataset_sha256": "d4ac02e925c6a95b4d6d053ea61a4d0f3c845d85a8d8c85a511389eea3aded88",
+    "run_id": "train-20260830T101642Z"
+  },
+  "evidence_policy": {
+    "private_source_paths_prohibited": true,
+    "raw_api_payloads_prohibited": true,
+    "raw_artifact_contents_prohibited": true,
+    "raw_logs_prohibited": true,
+    "raw_runtime_prohibited": true,
+    "reduced_and_sanitized": true,
+    "secrets_prohibited": true
+  },
+  "hashes": {
+    "algorithm": "sha256",
+    "execution_contract_sha256": "60aa94d814cfff1d08a6db0a3fad32b25d4a7453d8c15200d6e370abca5d0635",
+    "metrics_sha256": "6e64a3d587f85d0049331e8e25cb8f4b6b606a21c798ba4707310381bd237b43",
+    "model_artifact_sha256": "1ce4554194c42ddfb4f08ccb8fb94f91fb91fe94e6b4c53143d7fdb34f86b0d7",
+    "prepared_dataset_sha256": "d4ac02e925c6a95b4d6d053ea61a4d0f3c845d85a8d8c85a511389eea3aded88"
+  },
+  "permitted_execution_contract_fields": [
+    "allowed_transformations",
+    "categorical_encoding_policy",
+    "contract_version",
+    "dataset_id",
+    "feature_columns",
+    "feature_definitions",
+    "missing_value_policy",
+    "modeling_constraints",
+    "numeric_handling",
+    "primary_metric",
+    "random_seed",
+    "result_semantics",
+    "secondary_metrics",
+    "split_policy",
+    "target_column"
+  ],
+  "problem_type": "binary_classification",
+  "produced_outputs": {
+    "metrics_path": "pipeline/training-runs/telco-customer-churn/train-20260830T101642Z/metrics.json",
+    "model_card_input_path": "pipeline/training-runs/telco-customer-churn/train-20260830T101642Z/model-card-input.json",
+    "model_selection_evidence_path": null,
+    "serialized_model_path": "pipeline/training-runs/telco-customer-churn/train-20260830T101642Z/model.pkl",
+    "training_parameter_record_path": "pipeline/training-runs/telco-customer-churn/train-20260830T101642Z/training-parameter-record.json"
+  },
+  "record_boundary_confirmations": {
+    "controlled_entrypoint_provenance_marker_present": true,
+    "is_metrics_artifact": false,
+    "model_bytes_embedded": false,
+    "notebook_state_embedded": false,
+    "raw_dataset_embedded": false,
+    "unauthorized_contract_fields_consumed": false
+  },
+  "record_kind": "training_parameter_record",
+  "schema_version": "training-parameter-record.v5",
+  "serializer": {
+    "installed_version": "1.5.3",
+    "name": "joblib",
+    "serialization_format_version": "joblib-1.5.3"
+  },
+  "training_parameters": {
+    "feature_columns": [
+      "gender",
+      "SeniorCitizen",
+      "Partner",
+      "Dependents",
+      "tenure",
+      "PhoneService",
+      "MultipleLines",
+      "InternetService",
+      "OnlineSecurity",
+      "OnlineBackup",
+      "DeviceProtection",
+      "TechSupport",
+      "StreamingTV",
+      "StreamingMovies",
+      "Contract",
+      "PaperlessBilling",
+      "PaymentMethod",
+      "MonthlyCharges",
+      "TotalCharges"
+    ],
+    "final_fit": {
+      "fit_partitions": [
+        "train",
+        "validation"
+      ]
+    },
+    "final_test": {
+      "evaluation_count": 1,
+      "partition": "test",
+      "used_for_fitting": false,
+      "used_for_model_selection": false,
+      "used_for_threshold_selection": false
+    },
+    "hyperparameters": {
+      "class_weight": null,
+      "l2_regularization": 1.0,
+      "learning_rate": 0.03,
+      "max_depth": 3,
+      "max_iter": 200,
+      "max_leaf_nodes": 7,
+      "min_samples_leaf": 40
+    },
+    "initial_fit": {
+      "fit_partition": "train"
+    },
+    "model_family": "hist_gradient_boosting",
+    "model_selection_performed": false,
+    "modeling_constraints": {
+      "allowed_model_families": [
+        "hist_gradient_boosting"
+      ],
+      "fixed_model_configuration": {
+        "hyperparameters": {
+          "class_weight": null,
+          "l2_regularization": 1.0,
+          "learning_rate": 0.03,
+          "max_depth": 3,
+          "max_iter": 200,
+          "max_leaf_nodes": 7,
+          "min_samples_leaf": 40
+        },
+        "model_family": "hist_gradient_boosting"
+      },
+      "no_automl": true,
+      "selection_mode": "fixed_configuration"
+    },
+    "primary_metric": "roc_auc",
+    "random_seed": 0,
+    "secondary_metrics": [
+      "f1",
+      "pr_auc"
+    ],
+    "selection_mode": "fixed_configuration",
+    "split_policy": {
+      "strategy": "stratified",
+      "test_ratio": 0.15,
+      "train_ratio": 0.7,
+      "val_ratio": 0.15
+    },
+    "split_sizes": {
+      "final_fit_rows": 5986,
+      "test_rows": 1057,
+      "training_rows": 4930,
+      "validation_rows": 1056
+    },
+    "target_column": "Churn",
+    "validation_evaluation": {
+      "partition": "validation",
+      "used_for_hyperparameter_selection": false,
+      "used_for_model_selection": false,
+      "used_for_threshold_selection": false
+    }
+  },
+  "training_run_identity": {
+    "dataset_slug": "telco-customer-churn",
+    "output_directory": "pipeline/training-runs/telco-customer-churn/train-20260830T101642Z/",
+    "run_id": "train-20260830T101642Z"
+  },
+  "training_timestamp": "2026-08-30T10:16:42.954178Z"
+}

@@ -98,7 +98,7 @@
         "registry_state": {
           "type": "string",
           "enum": ["active", "superseded", "missing"],
-          "description": "Reconciliation of this completed historical promotion against the live dataset registry (Project Spec S0282). 'active': the registry's Dataset Detail still binds this exact release as its active_release. 'superseded': the recorded Dataset Detail still exists but a different release is now its active_release -- this run stays historically promoted and its release is preserved, but it is no longer the current binding and is not re-promotable through generic eligibility. 'missing': the recorded Dataset Detail is no longer in the registry, so this run is promotable again (preserves Project Spec S0048). All three remain top-level status 'promoted'."
+          "description": "Reconciliation of this completed historical promotion against the live dataset registry (Project Spec S0282, refined by S0283). registry_state is the semantic authority for what registry_bound=false means. 'active': the registry's Dataset Detail still binds this exact release as its active_release. 'superseded': the recorded Dataset Detail still exists but a different release is now its active_release -- this run stays historically promoted and its release is preserved, and the current binding is never replaced, but (S0283) it is eligible for safe create-new recovery: the generic Admin Promote route allocates a new numbered Dataset Detail for the historical release. 'missing': the recorded Dataset Detail is no longer in the registry, so this run is promotable again (preserves Project Spec S0048). All three remain top-level status 'promoted'."
         },
         "current_active_release_id": {
           "type": "string",
@@ -122,11 +122,11 @@
         },
         "registry_bound": {
           "type": "boolean",
-          "description": "True when the live dataset registry (registry/datasets.json) still has a Dataset Detail whose active_release matches release_id -- a 'registry_bound_promoted' run. False when no current registry entry points to this release, but proven historical applied evidence still exists -- a 'promotion_result_orphaned' run: the promotion completed historically, but the Dataset Detail is gone, so the run is promotable again. This object is present only for a completed promotion; registry_bound: false is never produced from a never-completed/unapplied provisional record -- that case leaves the run's top-level status as 'available' instead, with no promotion_summary at all."
+          "description": "True when the live dataset registry (registry/datasets.json) still has a Dataset Detail whose active_release matches release_id -- a 'registry_bound_promoted' run (registry_state 'active'). False when no current registry entry points to this release, but proven historical applied evidence still exists: registry_state is then either 'superseded' (the recorded Dataset Detail still exists but a newer release is active for it; the historical release is preserved and the current binding is untouched) or 'missing' (the recorded Dataset Detail is gone). In both false cases (Project Spec S0283) the run is promotable again -- superseded via safe create-new recovery, missing via S0048 re-promotion -- with registry_state as the semantic authority for which case applies. This object is present only for a completed promotion; registry_bound: false is never produced from a never-completed/unapplied provisional record -- that case leaves the run's top-level status as 'available' instead, with no promotion_summary at all."
         },
         "can_promote": {
           "type": "boolean",
-          "description": "Whether the Dashboard's Promote action should call the promotion endpoint again for this run. False whenever registry_bound is true (repeating promotion would only re-apply an already-active state); true when registry_bound is false (the previously promoted Dataset Detail no longer exists, so this run is promotable again)."
+          "description": "Whether the Dashboard's Promote action should call the promotion endpoint again for this run -- the backend-projected action authority. False for registry_state 'active' (repeating promotion would only re-apply an already-active binding). True for registry_state 'superseded' (Project Spec S0283: Promote creates a new numbered Dataset Detail for the historical release without replacing the current binding) and for registry_state 'missing' (Project Spec S0048: the previously promoted Dataset Detail no longer exists). Equivalently, can_promote is the negation of registry_bound for every completed promotion."
         },
         "can_remove": {
           "type": "boolean",
@@ -163,7 +163,7 @@
             "required": ["public_dataset_slug", "current_active_release_id"],
             "properties": {
               "registry_bound": {"const": false},
-              "can_promote": {"const": false}
+              "can_promote": {"const": true}
             },
             "not": {"required": ["registry_action"]}
           }

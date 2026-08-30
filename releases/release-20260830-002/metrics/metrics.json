@@ -1,0 +1,84 @@
+{
+  "artifact_kind": "training_metrics",
+  "classification_evidence": {
+    "positive_class_id": "Yes",
+    "problem_type": "binary_classification",
+    "result_semantics_schema_version": "binary-result-semantics.v1"
+  },
+  "created_at": "2026-08-30T10:16:31.160937Z",
+  "evidence_policy": {
+    "model_bytes_embedded": false,
+    "notebook_state_embedded": false,
+    "raw_api_payloads_prohibited": true,
+    "raw_dataset_embedded": false,
+    "raw_logs_prohibited": true,
+    "raw_runtime_prohibited": true,
+    "reduced_and_sanitized": true,
+    "secrets_prohibited": true
+  },
+  "final_test_evaluation": {
+    "completed": true,
+    "evaluation_count": 1,
+    "metrics": [
+      {
+        "name": "roc_auc",
+        "value": 0.8544777488351616
+      },
+      {
+        "name": "f1",
+        "value": 0.6129666011787819
+      },
+      {
+        "name": "pr_auc",
+        "value": 0.6768447384115979
+      }
+    ],
+    "partition_role": "test",
+    "row_count": 1057,
+    "sealed_before_finalization": true,
+    "used_for_fitting": false,
+    "used_for_hyperparameter_selection": false,
+    "used_for_model_selection": false,
+    "used_for_threshold_selection": false
+  },
+  "hashes": {
+    "algorithm": "sha256",
+    "execution_contract_sha256": "60aa94d814cfff1d08a6db0a3fad32b25d4a7453d8c15200d6e370abca5d0635"
+  },
+  "path_references": {
+    "dataset_path": "pipeline/prepared/telco-customer-churn/prepared-data.csv",
+    "execution_contract_path": "contracts/telco-customer-churn/execution-contract.json",
+    "metrics_path": "pipeline/training-runs/telco-customer-churn/train-20260830T101631Z/metrics.json",
+    "training_parameter_record_path": "pipeline/training-runs/telco-customer-churn/train-20260830T101631Z/training-parameter-record.json"
+  },
+  "schema_version": "training-metrics.v5",
+  "training_run_identity": {
+    "dataset_slug": "telco-customer-churn",
+    "output_directory": "pipeline/training-runs/telco-customer-churn/train-20260830T101631Z/",
+    "run_id": "train-20260830T101631Z"
+  },
+  "validation_evaluation": {
+    "evaluation_count": 1,
+    "metrics": [
+      {
+        "name": "roc_auc",
+        "value": 0.8385240243004419
+      },
+      {
+        "name": "f1",
+        "value": 0.5702479338842975
+      },
+      {
+        "name": "pr_auc",
+        "value": 0.6516513774293536
+      }
+    ],
+    "partition_role": "validation",
+    "row_count": 1056,
+    "sealed_before_finalization": false,
+    "used_for_fitting": false,
+    "used_for_hyperparameter_selection": false,
+    "used_for_model_selection": false,
+    "used_for_threshold_selection": false
+  }
+}

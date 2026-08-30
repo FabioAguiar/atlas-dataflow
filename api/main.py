@@ -310,7 +310,7 @@ from registry.resolve import (  # noqa: E402
     resolve_dataset,
 )
 from registry.update import (  # noqa: E402
-    MODE_UPDATE_EXISTING_OR_CREATE,
+    MODE_CREATE_NEW_DATASET_DETAIL,
     remove_dataset_entry,
     rename_dataset_slug,
 )
@@ -1245,22 +1245,26 @@ def promote_admin_run_route(run_id: str, request: Request, payload: dict | None 
     if not _admin_request_authorized(request):
         return _admin_route_not_found_response()
 
-    # Project Spec S0280 supersedes the S0047 generic-route choice: the generic
-    # Admin Dashboard promotion route now has one deterministic product meaning
-    # -- rebind an existing Dataset Detail to the promoted release when its base
-    # dataset_slug already exists, otherwise create one new Dataset Detail for
-    # that slug. This route therefore always promotes with
-    # MODE_UPDATE_EXISTING_OR_CREATE and never reads or forwards a request-body
-    # `mode`, so a stale/legacy `{"mode": "create_new_dataset_detail"}` or an
-    # unknown mode value can neither force create-new behavior nor surface a
+    # Project Spec S0283 supersedes S0280 only for this generic Admin Dashboard
+    # route: it has one deterministic product meaning -- promote the run as its
+    # own Dataset Detail. When the base dataset_slug is free a new Dataset Detail
+    # is created from it; when it is already in use the numbered-slug allocator
+    # allocates the next available public slug for a brand-new Dataset Detail,
+    # never rebinding or replacing the existing one. This route therefore always
+    # promotes with MODE_CREATE_NEW_DATASET_DETAIL and never reads or forwards a
+    # request-body `mode`, so `{"mode": "update_existing_or_create"}`,
+    # `{"mode": "create_new_dataset_detail"}`, or an unknown mode value all
+    # resolve to the same create-new behavior and can never surface a
     # lower-level mode-selection error through this endpoint. The `payload`
     # parameter is retained only for request-body compatibility and is
-    # intentionally ignored.
-    # The lower-level explicit create-new capability is preserved:
-    # promote_admin_run(..., mode=registry_update.MODE_CREATE_NEW_DATASET_DETAIL)
-    # and its PROMOTION_MODE_INVALID validation remain reachable for
-    # direct/specialized callers (tests, scripts), just never through this route.
-    result = promote_admin_run(run_id, mode=MODE_UPDATE_EXISTING_OR_CREATE)
+    # intentionally ignored. Slug allocation itself is not implemented here --
+    # it stays in registry/update.py.
+    # Lower-level mode diversity is preserved: promote_admin_run(...) still
+    # defaults to MODE_UPDATE_EXISTING_OR_CREATE and both
+    # registry_update.MODE_UPDATE_EXISTING_OR_CREATE and
+    # MODE_CREATE_NEW_DATASET_DETAIL remain reachable (with PROMOTION_MODE_INVALID
+    # validation) for direct/specialized callers -- just never through this route.
+    result = promote_admin_run(run_id, mode=MODE_CREATE_NEW_DATASET_DETAIL)
     if not result["promoted"]:
         return ADMIN_RUN_PROMOTION_FAILED.response(errors=result["errors"])
 

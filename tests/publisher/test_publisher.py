@@ -902,6 +902,80 @@ def test_finalize_leaves_registry_update_record_unsynchronized_when_registry_upd
     assert "registry_action" not in result["registry_update_record"]
 
 
+def test_finalize_resynchronizes_record_to_new_numbered_slug_on_superseded_create_new_recovery(tmp_path):
+    """Project Spec S0283: a promotion record synchronized to one binding (the
+    base-slug Dataset Detail) can later be successfully re-synchronized to a
+    different numbered public slug for the same release, when a create-new
+    recovery allocates a new Dataset Detail. A same-binding retry that the
+    registry now classifies as "reused" must leave that recovered record
+    byte/value equivalent rather than overwriting "created" with "reused"."""
+    jsonschema = pytest.importorskip("jsonschema")
+    schema = json.loads(
+        (REPO_ROOT / "publisher" / "promotion" / "promotion-result.schema.json").read_text()
+    )
+    other_release_id = "release-20260701-777"
+
+    tmp_repo = _prepare_tmp_repo(tmp_path)
+    run_dir = _validate_manifest_promote(tmp_repo)
+
+    # 1. Original synchronization: update-existing promotion rebinds the base
+    #    Dataset Detail. No numbered slug -> no persisted public_dataset_slug.
+    first_registry_result = registry_update.run(str(run_dir), repo_root=tmp_repo)
+    first_action = registry_update.derive_registry_action(first_registry_result)
+    promote.finalize_promotion_result_after_registry_update(
+        str(run_dir), first_registry_result, first_action, repo_root=tmp_repo
+    )
+    assert "public_dataset_slug" not in _read_promotion_result(run_dir)["registry_update_record"]
+
+    # 2. The base Dataset Detail is superseded by an unrelated release.
+    _write_registry_with_datasets(tmp_repo, [_dataset_entry(DATASET_SLUG, other_release_id)])
+
+    # 3. Create-new recovery allocates a fresh numbered Dataset Detail for the
+    #    same release and re-synchronizes the record to that new binding.
+    recovery_result = registry_update.run(
+        str(run_dir), repo_root=tmp_repo, mode=registry_update.MODE_CREATE_NEW_DATASET_DETAIL
+    )
+    recovery_action = registry_update.derive_registry_action(recovery_result)
+    assert recovery_action == "created"
+    assert recovery_result["allocated_dataset_slug"] == f"{DATASET_SLUG}1"
+
+    recovered = promote.finalize_promotion_result_after_registry_update(
+        str(run_dir), recovery_result, recovery_action, repo_root=tmp_repo
+    )
+    recovered_record = _read_promotion_result(run_dir)["registry_update_record"]
+    assert recovered_record["public_dataset_slug"] == f"{DATASET_SLUG}1"
+    assert recovered_record["new_active_release_id"] == RELEASE_ID
+    assert recovered_record["registry_action"] == "created"
+    jsonschema.validate(recovered, schema)
+
+    # 4. Repeating create-new on the recovered release reuses the same entry.
+    retry_result = registry_update.run(
+        str(run_dir), repo_root=tmp_repo, mode=registry_update.MODE_CREATE_NEW_DATASET_DETAIL
+    )
+    assert retry_result["allocated_dataset_slug"] == f"{DATASET_SLUG}1"
+    retry_action = registry_update.derive_registry_action(retry_result)
+    assert retry_action == "reused"
+
+    before_retry_finalize = _read_promotion_result(run_dir)
+    promote.finalize_promotion_result_after_registry_update(
+        str(run_dir), retry_result, retry_action, repo_root=tmp_repo
+    )
+    after_retry_finalize = _read_promotion_result(run_dir)
+
+    # 5. The same-binding retry leaves the recovered record untouched -- it is
+    #    still "created" with its original promoted_at, never rewritten to
+    #    "reused".
+    assert after_retry_finalize == before_retry_finalize
+    assert after_retry_finalize["registry_update_record"]["registry_action"] == "created"
+    assert after_retry_finalize["registry_update_record"]["public_dataset_slug"] == f"{DATASET_SLUG}1"
+
+    registry_after = json.loads((tmp_repo / "registry" / "datasets.json").read_text())
+    assert sorted(e["dataset_slug"] for e in registry_after["datasets"]) == [
+        DATASET_SLUG,
+        f"{DATASET_SLUG}1",
+    ]
+
+
 def test_finalize_rejects_a_rejected_promotion_result(tmp_path):
     tmp_repo = tmp_path / "repo"
     _copy_publisher_contracts(tmp_repo)

@@ -250,9 +250,10 @@ _REGISTRY_ORPHANED_REASON = (
     "longer in the registry, so this run can be promoted again."
 )
 _REGISTRY_SUPERSEDED_REASON = (
-    'This run was promoted to release "{release_id}". That release is '
-    'preserved, but release "{current_active_release_id}" is now the active '
-    'release for "{public_dataset_slug}".'
+    'This run was promoted to release "{release_id}". That historical release '
+    'is preserved; release "{current_active_release_id}" is currently active '
+    'for "{public_dataset_slug}". Promote may create a new Dataset Detail for '
+    'this historical release without replacing the current binding.'
 )
 
 
@@ -308,10 +309,11 @@ def _promotion_summary_from(run_dir: Path) -> dict | None:
       - "superseded": the release is not currently active, but historical
         applied evidence proves completion, and the recorded final public slug
         still resolves to a live registry entry whose active_release is a
-        different (valid) release. registry_bound false, can_promote false,
-        public_dataset_slug + current_active_release_id. The historical release
-        is preserved and this run is not re-promotable through generic
-        eligibility.
+        different (valid) release. registry_bound false, public_dataset_slug +
+        current_active_release_id. The historical release is preserved and the
+        current binding is never replaced, but (Project Spec S0283) can_promote
+        is true: the generic Admin Promote route creates a new numbered Dataset
+        Detail for this historical release via MODE_CREATE_NEW_DATASET_DETAIL.
       - "missing": historical applied evidence proves completion, the release
         is not currently active, and the recorded final public slug has no
         live registry entry -- preserves S0048: registry_bound false,
@@ -378,11 +380,19 @@ def _promotion_summary_from(run_dir: Path) -> dict | None:
         current_active_release_id = registry_entry.get("active_release")
         if current_active_release_id != release_id:
             # --- superseded: Dataset Detail still exists, newer release active ---
+            # Project Spec S0283: the historical release is preserved and the
+            # current binding is never touched, but this run is eligible for
+            # safe create-new recovery -- the generic Admin Promote route
+            # (MODE_CREATE_NEW_DATASET_DETAIL) allocates a new numbered Dataset
+            # Detail for it. registry_bound stays false; can_promote is now
+            # true. Active runs stay can_promote false; missing runs stay
+            # can_promote true (S0048), and S0262 never-completed promotions
+            # still return None above.
             summary.update(
                 {
                     "registry_state": "superseded",
                     "registry_bound": False,
-                    "can_promote": False,
+                    "can_promote": True,
                     "public_dataset_slug": historical_slug,
                     "current_active_release_id": current_active_release_id,
                     "reason": _REGISTRY_SUPERSEDED_REASON.format(

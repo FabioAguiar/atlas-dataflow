@@ -56,7 +56,23 @@
     },
     {
       "dataset_slug": "telco-customer-churn",
-      "active_release": "release-20260829-005",
+      "active_release": "release-20260830-001",
+      "public_metadata": {
+        "title": "Telco Customer Churn",
+        "summary": "Customer churn prediction dataset for a telecommunications provider. Predicts whether a customer will churn based on service usage and account features.",
+        "domain": "telco",
+        "visibility": "public",
+        "tags": [
+          "telco",
+          "churn",
+          "classification"
+        ]
+      },
+      "review_status": "needs_review"
+    },
+    {
+      "dataset_slug": "telco-customer-churn1",
+      "active_release": "release-20260830-002",
       "public_metadata": {
         "title": "Telco Customer Churn",
         "summary": "Customer churn prediction dataset for a telecommunications provider. Predicts whether a customer will churn based on service usage and account features.",

@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0.0",
   "dataset_slug": "dry-bean",
-  "published_at": "2026-08-19T11:34:19Z",
+  "published_at": "2026-08-21T18:21:41Z",
   "active_release_at_publish_time": "release-20260818-002",
   "profile": {
     "display": {
@@ -9,7 +9,7 @@
       "subtitle": "Explore how bean morphology distinguishes seven dry bean varieties with a governed multiclass classification model.",
       "problem_summary_title": "Understanding dry bean morphology and multiclass classificat",
       "problem_summary_body": "This dataset examines how 16 numerical measurements of bean size and shape distinguish seven dry bean varieties. Atlas uses those governed morphological features in a multiclass classification model that predicts one of seven classes and returns a probability distribution across all classes.",
-      "source_name": "UCI Machine Learning Repository",
+      "source_name": "UC Irvine Repository",
       "source_url": "https://archive.ics.uci.edu/dataset/602/dry+bean+dataset",
       "release_date_label": "2026-08-17",
       "date_format": "dd/mm/yyyy",

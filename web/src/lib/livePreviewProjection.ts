@@ -18,6 +18,7 @@ import {
   resolveModelDisplayName,
   safePublicSourceUrl,
   type DatasetDateFormat,
+  type DatasetTargetContract,
 } from "./datasetPresentation";
 
 /**
@@ -192,6 +193,10 @@ export function projectHomeCardPreview(
  * DatasetPage.tsx calls, fed from the currently loaded, dataset-bound
  * resultContract (the private authoring context's result-contract state,
  * never an extra request), so both surfaces share one Target authority.
+ * Project Spec S0284: the same call also receives the reduced release-bound
+ * targetContract loaded alongside resultContract, and the Target row is
+ * derived through the exact same generalized shared resolver -- no
+ * capability-specific target logic lives in this projector.
  */
 export function projectDatasetDetailPreview(
   dataset: PreviewDataset | undefined,
@@ -212,6 +217,7 @@ export function projectDatasetDetailPreview(
   metrics: PreviewMetrics | null,
   resultContract?: PreviewResultContract | null,
   visualizations?: VisualizationsPayload | null,
+  targetContract?: DatasetTargetContract | null,
 ): DatasetDetailPreview {
   const datasetTitle =
     nonBlank(form.display_title) ||
@@ -247,9 +253,8 @@ export function projectDatasetDetailPreview(
     {
       label: "Target",
       value: resolveDatasetTargetDescription(
-        resultContract?.status === "available" && resultContract.semantics.problem_type === "binary_classification"
-          ? { status: "available", semantics: resultContract.semantics }
-          : null,
+        targetContract ?? null,
+        resultContract?.status === "available" ? { status: "available", semantics: resultContract.semantics } : null,
         context?.prediction_target_description,
       ),
     },

@@ -637,106 +637,157 @@ describe("projectDatasetDetailPreview: Instances metadata (Project Spec S0205)",
   });
 });
 
-// Project Spec S0154: the shared, side-effect-free Target metadata helper --
-// both the public Dataset Detail (DatasetPage.tsx) and this module's own
-// projectDatasetDetailPreview call resolveDatasetTargetDescription directly,
-// so this is the single owner of the precedence/formatting/fallback rule.
-describe("resolveDatasetTargetDescription (shared Target helper, Project Spec S0154)", () => {
-  const availableSemanticsContract = {
+// Project Spec S0154 / S0284: the shared, side-effect-free Target metadata
+// helper -- both the public Dataset Detail (DatasetPage.tsx) and this
+// module's own projectDatasetDetailPreview call resolveDatasetTargetDescription
+// with the same (targetContract, resultContract, prediction_target_description)
+// inputs, so this is the single owner of the precedence/formatting/fallback rule.
+describe("resolveDatasetTargetDescription (shared Target helper, Project Spec S0154/S0284)", () => {
+  const binaryResultContract = {
     status: "available" as const,
     semantics: {
-      positive_class: { event_label: "Churn", class_id: "Yes" },
+      schema_version: "binary-result-semantics.v1",
+      problem_type: "binary_classification" as const,
+      result_schema_version: "binary-classification-result.v1",
+      primary_output: "positive_class_probability",
+      positive_class: { class_id: "Yes", event_label: "Churn" },
       negative_class: { class_id: "No" },
+      decision: { threshold: 0.5 },
+      interpretation: {
+        preset: "risk",
+        bands: [
+          { band_id: "low", lower_bound: 0, upper_bound: 0.35 },
+          { band_id: "medium", lower_bound: 0.35, upper_bound: 0.65 },
+          { band_id: "high", lower_bound: 0.65, upper_bound: 1 },
+        ],
+      },
+      model_descriptor: { model_family: "gradient_boosting", display_name: "Gradient Boosting" },
     },
   };
 
-  it("prefers available result semantics over a conflicting context description", () => {
-    expect(resolveDatasetTargetDescription(availableSemanticsContract, "A conflicting published description")).toBe(
+  const binaryTargetContract = {
+    status: "available" as const,
+    problem_type: "binary_classification" as const,
+    target_name: "Churn",
+  };
+  const multiclassTargetContract = {
+    status: "available" as const,
+    problem_type: "multiclass_classification" as const,
+    target_name: "Class",
+  };
+  const regressionTargetContract = {
+    status: "available" as const,
+    problem_type: "continuous_regression" as const,
+    target_name: "Concrete compressive strength",
+  };
+  const forecastingTargetContract = {
+    status: "available" as const,
+    problem_type: "univariate_forecasting" as const,
+    target_name: "temperature",
+  };
+
+  it("formats a coherent binary target contract as <target_name> (<pos>/<neg>), winning over a conflicting editorial description", () => {
+    expect(
+      resolveDatasetTargetDescription(binaryTargetContract, binaryResultContract, "A conflicting published description"),
+    ).toBe("Churn (Yes/No)");
+  });
+
+  it("formats a coherent multiclass target contract as <target_name> · <N> classes from the governed class list", () => {
+    expect(resolveDatasetTargetDescription(multiclassTargetContract, multiclassResultContract, undefined)).toBe(
+      "Class · 3 classes",
+    );
+  });
+
+  it("returns the bare target name for a coherent continuous regression target contract", () => {
+    expect(resolveDatasetTargetDescription(regressionTargetContract, regressionResultContract, undefined)).toBe(
+      "Concrete compressive strength",
+    );
+  });
+
+  it("returns the bare target name for a coherent univariate forecasting target contract", () => {
+    expect(resolveDatasetTargetDescription(forecastingTargetContract, forecastingResultContract, undefined)).toBe(
+      "temperature",
+    );
+  });
+
+  it("keeps the historical binary result-semantics-only fallback when no target contract is present", () => {
+    expect(resolveDatasetTargetDescription(null, binaryResultContract, "A conflicting published description")).toBe(
       "Churn (Yes/No)",
     );
-  });
-
-  it("falls back to a nonblank context description when result semantics are unavailable", () => {
-    expect(resolveDatasetTargetDescription({ status: "unavailable" }, "Customer churn")).toBe("Customer churn");
-    expect(resolveDatasetTargetDescription({ status: "idle" }, "Customer churn")).toBe("Customer churn");
-    expect(resolveDatasetTargetDescription({ status: "loading" }, "Customer churn")).toBe("Customer churn");
-    expect(resolveDatasetTargetDescription({ status: "transport_failure" }, "Customer churn")).toBe(
-      "Customer churn",
-    );
-    expect(resolveDatasetTargetDescription({ status: "incompatible" }, "Customer churn")).toBe("Customer churn");
-  });
-
-  it("returns null when neither result semantics nor a context description are available", () => {
-    expect(resolveDatasetTargetDescription({ status: "unavailable" }, undefined)).toBeNull();
-    expect(resolveDatasetTargetDescription(null, null)).toBeNull();
-  });
-
-  it("trims whitespace on every semantics field and the context description, treating whitespace-only as absent", () => {
     expect(
       resolveDatasetTargetDescription(
-        {
-          status: "available",
-          semantics: {
-            positive_class: { event_label: "  Churn  ", class_id: " Yes " },
-            negative_class: { class_id: " No " },
-          },
-        },
+        undefined,
+        { positive_class: { event_label: "  Churn  ", class_id: " Yes " }, negative_class: { class_id: " No " } },
         undefined,
       ),
     ).toBe("Churn (Yes/No)");
-
-    expect(resolveDatasetTargetDescription({ status: "unavailable" }, "   ")).toBeNull();
   });
 
-  it("falls back rather than emitting malformed punctuation when semantics are incomplete", () => {
-    expect(
-      resolveDatasetTargetDescription(
-        { status: "available", semantics: { positive_class: { event_label: "Churn", class_id: "" }, negative_class: { class_id: "No" } } },
-        "Fallback description",
-      ),
-    ).toBe("Fallback description");
-
-    expect(
-      resolveDatasetTargetDescription(
-        { status: "available", semantics: { positive_class: { event_label: "", class_id: "Yes" }, negative_class: { class_id: "No" } } },
-        "Fallback description",
-      ),
-    ).toBe("Fallback description");
-
-    expect(
-      resolveDatasetTargetDescription(
-        { status: "available", semantics: { positive_class: { event_label: "Churn", class_id: "Yes" }, negative_class: { class_id: "" } } },
-        "Fallback description",
-      ),
-    ).toBe("Fallback description");
+  it("falls back to a nonblank editorial description when the target contract is unavailable or the result contract is not available", () => {
+    expect(resolveDatasetTargetDescription({ status: "unavailable" }, { status: "unavailable" }, "Customer churn")).toBe(
+      "Customer churn",
+    );
+    for (const status of ["idle", "loading", "transport_failure", "incompatible"] as const) {
+      expect(resolveDatasetTargetDescription(binaryTargetContract, { status }, "Customer churn")).toBe("Customer churn");
+    }
   });
 
-  it("never reads problem_type -- an object carrying only problem_type never produces Target content", () => {
+  it("fails closed on a target/result problem-type mismatch (editorial fallback, then Pending)", () => {
+    expect(
+      resolveDatasetTargetDescription(multiclassTargetContract, regressionResultContract, "Editorial fallback"),
+    ).toBe("Editorial fallback");
+    expect(resolveDatasetTargetDescription(multiclassTargetContract, regressionResultContract, undefined)).toBeNull();
+  });
+
+  it("returns null when neither a coherent target contract, historical semantics, nor an editorial description is available", () => {
+    expect(resolveDatasetTargetDescription(null, { status: "unavailable" }, undefined)).toBeNull();
+    expect(resolveDatasetTargetDescription(null, null, null)).toBeNull();
+    expect(resolveDatasetTargetDescription(binaryTargetContract, { status: "unavailable" }, "   ")).toBeNull();
+  });
+
+  it("never treats problem_type alone as a target -- neither an available target contract with no compatible result semantics, nor a problem_type-only object, produces content", () => {
+    expect(resolveDatasetTargetDescription(binaryTargetContract, null, undefined)).toBeNull();
     expect(
       resolveDatasetTargetDescription(
+        { status: "available", problem_type: "binary_classification", target_name: "Churn" },
         { status: "available", problem_type: "binary_classification" } as unknown as Parameters<
           typeof resolveDatasetTargetDescription
-        >[0],
+        >[1],
         undefined,
       ),
     ).toBeNull();
   });
 
-  it("also accepts bare result semantics passed directly (no status wrapper), treating them as available", () => {
+  it("rejects a blank target name in an otherwise coherent target contract, falling through past the release-bound formatting", () => {
+    const noHistoricalResult = {
+      status: "available" as const,
+      semantics: { ...binaryResultContract.semantics, positive_class: { class_id: "Yes", event_label: "" } },
+    };
     expect(
       resolveDatasetTargetDescription(
-        { positive_class: { event_label: "Churn", class_id: "Yes" }, negative_class: { class_id: "No" } },
-        "Fallback description",
+        { status: "available", problem_type: "binary_classification", target_name: "   " },
+        noHistoricalResult,
+        "Editorial fallback",
       ),
-    ).toBe("Churn (Yes/No)");
+    ).toBe("Editorial fallback");
+  });
+
+  it("falls back rather than emitting malformed punctuation when binary result class ids are incomplete", () => {
+    const brokenResult = {
+      status: "available" as const,
+      semantics: { ...binaryResultContract.semantics, negative_class: { class_id: "" } },
+    };
+    expect(resolveDatasetTargetDescription(binaryTargetContract, brokenResult, "Fallback description")).toBe(
+      "Fallback description",
+    );
   });
 });
 
-// Project Spec S0154: proves the public Dataset Detail and the Dataset Admin
-// Live Preview projection both derive Target through the exact same shared
-// helper -- not two independently-maintained formatters that merely happen
-// to agree today.
-describe("projectDatasetDetailPreview: Target metadata parity (Project Spec S0154)", () => {
+// Project Spec S0154 / S0284: proves the public Dataset Detail and the
+// Dataset Admin Live Preview projection both derive Target through the exact
+// same shared helper, fed the same targetContract/resultContract/editorial
+// inputs -- not two independently-maintained formatters that merely agree.
+describe("projectDatasetDetailPreview: Target metadata parity (Project Spec S0154/S0284)", () => {
   const churnResultContract: { status: "available"; semantics: BinaryResultSemantics } = {
     status: "available",
     semantics: {
@@ -758,8 +809,16 @@ describe("projectDatasetDetailPreview: Target metadata parity (Project Spec S015
       model_descriptor: { model_family: "gradient_boosting", display_name: "Gradient Boosting" },
     },
   };
+  const binaryTargetContract = { status: "available" as const, problem_type: "binary_classification" as const, target_name: "Churn" };
+  const multiclassTargetContract = { status: "available" as const, problem_type: "multiclass_classification" as const, target_name: "Class" };
+  const regressionTargetContract = { status: "available" as const, problem_type: "continuous_regression" as const, target_name: "Concrete compressive strength" };
+  const forecastingTargetContract = { status: "available" as const, problem_type: "univariate_forecasting" as const, target_name: "temperature" };
 
-  it("renders through the shared helper's exact formatted output when available result semantics are fed in, even against a conflicting context description", () => {
+  function targetValue(preview: ReturnType<typeof projectDatasetDetailPreview>) {
+    return preview.metadata.find((item) => item.label === "Target")?.value ?? null;
+  }
+
+  it("renders the shared helper's binary output through the target contract, even against a conflicting editorial description", () => {
     const preview = projectDatasetDetailPreview(
       dataset,
       draftForm,
@@ -767,15 +826,40 @@ describe("projectDatasetDetailPreview: Target metadata parity (Project Spec S015
       contract,
       metrics,
       churnResultContract,
+      visualizations,
+      binaryTargetContract,
     );
-    const target = preview.metadata.find((item) => item.label === "Target");
-    expect(target?.value).toBe("Churn (Yes/No)");
-    expect(target?.value).toBe(
-      resolveDatasetTargetDescription(churnResultContract, "A conflicting published description"),
+    expect(targetValue(preview)).toBe("Churn (Yes/No)");
+    expect(targetValue(preview)).toBe(
+      resolveDatasetTargetDescription(binaryTargetContract, churnResultContract, "A conflicting published description"),
     );
   });
 
-  it("no longer shows Pending when valid result semantics exist, even with no context description at all", () => {
+  it("covers all four current capabilities with no editorial target description in the fixture", () => {
+    const noEditorialContext = { ...context, prediction_target_description: undefined };
+    expect(
+      targetValue(
+        projectDatasetDetailPreview(dataset, draftForm, noEditorialContext, contract, metrics, churnResultContract, visualizations, binaryTargetContract),
+      ),
+    ).toBe("Churn (Yes/No)");
+    expect(
+      targetValue(
+        projectDatasetDetailPreview(dataset, draftForm, noEditorialContext, contract, metrics, multiclassResultContract, visualizations, multiclassTargetContract),
+      ),
+    ).toBe("Class · 3 classes");
+    expect(
+      targetValue(
+        projectDatasetDetailPreview(dataset, draftForm, noEditorialContext, contract, metrics, regressionResultContract, visualizations, regressionTargetContract),
+      ),
+    ).toBe("Concrete compressive strength");
+    expect(
+      targetValue(
+        projectDatasetDetailPreview(dataset, draftForm, noEditorialContext, contract, metrics, forecastingResultContract, visualizations, forecastingTargetContract),
+      ),
+    ).toBe("temperature");
+  });
+
+  it("keeps the historical binary semantics-only fallback when no target contract is passed", () => {
     const preview = projectDatasetDetailPreview(
       dataset,
       draftForm,
@@ -784,10 +868,10 @@ describe("projectDatasetDetailPreview: Target metadata parity (Project Spec S015
       metrics,
       churnResultContract,
     );
-    expect(preview.metadata.find((item) => item.label === "Target")?.value).toBe("Churn (Yes/No)");
+    expect(targetValue(preview)).toBe("Churn (Yes/No)");
   });
 
-  it("shows Pending (a null value) only when both result semantics and a context description are unavailable", () => {
+  it("falls back to the editorial description, then Pending, when the target contract is unavailable", () => {
     const stillFallsBack = projectDatasetDetailPreview(
       dataset,
       draftForm,
@@ -795,8 +879,10 @@ describe("projectDatasetDetailPreview: Target metadata parity (Project Spec S015
       contract,
       metrics,
       { status: "unavailable" },
+      visualizations,
+      { status: "unavailable" },
     );
-    expect(stillFallsBack.metadata.find((item) => item.label === "Target")?.value).toBe("Customer churn");
+    expect(targetValue(stillFallsBack)).toBe("Customer churn");
 
     const pending = projectDatasetDetailPreview(
       dataset,
@@ -805,11 +891,27 @@ describe("projectDatasetDetailPreview: Target metadata parity (Project Spec S015
       contract,
       metrics,
       { status: "unavailable" },
+      visualizations,
+      { status: "unavailable" },
     );
-    expect(pending.metadata.find((item) => item.label === "Target")?.value).toBeNull();
+    expect(targetValue(pending)).toBeNull();
   });
 
-  it("never uses problem_type as the Target fallback even when the context carries one and semantics/description are both unavailable", () => {
+  it("fails closed to the editorial description on a target/result problem-type mismatch", () => {
+    const preview = projectDatasetDetailPreview(
+      dataset,
+      draftForm,
+      { ...context, prediction_target_description: "Editorial fallback" },
+      contract,
+      metrics,
+      regressionResultContract,
+      visualizations,
+      multiclassTargetContract,
+    );
+    expect(targetValue(preview)).toBe("Editorial fallback");
+  });
+
+  it("never uses problem_type as the Target fallback", () => {
     const preview = projectDatasetDetailPreview(
       dataset,
       draftForm,
@@ -817,15 +919,24 @@ describe("projectDatasetDetailPreview: Target metadata parity (Project Spec S015
       contract,
       metrics,
       { status: "incompatible" },
+      visualizations,
+      null,
     );
-    expect(preview.metadata.find((item) => item.label === "Target")?.value).toBeNull();
+    expect(targetValue(preview)).toBeNull();
   });
 
-  it("treats idle/loading/transport_failure/incompatible result-contract states identically to unavailable for Target fallback purposes", () => {
-    for (const status of ["idle", "loading", "transport_failure", "incompatible"] as const) {
-      const preview = projectDatasetDetailPreview(dataset, draftForm, context, contract, metrics, { status });
-      expect(preview.metadata.find((item) => item.label === "Target")?.value).toBe("Customer churn");
-    }
+  it("never lets visualization labels participate in the Target row", () => {
+    const preview = projectDatasetDetailPreview(
+      dataset,
+      draftForm,
+      { ...context, prediction_target_description: undefined },
+      contract,
+      metrics,
+      { status: "unavailable" },
+      { charts: [{ id: "target_distribution", title: "Target Distribution", type: "bar" as const, x_label: "Churn", data: [{ name: "Yes", value: 1 }] }] },
+      null,
+    );
+    expect(targetValue(preview)).toBeNull();
   });
 });
 

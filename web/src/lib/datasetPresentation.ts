@@ -1,3 +1,10 @@
+import {
+  isAvailableBinaryResultContract,
+  isAvailableContinuousRegressionResultContract,
+  isAvailableForecastingResultContract,
+  isAvailableMulticlassResultContract,
+} from "../components/ResultCard/types";
+
 // "telecom", "bank", and "generic" are the original deterministic-fallback
 // values (kept for backward compatibility with already-published data). The
 // remaining values are Atlas's controlled curated icon bank
@@ -363,6 +370,46 @@ function nonBlankTargetValue(value: string | null | undefined): string | null {
   return trimmed || null;
 }
 
+/**
+ * Project Spec S0284: the reduced release-bound prediction-target contract
+ * projected by GET /datasets/{slug}/contract (public) and the Admin
+ * authoring-context contract resource. Deliberately structural and tiny --
+ * it carries only the model-card-derived problem type and technical target
+ * name, never any raw model-card field (hashes, path references,
+ * model/evaluation/provenance).
+ */
+export type DatasetTargetProblemType =
+  | "binary_classification"
+  | "multiclass_classification"
+  | "continuous_regression"
+  | "univariate_forecasting";
+
+export type AvailableDatasetTargetContract = {
+  status: "available";
+  problem_type: DatasetTargetProblemType;
+  target_name: string;
+};
+
+export type UnavailableDatasetTargetContract = {
+  status: "unavailable";
+  reason?: string;
+};
+
+export type DatasetTargetContract =
+  | AvailableDatasetTargetContract
+  | UnavailableDatasetTargetContract;
+
+function isAvailableDatasetTargetContract(
+  value: DatasetTargetContract | null | undefined,
+): value is AvailableDatasetTargetContract {
+  return (
+    !!value &&
+    value.status === "available" &&
+    typeof value.problem_type === "string" &&
+    typeof value.target_name === "string"
+  );
+}
+
 type DatasetTargetSemanticsLike = {
   positive_class?: { event_label?: string | null; class_id?: string | null } | null;
   negative_class?: { class_id?: string | null } | null;
@@ -376,37 +423,106 @@ type DatasetTargetSemanticsLike = {
  * ResultContractState) or bare result semantics passed directly.
  */
 export type DatasetTargetResultInput =
-  | { status: string; semantics?: DatasetTargetSemanticsLike | null }
+  | { status: string; semantics?: unknown }
   | DatasetTargetSemanticsLike
   | null
   | undefined;
 
 function isDatasetTargetResultState(
   value: NonNullable<DatasetTargetResultInput>,
-): value is { status: string; semantics?: DatasetTargetSemanticsLike | null } {
+): value is { status: string; semantics?: unknown } {
   return typeof (value as { status?: unknown }).status === "string";
 }
 
 /**
- * Project Spec S0154: the single shared Dataset Detail Target metadata
- * projection -- both the public Dataset Detail and the Dataset Admin Live
- * Preview must derive their Target row through this one function. Available
- * release-bound result semantics (event label + both class IDs) are always
- * the first authority; a nonblank published prediction_target_description is
- * the fallback; otherwise null (the shared header renders that as Pending).
- * Deterministic and side-effect free -- never inspects problem_type, model
- * display name, metric names, visualization labels, Predict View copy,
+ * Project Spec S0284: resolves the coherent available release-bound target
+ * contract against compatible result semantics, or null when they are not
+ * coherent. Binary emits `<target_name> (<pos>/<neg>)`; multiclass emits
+ * `<target_name> · <N> classes` from the governed class list; continuous
+ * regression and univariate forecasting emit the bare target name. A
+ * problem-type mismatch (or an incompatible/unavailable result contract for
+ * the declared capability) fails closed to null so the caller can fall
+ * through to the historical/editorial fallbacks. No visualization field,
+ * metric, model descriptor, dataset slug or problem_type string ever
+ * participates.
+ */
+function resolveReleaseBoundTargetName(
+  targetContract: DatasetTargetContract | null | undefined,
+  resultContract: DatasetTargetResultInput,
+): string | null {
+  if (!isAvailableDatasetTargetContract(targetContract)) {
+    return null;
+  }
+  const targetName = nonBlankTargetValue(targetContract.target_name);
+  if (!targetName) {
+    return null;
+  }
+
+  switch (targetContract.problem_type) {
+    case "binary_classification": {
+      if (!isAvailableBinaryResultContract(resultContract)) {
+        return null;
+      }
+      const positiveClassId = nonBlankTargetValue(resultContract.semantics.positive_class?.class_id);
+      const negativeClassId = nonBlankTargetValue(resultContract.semantics.negative_class?.class_id);
+      if (!positiveClassId || !negativeClassId) {
+        return null;
+      }
+      return `${targetName} (${positiveClassId}/${negativeClassId})`;
+    }
+    case "multiclass_classification": {
+      if (!isAvailableMulticlassResultContract(resultContract)) {
+        return null;
+      }
+      const classCount = resultContract.semantics.classes.length;
+      if (!Number.isInteger(classCount) || classCount < 3) {
+        return null;
+      }
+      return `${targetName} · ${classCount} classes`;
+    }
+    case "continuous_regression": {
+      return isAvailableContinuousRegressionResultContract(resultContract) ? targetName : null;
+    }
+    case "univariate_forecasting": {
+      return isAvailableForecastingResultContract(resultContract) ? targetName : null;
+    }
+    default:
+      return null;
+  }
+}
+
+/**
+ * Project Spec S0154 / S0284: the single shared Dataset Detail Target
+ * metadata projection -- both the public Dataset Detail and the Dataset
+ * Admin Live Preview derive their Target row through this one function.
+ * Precedence:
+ *   1. a coherent available release-bound target_contract whose declared
+ *      capability matches the available result semantics;
+ *   2. the historical S0154 binary result-semantics-only fallback
+ *      (`<event_label> (<pos>/<neg>)`), still valid for releases predating
+ *      the reduced target contract;
+ *   3. a nonblank published prediction_target_description;
+ *   4. null (the shared header renders that as Pending).
+ * Deterministic and side-effect free -- never inspects problem_type strings,
+ * model display name, metric names, visualization labels, Predict View copy,
  * dataset title or dataset slug.
  */
 export function resolveDatasetTargetDescription(
+  targetContract: DatasetTargetContract | null | undefined,
   resultContract: DatasetTargetResultInput,
   predictionTargetDescription?: string | null,
 ): string | null {
-  const semantics: DatasetTargetSemanticsLike | null | undefined = resultContract
+  const releaseBoundTargetName = resolveReleaseBoundTargetName(targetContract, resultContract);
+  if (releaseBoundTargetName) {
+    return releaseBoundTargetName;
+  }
+
+  const rawSemantics: unknown = resultContract
     ? isDatasetTargetResultState(resultContract)
       ? (resultContract.status === "available" ? resultContract.semantics : null)
       : resultContract
     : null;
+  const semantics = (rawSemantics ?? null) as DatasetTargetSemanticsLike | null;
 
   const eventLabel = nonBlankTargetValue(semantics?.positive_class?.event_label);
   const positiveClassId = nonBlankTargetValue(semantics?.positive_class?.class_id);

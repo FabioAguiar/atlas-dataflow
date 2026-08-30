@@ -1987,6 +1987,185 @@ describe("DatasetPage metrics/analysis/target projection (Project Spec S0127)", 
   });
 });
 
+// Project Spec S0284: the header Target card now resolves from the reduced
+// release-bound target_contract carried on the same /contract envelope --
+// across all four current capabilities -- with the historical binary and
+// editorial fallbacks preserved and never an extra /model-card request.
+describe("DatasetPage release-bound Target projection (Project Spec S0284)", () => {
+  const binaryResultContract = resultContractAvailable;
+  const multiclassResultContract = {
+    status: "available" as const,
+    semantics: {
+      schema_version: "multiclass-result-semantics.v1" as const,
+      problem_type: "multiclass_classification" as const,
+      result_schema_version: "multiclass-classification-result.v1" as const,
+      classes: ["c1", "c2", "c3", "c4", "c5", "c6", "c7"].map((class_id) => ({
+        class_id,
+        display_label: class_id.toUpperCase(),
+      })),
+      primary_output: "predicted_class" as const,
+      probability_output: "class_probabilities" as const,
+      decision: { strategy: "argmax" as const },
+      model_descriptor: { model_family: "random_forest", display_name: "Forest" },
+    },
+  };
+  const regressionResultContract = {
+    status: "available" as const,
+    semantics: {
+      schema_version: "continuous-regression-result-semantics.v1" as const,
+      problem_type: "continuous_regression" as const,
+      result_schema_version: "continuous-regression-result.v1" as const,
+      primary_output: "predicted_value" as const,
+      output_value_kind: "continuous_numeric" as const,
+      model_descriptor: { model_family: "gradient_boosting", display_name: "GBR" },
+    },
+  };
+  const forecastingResultContract = {
+    status: "available" as const,
+    semantics: {
+      schema_version: "univariate-forecasting-result-semantics.v1" as const,
+      problem_type: "univariate_forecasting" as const,
+      result_schema_version: "univariate-forecasting-result.v1" as const,
+      primary_output: "forecast_series" as const,
+      output_structure: "ordered_forecast_points" as const,
+      forecast_value_kind: "continuous_numeric" as const,
+      forecast_count_source: "forecast_horizon" as const,
+      model_descriptor: { model_family: "deterministic_seasonal_trend_ols", display_name: "Seasonal Trend Model" },
+    },
+  };
+
+  function installTargetFetchMock(opts: {
+    resultContract: unknown;
+    targetContract?: unknown;
+    predictionTargetDescription?: string;
+  }) {
+    const context = {
+      ...contextPayload,
+      prediction_target_description: opts.predictionTargetDescription,
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith(`/datasets/${slug}/context`)) return jsonResponse({ dataset_slug: slug, context });
+      if (url.endsWith(`/datasets/${slug}/metrics`)) return jsonResponse({ dataset_slug: slug, metrics: metricsPayload });
+      if (url.endsWith(`/datasets/${slug}/visualizations`))
+        return jsonResponse({ dataset_slug: slug, visualizations: visualizationsPayload });
+      if (url.endsWith(`/datasets/${slug}/contract`)) {
+        return jsonResponse({
+          dataset_slug: slug,
+          contract: contractPayload,
+          result_contract: opts.resultContract,
+          ...(opts.targetContract !== undefined ? { target_contract: opts.targetContract } : {}),
+        });
+      }
+      if (url.endsWith(`/datasets/${slug}`)) return jsonResponse(datasetMetadata);
+      return jsonResponse({}, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  function targetRow(): HTMLElement {
+    return screen.getByText("Target").closest(".dataset-detail-header__metadata-item") as HTMLElement;
+  }
+
+  it("binary -> '<target_name> (<pos>/<neg>)' from the release-bound target contract, over a conflicting editorial description", async () => {
+    const fetchMock = installTargetFetchMock({
+      resultContract: binaryResultContract,
+      targetContract: { status: "available", problem_type: "binary_classification", target_name: "Churn" },
+      predictionTargetDescription: "A conflicting editorial description",
+    });
+    renderDatasetPage();
+    await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
+    expect(await screen.findByText("Churn (Yes/No)")).toBeInTheDocument();
+    expect(screen.queryByText("A conflicting editorial description")).not.toBeInTheDocument();
+    expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/model-card"))).toBe(false);
+  });
+
+  it("multiclass -> '<target_name> · <N> classes' with no prediction_target_description in the fixture", async () => {
+    installTargetFetchMock({
+      resultContract: multiclassResultContract,
+      targetContract: { status: "available", problem_type: "multiclass_classification", target_name: "Class" },
+    });
+    renderDatasetPage();
+    await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
+    expect(await screen.findByText("Class · 7 classes")).toBeInTheDocument();
+  });
+
+  it("continuous regression -> bare target name with no prediction_target_description in the fixture", async () => {
+    installTargetFetchMock({
+      resultContract: regressionResultContract,
+      targetContract: {
+        status: "available",
+        problem_type: "continuous_regression",
+        target_name: "Concrete compressive strength",
+      },
+    });
+    renderDatasetPage();
+    await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
+    expect(await screen.findByText("Concrete compressive strength")).toBeInTheDocument();
+  });
+
+  it("univariate forecasting -> bare target name with no prediction_target_description in the fixture", async () => {
+    installTargetFetchMock({
+      resultContract: forecastingResultContract,
+      targetContract: { status: "available", problem_type: "univariate_forecasting", target_name: "temperature" },
+    });
+    renderDatasetPage();
+    await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
+    expect(await screen.findByText("temperature")).toBeInTheDocument();
+  });
+
+  it("target contract unavailable + editorial description -> editorial fallback", async () => {
+    installTargetFetchMock({
+      resultContract: { status: "unavailable", reason: "binary_result_semantics_unavailable" },
+      targetContract: { status: "unavailable", reason: "prediction_target_unavailable" },
+      predictionTargetDescription: "Whether the synthetic target event occurs.",
+    });
+    renderDatasetPage();
+    await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
+    expect(await screen.findByText("Whether the synthetic target event occurs.")).toBeInTheDocument();
+  });
+
+  it("target contract unavailable + no editorial fallback -> Pending", async () => {
+    installTargetFetchMock({
+      resultContract: { status: "unavailable", reason: "binary_result_semantics_unavailable" },
+      targetContract: { status: "unavailable", reason: "prediction_target_unavailable" },
+    });
+    renderDatasetPage();
+    await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
+    await waitFor(() => expect(within(targetRow()).getByText("Pending")).toBeInTheDocument());
+    expect(screen.queryByText("Churn (Yes/No)")).not.toBeInTheDocument();
+  });
+
+  it("target/result problem-type mismatch + no editorial fallback -> Pending (fails closed)", async () => {
+    installTargetFetchMock({
+      resultContract: regressionResultContract,
+      targetContract: { status: "available", problem_type: "multiclass_classification", target_name: "Class" },
+    });
+    renderDatasetPage();
+    await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
+    await waitFor(() => expect(within(targetRow()).getByText("Pending")).toBeInTheDocument());
+  });
+
+  it("keeps the historical binary result-semantics-only fallback when no target_contract is present", async () => {
+    installTargetFetchMock({ resultContract: binaryResultContract });
+    renderDatasetPage();
+    await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
+    expect(await screen.findByText("Churn (Yes/No)")).toBeInTheDocument();
+  });
+
+  it("makes no /model-card request while resolving any capability's Target", async () => {
+    const fetchMock = installTargetFetchMock({
+      resultContract: forecastingResultContract,
+      targetContract: { status: "available", problem_type: "univariate_forecasting", target_name: "temperature" },
+    });
+    renderDatasetPage();
+    await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
+    await screen.findByText("temperature");
+    expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/model-card"))).toBe(false);
+  });
+});
+
 // S0017: real-shaped telco-customer-churn payloads (grounded in the actual
 // published releases/release-20260619-001 public-context.json/metrics.json
 // content, plus mocked target-distribution/feature-importance chart data

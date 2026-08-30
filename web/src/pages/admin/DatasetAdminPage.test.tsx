@@ -358,6 +358,12 @@ function installFetchMock(
     // Target metadata parity contract. Defaults to the shared available
     // churn/retained semantics every other test relies on.
     resultContractOverride?: Record<string, unknown>;
+    // Project Spec S0284: overrides the authoring-context contract
+    // resource's reduced release-bound target_contract field. Defaults to a
+    // coherent binary target contract (target_name "Customer churn") that
+    // matches the shared churn/retained result semantics. Pass null to omit
+    // the field entirely (simulating a pre-S0284 release).
+    targetContractOverride?: Record<string, unknown> | null;
     // Project Spec S0154: overrides the authoring-context context
     // resource's prediction_target_description independently of the shared
     // default ("Customer churn"). Pass null to omit the field entirely.
@@ -475,6 +481,14 @@ function installFetchMock(
                   })),
                 ],
               },
+              target_contract:
+                options.targetContractOverride === null
+                  ? undefined
+                  : options.targetContractOverride ?? {
+                      status: "available",
+                      problem_type: "binary_classification",
+                      target_name: "Customer churn",
+                    },
               result_contract: options.resultContractOverride ?? {
                 status: "available",
                 semantics: {
@@ -6236,6 +6250,174 @@ describe("DatasetAdminPage", () => {
       expect(targetValue).not.toHaveTextContent("Binary Classification");
     });
 
+
+    // Project Spec S0284: the reduced release-bound target_contract on the
+    // same authoring-context contract resource now drives Live Preview's
+    // Target row for every current capability -- with no editorial target
+    // description supplied for the non-binary cases, and never an extra
+    // /datasets/{slug}/model-card request.
+    const multiclassClassResultContract = {
+      status: "available",
+      semantics: {
+        schema_version: "multiclass-result-semantics.v1",
+        problem_type: "multiclass_classification",
+        result_schema_version: "multiclass-classification-result.v1",
+        primary_output: "predicted_class",
+        probability_output: "class_probabilities",
+        classes: ["c1", "c2", "c3", "c4", "c5", "c6", "c7"].map((class_id) => ({
+          class_id,
+          display_label: class_id.toUpperCase(),
+        })),
+        decision: { strategy: "argmax" },
+        model_descriptor: { model_family: "hist_gradient_boosting", display_name: "Dry Bean classifier" },
+      },
+    };
+    const continuousRegressionResultContract = {
+      status: "available",
+      semantics: {
+        schema_version: "continuous-regression-result-semantics.v1",
+        problem_type: "continuous_regression",
+        result_schema_version: "continuous-regression-result.v1",
+        primary_output: "predicted_value",
+        output_value_kind: "continuous_numeric",
+        model_descriptor: { model_family: "gradient_boosting", display_name: "Strength regressor" },
+      },
+    };
+    const univariateForecastingResultContract = {
+      status: "available",
+      semantics: {
+        schema_version: "univariate-forecasting-result-semantics.v1",
+        problem_type: "univariate_forecasting",
+        result_schema_version: "univariate-forecasting-result.v1",
+        primary_output: "forecast_series",
+        output_structure: "ordered_forecast_points",
+        forecast_value_kind: "continuous_numeric",
+        forecast_count_source: "forecast_horizon",
+        model_descriptor: { model_family: "deterministic_seasonal_trend_ols", display_name: "Seasonal Trend Model" },
+      },
+    };
+
+    it("renders 'Churn (Yes/No)' for a binary release from the release-bound target contract", async () => {
+      const fetchMock = installFetchMock({
+        resultContractOverride: {
+          status: "available",
+          semantics: {
+            schema_version: "binary-result-semantics.v1",
+            problem_type: "binary_classification",
+            result_schema_version: "binary-classification-result.v1",
+            primary_output: "positive_class_probability",
+            positive_class: { class_id: "Yes", event_label: "Churn event" },
+            negative_class: { class_id: "No" },
+            decision: { threshold: 0.5 },
+            interpretation: {
+              preset: "risk",
+              bands: [
+                { band_id: "low", lower_bound: 0, upper_bound: 0.3 },
+                { band_id: "medium", lower_bound: 0.3, upper_bound: 0.7 },
+                { band_id: "high", lower_bound: 0.7, upper_bound: 1 },
+              ],
+            },
+            model_descriptor: { model_family: "gradient_boosting", display_name: "Churn model" },
+          },
+        },
+        targetContractOverride: { status: "available", problem_type: "binary_classification", target_name: "Churn" },
+        predictionTargetDescriptionOverride: null,
+      });
+      renderAdminPage();
+      await loadDraftAndCustomization();
+
+      fireEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
+
+      expect(screen.getByText("Target").nextElementSibling).toHaveTextContent("Churn (Yes/No)");
+      expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/model-card"))).toBe(false);
+    });
+
+    it("renders 'Class · 7 classes' for a multiclass release with no editorial target description", async () => {
+      const fetchMock = installFetchMock({
+        resultContractOverride: multiclassClassResultContract,
+        targetContractOverride: {
+          status: "available",
+          problem_type: "multiclass_classification",
+          target_name: "Class",
+        },
+        predictionTargetDescriptionOverride: null,
+      });
+      renderAdminPage();
+      await loadDraftAndCustomization();
+
+      fireEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
+
+      expect(screen.getByText("Target").nextElementSibling).toHaveTextContent("Class · 7 classes");
+      expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/model-card"))).toBe(false);
+    });
+
+    it("renders the bare target name for a continuous-regression release with no editorial target description", async () => {
+      installFetchMock({
+        resultContractOverride: continuousRegressionResultContract,
+        targetContractOverride: {
+          status: "available",
+          problem_type: "continuous_regression",
+          target_name: "Concrete compressive strength",
+        },
+        predictionTargetDescriptionOverride: null,
+      });
+      renderAdminPage();
+      await loadDraftAndCustomization();
+
+      fireEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
+
+      expect(screen.getByText("Target").nextElementSibling).toHaveTextContent("Concrete compressive strength");
+    });
+
+    it("renders the bare target name for a univariate-forecasting release with no editorial target description", async () => {
+      installFetchMock({
+        resultContractOverride: univariateForecastingResultContract,
+        targetContractOverride: {
+          status: "available",
+          problem_type: "univariate_forecasting",
+          target_name: "temperature",
+        },
+        predictionTargetDescriptionOverride: null,
+      });
+      renderAdminPage();
+      await loadDraftAndCustomization();
+
+      fireEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
+
+      expect(screen.getByText("Target").nextElementSibling).toHaveTextContent("temperature");
+    });
+
+    it("fails closed to Pending on a target/result problem-type mismatch with no editorial fallback", async () => {
+      installFetchMock({
+        resultContractOverride: continuousRegressionResultContract,
+        targetContractOverride: {
+          status: "available",
+          problem_type: "multiclass_classification",
+          target_name: "Class",
+        },
+        predictionTargetDescriptionOverride: null,
+      });
+      renderAdminPage();
+      await loadDraftAndCustomization();
+
+      fireEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
+
+      expect(screen.getByText("Target").nextElementSibling).toHaveTextContent("Pending");
+    });
+
+    it("still honours the editorial prediction_target_description when the release carries no target contract", async () => {
+      installFetchMock({
+        resultContractOverride: continuousRegressionResultContract,
+        targetContractOverride: null,
+        predictionTargetDescriptionOverride: "Concrete compressive strength (editorial)",
+      });
+      renderAdminPage();
+      await loadDraftAndCustomization();
+
+      fireEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
+
+      expect(screen.getByText("Target").nextElementSibling).toHaveTextContent("Concrete compressive strength (editorial)");
+    });
     it("never retains the previous dataset's Target metadata while the newly selected dataset's result contract is loading or unavailable", async () => {
       const otherSlug = "energy-consumption-forecast";
       const otherViewId = "demand-forecast-overview";

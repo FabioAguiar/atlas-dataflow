@@ -44,14 +44,25 @@ const datasetMetadata = {
   tags: ["multiclass", "dry-bean"],
 };
 
+// Project Spec S0284: the real-shaped Dry Bean fixture no longer carries a
+// prediction_target_description -- the header Target card is now proven to
+// come from the release-bound target_contract on the /contract envelope.
 const contextPayload = {
   title: "Dry Bean",
   summary: "Estimate dry bean variety from reviewed geometric shape measurements.",
   domain: "agriculture",
   tags: ["multiclass", "dry-bean"],
   use_case: "Dry bean variety classification.",
-  prediction_target_description: "Which of seven governed dry bean varieties a sample most likely belongs to.",
   problem_type: "multiclass_classification",
+};
+
+// Project Spec S0284: reduced release-bound target identity from the active
+// Dry Bean release model-card.v1 (problem_type + technical target name only,
+// never the seven scientific class labels).
+const dryBeanTargetContract = {
+  status: "available" as const,
+  problem_type: "multiclass_classification" as const,
+  target_name: "Class",
 };
 
 const contractPayload = {
@@ -156,6 +167,7 @@ function installDryBeanFetchMock() {
         dataset_slug: slug,
         contract: contractPayload,
         result_contract: multiclassResultContractAvailable,
+        target_contract: dryBeanTargetContract,
       });
     }
     if (url.endsWith(`/datasets/${slug}`)) {
@@ -191,6 +203,23 @@ describe("DatasetPage Dry Bean native multiclass integration (Project Spec S0216
 
     await screen.findByRole("heading", { name: "Dry Bean", level: 1 });
     expect(await screen.findByText("Multiclass Classification")).toBeInTheDocument();
+  });
+
+  // Project Spec S0284: the header Target card resolves from the release-bound
+  // target_contract (target_name "Class") combined with the governed
+  // seven-class result-contract cardinality -- with no
+  // prediction_target_description in the fixture and no /model-card request.
+  it("renders the header Target as 'Class · 7 classes' from the release-bound target contract, with no editorial target description", async () => {
+    const fetchMock = installDryBeanFetchMock();
+    renderDatasetPage();
+
+    await screen.findByRole("heading", { name: "Dry Bean", level: 1 });
+
+    const targetRow = (await screen.findByText("Target")).closest(".dataset-detail-header__metadata-item");
+    expect(targetRow).not.toBeNull();
+    expect(within(targetRow as HTMLElement).getByText("Class · 7 classes")).toBeInTheDocument();
+
+    expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/model-card"))).toBe(false);
   });
 
   function fillRequiredFeatureFields() {

@@ -69,7 +69,9 @@ from public_metrics_loader import (  # noqa: E402
 )
 from public_model_card_loader import (  # noqa: E402
     PublicModelCardUnavailableError,
+    PublicPredictionTargetUnavailableError,
     load_public_model_card,
+    load_public_prediction_target,
 )
 from public_visualizations_loader import (  # noqa: E402
     PublicVisualizationsUnavailableError,
@@ -662,10 +664,72 @@ def get_public_contract(dataset_slug: str):
     except PublicContractUnavailableError:
         return public_error_response(PUBLIC_CONTRACT_UNAVAILABLE)
 
+    result_contract = _project_result_contract_safely(resolved.active_release)
     return {
         "dataset_slug": resolved.dataset_slug,
         "contract": public_contract,
-        "result_contract": _project_result_contract_safely(resolved.active_release),
+        "result_contract": result_contract,
+        "target_contract": _project_prediction_target_safely(
+            resolved.active_release, result_contract
+        ),
+    }
+
+
+# S0284: the current capability vocabulary the reduced target projection
+# recognises. Coarse legacy aliases (classification/regression/forecasting)
+# are deliberately excluded so they fail closed rather than being widened to
+# a more specific capability.
+_PREDICTION_TARGET_PROBLEM_TYPES = frozenset(
+    {
+        "binary_classification",
+        "multiclass_classification",
+        "continuous_regression",
+        "univariate_forecasting",
+    }
+)
+
+
+def _project_prediction_target_safely(active_release: str, result_contract: dict) -> dict:
+    """
+    Read-only reduced prediction-target projection for the public ``/contract``
+    envelope and the Admin authoring-context contract resource.
+
+    Always returns either
+    ``{"status": "available", "problem_type": ..., "target_name": ...}`` or
+    ``{"status": "unavailable", "reason": "prediction_target_unavailable"}``.
+    Never loads the model, never executes inference, and never widens or
+    repairs a model-card / result-contract problem-type mismatch. Target
+    unavailability never propagates to the technical contract resource.
+    """
+
+    unavailable = {"status": "unavailable", "reason": "prediction_target_unavailable"}
+
+    if not isinstance(result_contract, dict) or result_contract.get("status") != "available":
+        return unavailable
+    semantics = result_contract.get("semantics")
+    if not isinstance(semantics, dict):
+        return unavailable
+    result_problem_type = semantics.get("problem_type")
+    if result_problem_type not in _PREDICTION_TARGET_PROBLEM_TYPES:
+        return unavailable
+
+    try:
+        reduced_target = load_public_prediction_target(active_release)
+    except PublicPredictionTargetUnavailableError:
+        return unavailable
+    except Exception:
+        return unavailable
+
+    if reduced_target.get("problem_type") != result_problem_type:
+        return unavailable
+    target_name = reduced_target.get("target_name")
+    if not isinstance(target_name, str) or not target_name.strip():
+        return unavailable
+
+    return {
+        "status": "available",
+        "problem_type": result_problem_type,
+        "target_name": target_name,
     }
 
 
@@ -1782,10 +1846,14 @@ def get_admin_dataset_authoring_context(dataset_slug: str, request: Request):
 
     try:
         public_contract = load_public_contract(resolved.active_release)
+        authoring_result_contract = _project_result_contract_safely(resolved.active_release)
         contract_resource = _authoring_resource_ready(
             {
                 "contract": public_contract,
-                "result_contract": _project_result_contract_safely(resolved.active_release),
+                "result_contract": authoring_result_contract,
+                "target_contract": _project_prediction_target_safely(
+                    resolved.active_release, authoring_result_contract
+                ),
             }
         )
     except PublicContractUnavailableError:

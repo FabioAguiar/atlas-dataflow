@@ -1,0 +1,214 @@
+{
+  "classification_evidence": {
+    "ordered_class_ids": [
+      "BARBUNYA",
+      "BOMBAY",
+      "CALI",
+      "DERMASON",
+      "HOROZ",
+      "SEKER",
+      "SIRA"
+    ],
+    "probability_columns": [
+      {
+        "class_id": "BARBUNYA",
+        "probability_index": 0
+      },
+      {
+        "class_id": "BOMBAY",
+        "probability_index": 1
+      },
+      {
+        "class_id": "CALI",
+        "probability_index": 2
+      },
+      {
+        "class_id": "DERMASON",
+        "probability_index": 3
+      },
+      {
+        "class_id": "HOROZ",
+        "probability_index": 4
+      },
+      {
+        "class_id": "SEKER",
+        "probability_index": 5
+      },
+      {
+        "class_id": "SIRA",
+        "probability_index": 6
+      }
+    ],
+    "problem_type": "multiclass_classification"
+  },
+  "consumed_inputs": {
+    "dataset_path": "pipeline/prepared/dry-bean/prepared-data.csv",
+    "execution_contract_dataset_id": "dry-bean",
+    "execution_contract_path": "contracts/dry-bean/execution-contract.json",
+    "prepared_dataset_dataset_id": "dry-bean"
+  },
+  "controlled_entrypoint_provenance": {
+    "entrypoint": "pipeline.training.train_from_paths",
+    "execution_contract_sha256": "3924095f225ab2902d4560d55236f00e18e6be0a70f57a4b27569c7afa499d1c",
+    "generated_at": "2026-08-30T14:31:41.600985Z",
+    "marker_id": "bced92ebb79609c26cd48526d87455b6286407fd1590a9646f5d934f0ec2f789",
+    "marker_kind": "controlled_training_entrypoint",
+    "marker_version": "controlled-entrypoint-provenance.v1",
+    "output_directory": "pipeline/training-runs/dry-bean/train-20260830T143141Z/",
+    "prepared_dataset_sha256": "1330e4ccc5c54a925e43daf60d1409ac62dad2a21de9a25213765bee4b655787",
+    "run_id": "train-20260830T143141Z"
+  },
+  "evidence_policy": {
+    "private_source_paths_prohibited": true,
+    "raw_api_payloads_prohibited": true,
+    "raw_artifact_contents_prohibited": true,
+    "raw_logs_prohibited": true,
+    "raw_runtime_prohibited": true,
+    "reduced_and_sanitized": true,
+    "secrets_prohibited": true
+  },
+  "hashes": {
+    "algorithm": "sha256",
+    "execution_contract_sha256": "3924095f225ab2902d4560d55236f00e18e6be0a70f57a4b27569c7afa499d1c",
+    "metrics_sha256": "6c6f1957be3d7861102ddd893336341b5e8da17dc0c2abe502e317615219f117",
+    "model_artifact_sha256": "36246a3ef0dc253610780b9f92799c761d753caf4e596de5d5d98841f48302a9",
+    "prepared_dataset_sha256": "1330e4ccc5c54a925e43daf60d1409ac62dad2a21de9a25213765bee4b655787"
+  },
+  "permitted_execution_contract_fields": [
+    "allowed_transformations",
+    "categorical_encoding_policy",
+    "contract_version",
+    "dataset_id",
+    "feature_columns",
+    "feature_definitions",
+    "missing_value_policy",
+    "modeling_constraints",
+    "numeric_handling",
+    "primary_metric",
+    "random_seed",
+    "result_semantics",
+    "secondary_metrics",
+    "split_policy",
+    "target_column"
+  ],
+  "problem_type": "multiclass_classification",
+  "produced_outputs": {
+    "metrics_path": "pipeline/training-runs/dry-bean/train-20260830T143141Z/metrics.json",
+    "model_card_input_path": "pipeline/training-runs/dry-bean/train-20260830T143141Z/model-card-input.json",
+    "model_selection_evidence_path": null,
+    "serialized_model_path": "pipeline/training-runs/dry-bean/train-20260830T143141Z/model.pkl",
+    "training_parameter_record_path": "pipeline/training-runs/dry-bean/train-20260830T143141Z/training-parameter-record.json"
+  },
+  "record_boundary_confirmations": {
+    "controlled_entrypoint_provenance_marker_present": true,
+    "is_metrics_artifact": false,
+    "model_bytes_embedded": false,
+    "notebook_state_embedded": false,
+    "raw_dataset_embedded": false,
+    "unauthorized_contract_fields_consumed": false
+  },
+  "record_kind": "training_parameter_record",
+  "schema_version": "training-parameter-record.v2",
+  "serializer": {
+    "installed_version": "1.5.3",
+    "name": "joblib",
+    "serialization_format_version": "joblib-1.5.3"
+  },
+  "training_parameters": {
+    "feature_columns": [
+      "Area",
+      "Perimeter",
+      "MajorAxisLength",
+      "MinorAxisLength",
+      "AspectRatio",
+      "Eccentricity",
+      "ConvexArea",
+      "EquivDiameter",
+      "Extent",
+      "Solidity",
+      "Roundness",
+      "Compactness",
+      "ShapeFactor1",
+      "ShapeFactor2",
+      "ShapeFactor3",
+      "ShapeFactor4"
+    ],
+    "final_fit": {
+      "fit_partitions": [
+        "train",
+        "validation"
+      ]
+    },
+    "final_test": {
+      "evaluation_count": 1,
+      "partition": "test",
+      "used_for_fitting": false,
+      "used_for_model_selection": false
+    },
+    "hyperparameters": {
+      "class_weight": null,
+      "l2_regularization": 0.0,
+      "learning_rate": 0.05,
+      "max_iter": 250,
+      "max_leaf_nodes": 15,
+      "min_samples_leaf": 40
+    },
+    "initial_fit": {
+      "fit_partition": "train"
+    },
+    "model_family": "hist_gradient_boosting",
+    "model_selection_performed": false,
+    "modeling_constraints": {
+      "allowed_model_families": [
+        "hist_gradient_boosting"
+      ],
+      "fixed_model_configuration": {
+        "hyperparameters": {
+          "class_weight": null,
+          "l2_regularization": 0.0,
+          "learning_rate": 0.05,
+          "max_iter": 250,
+          "max_leaf_nodes": 15,
+          "min_samples_leaf": 40
+        },
+        "model_family": "hist_gradient_boosting"
+      },
+      "no_automl": true,
+      "selection_mode": "fixed_configuration"
+    },
+    "primary_metric": "f1_macro",
+    "random_seed": 42,
+    "secondary_metrics": [
+      "balanced_accuracy",
+      "f1_weighted",
+      "recall_macro",
+      "accuracy",
+      "log_loss"
+    ],
+    "selection_mode": "fixed_configuration",
+    "split_policy": {
+      "strategy": "stratified",
+      "test_ratio": 0.15,
+      "train_ratio": 0.7,
+      "val_ratio": 0.15
+    },
+    "split_sizes": {
+      "final_fit_rows": 11567,
+      "test_rows": 2044,
+      "training_rows": 9527,
+      "validation_rows": 2040
+    },
+    "target_column": "Class",
+    "validation_evaluation": {
+      "partition": "validation",
+      "used_for_hyperparameter_selection": false,
+      "used_for_model_selection": false
+    }
+  },
+  "training_run_identity": {
+    "dataset_slug": "dry-bean",
+    "output_directory": "pipeline/training-runs/dry-bean/train-20260830T143141Z/",
+    "run_id": "train-20260830T143141Z"
+  },
+  "training_timestamp": "2026-08-30T14:31:41.600985Z"
+}

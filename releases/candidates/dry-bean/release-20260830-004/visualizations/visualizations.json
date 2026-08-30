@@ -1,0 +1,213 @@
+{
+  "artifact_kind": "analytical_visualizations",
+  "charts": [
+    {
+      "data": [
+        {
+          "name": "BARBUNYA",
+          "value": 1322
+        },
+        {
+          "name": "BOMBAY",
+          "value": 522
+        },
+        {
+          "name": "CALI",
+          "value": 1630
+        },
+        {
+          "name": "DERMASON",
+          "value": 3546
+        },
+        {
+          "name": "HOROZ",
+          "value": 1928
+        },
+        {
+          "name": "SEKER",
+          "value": 2027
+        },
+        {
+          "name": "SIRA",
+          "value": 2636
+        }
+      ],
+      "id": "target_distribution",
+      "title": "Target Distribution",
+      "type": "bar",
+      "x_label": "Class",
+      "y_label": "Rows"
+    },
+    {
+      "data": [
+        {
+          "name": "Compactness",
+          "value": 0.274684604854965
+        },
+        {
+          "name": "ShapeFactor4",
+          "value": 0.162890934723742
+        },
+        {
+          "name": "Roundness",
+          "value": 0.11410342973164475
+        },
+        {
+          "name": "Area",
+          "value": 0.09765668775878503
+        },
+        {
+          "name": "Perimeter",
+          "value": 0.09564619583688959
+        },
+        {
+          "name": "ShapeFactor1",
+          "value": 0.06573138518281407
+        },
+        {
+          "name": "ConvexArea",
+          "value": 0.05189694866212635
+        },
+        {
+          "name": "Solidity",
+          "value": 0.03549971733055175
+        },
+        {
+          "name": "MinorAxisLength",
+          "value": 0.032137658592770464
+        },
+        {
+          "name": "MajorAxisLength",
+          "value": 0.022882629565852807
+        }
+      ],
+      "id": "feature_importance",
+      "title": "HGB Feature Importance",
+      "type": "bar",
+      "x_label": "Feature",
+      "y_label": "Importance"
+    }
+  ],
+  "classification_evidence": {
+    "ordered_class_ids": [
+      "BARBUNYA",
+      "BOMBAY",
+      "CALI",
+      "DERMASON",
+      "HOROZ",
+      "SEKER",
+      "SIRA"
+    ],
+    "problem_type": "multiclass_classification"
+  },
+  "confusion_matrix": {
+    "column_axis": "predicted_class",
+    "matrix": [
+      [
+        0.9346733668341709,
+        0.005025125628140704,
+        0.04020100502512563,
+        0.005025125628140704,
+        0.005025125628140704,
+        0.005025125628140704,
+        0.005025125628140704
+      ],
+      [
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.02857142857142857,
+        0.0,
+        0.9510204081632653,
+        0.0,
+        0.0163265306122449,
+        0.0,
+        0.004081632653061225
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.9323308270676691,
+        0.0,
+        0.016917293233082706,
+        0.05075187969924812
+      ],
+      [
+        0.0,
+        0.0,
+        0.010380622837370242,
+        0.0034602076124567475,
+        0.9515570934256056,
+        0.0,
+        0.03460207612456748
+      ],
+      [
+        0.01644736842105263,
+        0.0,
+        0.0,
+        0.019736842105263157,
+        0.0,
+        0.944078947368421,
+        0.019736842105263157
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.07323232323232323,
+        0.022727272727272728,
+        0.012626262626262626,
+        0.8914141414141414
+      ]
+    ],
+    "ordered_class_ids": [
+      "BARBUNYA",
+      "BOMBAY",
+      "CALI",
+      "DERMASON",
+      "HOROZ",
+      "SEKER",
+      "SIRA"
+    ],
+    "row_axis": "true_class"
+  },
+  "created_at": "2026-08-30T14:31:41.600985Z",
+  "evidence_policy": {
+    "model_bytes_embedded": false,
+    "notebook_state_embedded": false,
+    "raw_api_payloads_prohibited": true,
+    "raw_dataset_embedded": false,
+    "raw_logs_prohibited": true,
+    "raw_runtime_prohibited": true,
+    "raw_transformed_matrices_embedded": false,
+    "reduced_and_sanitized": true,
+    "secrets_prohibited": true,
+    "serialized_estimator_state_embedded": false
+  },
+  "feature_importance_method": {
+    "method": "permutation_importance",
+    "model_family": "hist_gradient_boosting",
+    "omitted_source_feature_count": 6,
+    "public_row_limit": 10,
+    "source": "sklearn.inspection.permutation_importance",
+    "total_source_feature_count": 16
+  },
+  "schema_version": "analytical-visualizations.v2",
+  "target_distribution_method": {
+    "population_kind": "prepared_dataset",
+    "row_count": 13611,
+    "target_column": "Class"
+  },
+  "training_run_identity": {
+    "dataset_slug": "dry-bean",
+    "output_directory": "pipeline/training-runs/dry-bean/train-20260830T143141Z/",
+    "run_id": "train-20260830T143141Z"
+  }
+}

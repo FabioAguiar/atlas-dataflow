@@ -19,7 +19,6 @@ import InferenceForm, {
 } from "../components/InferenceForm/InferenceForm";
 import {
   availableResultProblemType,
-  isAvailableBinaryResultContract,
   isAvailableContinuousRegressionResultContract,
   isAvailableForecastingResultContract,
   type ResultContract,
@@ -34,6 +33,7 @@ import {
   resolveDatasetThemePreset,
   resolveModelDisplayName,
   safePublicSourceUrl,
+  type DatasetTargetContract,
 } from "../lib/datasetPresentation";
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "";
@@ -81,6 +81,10 @@ type PublicContextPayload = {
 type ContractEnvelope = {
   contract: ContractPayload;
   result_contract: ResultContract;
+  // Project Spec S0284: reduced release-bound prediction-target contract,
+  // preserved from the same /contract fetch -- never a separate /model-card
+  // request.
+  target_contract?: DatasetTargetContract | null;
 };
 
 type MetricsData = Record<string, unknown>;
@@ -415,13 +419,18 @@ export default function DatasetPage() {
           dataset_slug: string;
           contract: ContractPayload;
           result_contract: ResultContract;
+          target_contract?: DatasetTargetContract | null;
         }>;
       })
       .then((data) => {
         if (data) {
           setContractState({
             status: "ready",
-            data: { contract: data.contract, result_contract: data.result_contract },
+            data: {
+              contract: data.contract,
+              result_contract: data.result_contract,
+              target_contract: data.target_contract ?? null,
+            },
           });
         }
       })
@@ -459,6 +468,7 @@ export default function DatasetPage() {
     || nonBlank(state.data.summary)
     || undefined;
   const resultContract = contractState.status === "ready" ? contractState.data.result_contract : null;
+  const targetContract = contractState.status === "ready" ? contractState.data.target_contract ?? null : null;
   const analysisType = resolveAnalysisType(resultContract, context) ?? undefined;
   const modelDisplayName = resolveModelDisplayName(resultContract);
   const sourceName = nonBlank(context?.source_name);
@@ -480,7 +490,8 @@ export default function DatasetPage() {
     {
       label: "Target",
       value: resolveDatasetTargetDescription(
-        isAvailableBinaryResultContract(resultContract) ? resultContract : null,
+        targetContract,
+        resultContract,
         context?.prediction_target_description,
       ),
     },

@@ -1,0 +1,85 @@
+{
+  "artifact_kind": "model_card",
+  "created_at": "2026-08-30T14:31:41.600985Z",
+  "data_notes": "Reduced, deterministic training-run model card. No raw dataset rows, model bytes, raw logs, raw runtime data, secrets, or notebook state are included.",
+  "evaluation": {
+    "primary_metric_name": "f1_macro",
+    "primary_metric_value": 0.9432970875011353,
+    "secondary_metrics": [
+      {
+        "name": "balanced_accuracy",
+        "value": 0.9435821120390392
+      },
+      {
+        "name": "f1_weighted",
+        "value": 0.9339728177004784
+      },
+      {
+        "name": "recall_macro",
+        "value": 0.9435821120390392
+      },
+      {
+        "name": "accuracy",
+        "value": 0.9339530332681018
+      },
+      {
+        "name": "log_loss",
+        "value": 0.19422789181319125
+      }
+    ]
+  },
+  "evidence_policy": {
+    "raw_api_payloads_prohibited": true,
+    "raw_logs_prohibited": true,
+    "raw_runtime_prohibited": true,
+    "reduced_and_sanitized": true,
+    "secrets_prohibited": true
+  },
+  "hashes": {
+    "algorithm": "sha256",
+    "model_card_input_sha256": "5f8cddabf49eb0117b530e530a99737dc17365ca5ae95e51ab8a6dd141fea35a"
+  },
+  "input_features": [
+    "Area",
+    "Perimeter",
+    "MajorAxisLength",
+    "MinorAxisLength",
+    "AspectRatio",
+    "Eccentricity",
+    "ConvexArea",
+    "EquivDiameter",
+    "Extent",
+    "Solidity",
+    "Roundness",
+    "Compactness",
+    "ShapeFactor1",
+    "ShapeFactor2",
+    "ShapeFactor3",
+    "ShapeFactor4"
+  ],
+  "intended_use": "Governed training-run output for internal review. Not yet reviewed or approved for public release, profile publication, or production decisioning.",
+  "limitations": [
+    "Generated directly from a governed training run; not reviewed for public release, profile publication, or production decisioning.",
+    "Reflects patterns in the prepared training dataset only; independent validation is required before any downstream use."
+  ],
+  "model_card_boundary_confirmations": {
+    "model_bytes_embedded": false,
+    "notebook_state_embedded": false,
+    "profile_publication_performed": false,
+    "raw_dataset_embedded": false,
+    "release_publication_performed": false
+  },
+  "model_summary": "hist_gradient_boosting model trained for dataset dry-bean to predict Class.",
+  "path_references": {
+    "model_card_input_path": "pipeline/training-runs/dry-bean/train-20260830T143141Z/model-card-input.json",
+    "model_card_path": "pipeline/training-runs/dry-bean/train-20260830T143141Z/model-card.json"
+  },
+  "prediction_target": "Class",
+  "problem_type": "multiclass_classification",
+  "schema_version": "model-card.v1",
+  "training_run_identity": {
+    "dataset_slug": "dry-bean",
+    "output_directory": "pipeline/training-runs/dry-bean/train-20260830T143141Z/",
+    "run_id": "train-20260830T143141Z"
+  }
+}

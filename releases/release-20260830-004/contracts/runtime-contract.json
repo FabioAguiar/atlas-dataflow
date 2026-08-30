@@ -1,0 +1,85 @@
+{
+  "features": [
+    {
+      "name": "Area",
+      "required": true,
+      "type": "numeric"
+    },
+    {
+      "name": "Perimeter",
+      "required": true,
+      "type": "numeric"
+    },
+    {
+      "name": "MajorAxisLength",
+      "required": true,
+      "type": "numeric"
+    },
+    {
+      "name": "MinorAxisLength",
+      "required": true,
+      "type": "numeric"
+    },
+    {
+      "name": "AspectRatio",
+      "required": true,
+      "type": "numeric"
+    },
+    {
+      "name": "Eccentricity",
+      "required": true,
+      "type": "numeric"
+    },
+    {
+      "name": "ConvexArea",
+      "required": true,
+      "type": "numeric"
+    },
+    {
+      "name": "EquivDiameter",
+      "required": true,
+      "type": "numeric"
+    },
+    {
+      "name": "Extent",
+      "required": true,
+      "type": "numeric"
+    },
+    {
+      "name": "Solidity",
+      "required": true,
+      "type": "numeric"
+    },
+    {
+      "name": "Roundness",
+      "required": true,
+      "type": "numeric"
+    },
+    {
+      "name": "Compactness",
+      "required": true,
+      "type": "numeric"
+    },
+    {
+      "name": "ShapeFactor1",
+      "required": true,
+      "type": "numeric"
+    },
+    {
+      "name": "ShapeFactor2",
+      "required": true,
+      "type": "numeric"
+    },
+    {
+      "name": "ShapeFactor3",
+      "required": true,
+      "type": "numeric"
+    },
+    {
+      "name": "ShapeFactor4",
+      "required": true,
+      "type": "numeric"
+    }
+  ],
+  "schema_version": "1.0.0"
+}

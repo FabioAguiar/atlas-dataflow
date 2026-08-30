@@ -81,6 +81,7 @@ import {
   normalizeDatasetDateOnly,
   presentDatasetOperationalTimestamp,
   type DatasetIconName,
+  type DatasetTargetContract,
   type DatasetThemePresetId,
 } from "../../lib/datasetPresentation";
 import {
@@ -526,6 +527,10 @@ type ContractField = {
 type ContractEnvelope = {
   contract: ContractPayload;
   result_contract?: BinaryResultContract | unknown;
+  // Project Spec S0284: reduced release-bound prediction-target contract,
+  // carried on the same authoring-context contract resource -- never a
+  // separate /model-card request.
+  target_contract?: DatasetTargetContract | null;
 };
 
 type ResultContractState =
@@ -601,6 +606,11 @@ type ReadOnlyData = {
   contract: SectionState<ContractPayload>;
   inferenceGuidance: SectionState<unknown>;
   resultContract: ResultContractState;
+  // Project Spec S0284: the reduced release-bound target contract loaded
+  // from the same authoring-context contract resource as resultContract,
+  // fed into the shared Live Preview Target resolver. `null` until the
+  // contract resource is ready (or when it carries no target contract).
+  targetContract: DatasetTargetContract | null;
   metrics: SectionState<MetricsPayload>;
   visualizations: SectionState<unknown>;
   views: SectionState<PredictView[]>;
@@ -1055,6 +1065,7 @@ const emptyReadOnlyData: ReadOnlyData = {
   contract: { status: "idle" },
   inferenceGuidance: { status: "idle" },
   resultContract: { status: "idle" },
+  targetContract: null,
   metrics: { status: "idle" },
   visualizations: { status: "idle" },
   views: { status: "idle" },
@@ -2201,6 +2212,24 @@ function contractFields(contract: ContractPayload | null): ContractField[] {
     ];
   }
   return contract.features;
+}
+
+// Project Spec S0284: reduces the authoring-context contract resource's
+// optional target_contract field to the shared structural DatasetTargetContract
+// (or null). No model-card raw field is ever read here -- the backend has
+// already reduced this to problem_type + target_name.
+function classifyTargetContract(envelope: ContractEnvelope): DatasetTargetContract | null {
+  const value = envelope.target_contract;
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  if (value.status === "available") {
+    return typeof value.problem_type === "string" && typeof value.target_name === "string" ? value : null;
+  }
+  if (value.status === "unavailable") {
+    return value;
+  }
+  return null;
 }
 
 function classifyResultContract(envelope: ContractEnvelope): ResultContractState {
@@ -4813,6 +4842,11 @@ function DatasetDetailLivePreview({
     // never a second, additional request for Live Preview's own Instances
     // authority.
     visualizations,
+    // Project Spec S0284: the reduced release-bound target contract loaded
+    // from the same authoring-context contract resource -- the Target row is
+    // derived by the shared resolver, never from draft metadata,
+    // visualizations or Predict View.
+    readOnlyData.targetContract,
   );
 
   // Project Spec S0275: resolve the draft performance-focus preview projection
@@ -5782,6 +5816,7 @@ export default function DatasetAdminPage() {
         contract: { status: "loading" },
         inferenceGuidance: { status: "loading" },
         resultContract: { status: "loading" },
+        targetContract: null,
         metrics: { status: "loading" },
         visualizations: { status: "loading" },
         views: { status: "loading" },
@@ -5806,6 +5841,7 @@ export default function DatasetAdminPage() {
           contract: { status: "unavailable", message },
           inferenceGuidance: { status: "unavailable", message },
           resultContract: { status: "transport_failure", message },
+          targetContract: null,
           metrics: { status: "unavailable", message },
           visualizations: { status: "unavailable", message },
           views: { status: "unavailable", message },
@@ -5821,12 +5857,18 @@ export default function DatasetAdminPage() {
             status: "transport_failure",
             message: "message" in contractResource ? contractResource.message : "Result contract request did not complete.",
           };
+      // Project Spec S0284: the reduced target contract rides the same
+      // authoring-context contract resource -- no extra request. It stays
+      // null whenever that resource itself is unavailable.
+      const targetContract: DatasetTargetContract | null =
+        contractResource.status === "ready" ? classifyTargetContract(contractResource.data) : null;
       setReadOnlyData({
         dataset: authoringResourceState<AuthoringDatasetProjection>(envelope.dataset),
         context: authoringResourceState<ContextPayload>(envelope.context),
         contract: mapSection(contractResource, (data) => data.contract),
         inferenceGuidance: authoringResourceState<unknown>(envelope.inference_guidance),
         resultContract,
+        targetContract,
         metrics: authoringResourceState<MetricsPayload>(envelope.metrics),
         visualizations: authoringResourceState<unknown>(envelope.visualizations),
         views: authoringResourceState<PredictView[]>(envelope.views),

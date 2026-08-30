@@ -240,7 +240,8 @@
         },
         {
           "group_id": "group-4",
-          "label": "Group 4"
+          "label": "Shape Factors",
+          "description": "Source-provided numerical shape-factor variables retained as predictive morphology features."
         }
       ],
       "contract_precedence": {

@@ -38,7 +38,7 @@
           "group": "group-2"
         },
         {
-          "field_name": "PhoneService",
+          "field_name": "InternetService",
           "display_order_hint": 7,
           "group": "group-3"
         },
@@ -48,7 +48,7 @@
           "group": "group-3"
         },
         {
-          "field_name": "InternetService",
+          "field_name": "PhoneService",
           "display_order_hint": 9,
           "group": "group-3"
         },
@@ -83,7 +83,7 @@
           "group": "group-4"
         },
         {
-          "field_name": "PaperlessBilling",
+          "field_name": "PaymentMethod",
           "display_order_hint": 16,
           "group": "group-5"
         },
@@ -93,12 +93,12 @@
           "group": "group-5"
         },
         {
-          "field_name": "PaymentMethod",
+          "field_name": "TotalCharges",
           "display_order_hint": 18,
           "group": "group-5"
         },
         {
-          "field_name": "TotalCharges",
+          "field_name": "PaperlessBilling",
           "display_order_hint": 19,
           "group": "group-5"
         }

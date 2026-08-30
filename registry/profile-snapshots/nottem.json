@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0.0",
   "dataset_slug": "nottem",
-  "published_at": "2026-08-29T11:11:31Z",
+  "published_at": "2026-08-30T18:13:18Z",
   "active_release_at_publish_time": "release-20260828t211723z",
   "profile": {
     "display": {
@@ -10,6 +10,7 @@
       "problem_summary_title": "Forecasting Nottingham monthly air temperature",
       "problem_summary_body": "This dataset contains 240 monthly average air-temperature observations recorded at Nottingham Castle from 1920 through 1939. Atlas treats the series as a univariate forecasting problem: using the governed monthly history, the model forecasts the next 12 monthly temperatures in degrees Fahrenheit. Evaluation preserves temporal order through expanding-window backtesting and a final 1939 holdout.",
       "source_name": "R datasets package",
+      "source_url": "https://stat.ethz.ch/R-manual/R-patched/library/datasets/html/nottem.html",
       "release_date_label": "2026-08-27",
       "date_format": "dd/mm/yyyy",
       "canonical_name_fallback": true
@@ -26,21 +27,21 @@
         {
           "score_id": "mae",
           "display_label": "MAE",
-          "value": "1.5266",
+          "value": "1.52",
           "value_source": "manual",
           "order": 0
         },
         {
           "score_id": "rmse",
           "display_label": "RMSE",
-          "value": "1.8600",
+          "value": "1.86",
           "value_source": "manual",
           "order": 1
         },
         {
           "score_id": "seasonal_mase",
           "display_label": "Seasonal MASE",
-          "value": "0.5555",
+          "value": "0.55",
           "value_source": "manual",
           "order": 2
         }

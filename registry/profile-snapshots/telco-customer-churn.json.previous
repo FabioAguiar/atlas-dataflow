@@ -1,0 +1,67 @@
+{
+  "schema_version": "1.0.0",
+  "dataset_slug": "telco-customer-churn",
+  "published_at": "2026-08-30T13:37:44Z",
+  "active_release_at_publish_time": "release-20260830-001",
+  "profile": {
+    "display": {
+      "title": "Telco Customer Churn",
+      "subtitle": "Customer-account data for estimating churn probability from service, contract, billing, tenure, and charges.",
+      "problem_summary_title": "Estimating churn from customer account and service data",
+      "problem_summary_body": "Each row represents one telecommunications customer account. The active Atlas release estimates whether Churn is Yes from 19 customer, service, contract, billing, payment, tenure, and charge features. Its primary output is the probability of the positive class, with the release-governed decision threshold applied separately to produce a predicted outcome. Results describe predictive patterns in this dataset and should not be interpreted as causal effects or validated retention decisions.",
+      "source_name": "Kaggle",
+      "source_url": "https://www.kaggle.com/datasets/blastchar/telco-customer-churn",
+      "release_date_label": "2026-08-29",
+      "date_format": "dd/mm/yyyy",
+      "canonical_name_fallback": true
+    },
+    "home_card": {
+      "background_image_ref": "/media/home-cards/8062b566cac04bbf98e02d345b80c4d8.jpg",
+      "short_description": "Estimate customer churn from service, contract, billing, payment, tenure, and charge data with a governed binary-classification model.",
+      "primary_metric_key": null
+    },
+    "performance_focus": {
+      "focus_id": "overall_discrimination",
+      "highlighted_score_id": "roc_auc",
+      "visible_scores": [
+        {
+          "score_id": "roc_auc",
+          "display_label": "ROC-AUC",
+          "value": "0.85",
+          "value_source": "manual",
+          "order": 0
+        },
+        {
+          "score_id": "pr_auc",
+          "display_label": "PR-AUC",
+          "value": "0.67",
+          "value_source": "manual",
+          "order": 1
+        }
+      ]
+    },
+    "theme": {
+      "preset": "deep-sea"
+    },
+    "inference_presentation": {
+      "bound_predict_view_id": "churn-risk-overview"
+    },
+    "result_card": {
+      "schema_version": "binary-result-presentation.v1",
+      "positive_class_probability_label": "Positive class probability",
+      "predicted_outcome_label": "Predicted churn outcome",
+      "positive_outcome_copy": "Churn is predicted for this customer account.",
+      "negative_outcome_copy": "Churn is not predicted for this customer account.",
+      "model_section_label": "Model",
+      "interpretation": {
+        "preset": "risk",
+        "labels": {
+          "high": "High churn risk",
+          "medium": "Medium churn risk",
+          "low": "Low churn risk"
+        }
+      }
+    }
+  },
+  "source_draft_schema_version": "1.0.0"
+}

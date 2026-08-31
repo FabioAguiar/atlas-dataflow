@@ -1,178 +1,394 @@
-# atlas-dataflow
+# Atlas DataFlow
 
-## M2 local container validation
+**Um mostruário interativo de estudos de dados e análise preditiva.**
 
-The M2 local baseline runs only the public API and public web surfaces.
+O Atlas DataFlow nasceu da necessidade de estudar diferentes datasets e modelos de forma organizada — e de transformar esse aprendizado em algo mais acessível do que uma coleção de notebooks isolados.
 
-- API: FastAPI/Uvicorn from `api/`, exposed on port `8000`.
-- Web: Vite/React/TypeScript from `web/`, exposed on port `5173`.
-- Local orchestration: `docker-compose.yml` defines only `api` and `web`.
+Cada dataset publicado ganha uma apresentação própria, com contexto, métricas, visualizações, documentação e, quando a capability permite, uma experiência interativa de predição. Por trás dessa apresentação existe um fluxo governado de contratos, evidências, releases e validações que mantém o estudo rastreável.
 
-Safe local configuration is supplied through Compose environment values:
+O Atlas tem aparência e ergonomia de produto, mas seu propósito é outro: **ele é um projeto pessoal de estudo e portfólio de conhecimento em dados e programação**. Não há intenção de transformá-lo em uma plataforma comercial, marketplace de modelos ou serviço de MLOps.
 
-- `API_HOST=0.0.0.0`
-- `API_PORT=8000`
-- `VITE_API_BASE_URL=http://localhost:8000`
+![Catálogo público do Atlas DataFlow](https://raw.githubusercontent.com/FabioAguiar/ATLAS_ASSETS_REPOSITORY/main/atlas-dataflow/readme/01-public-home-dataset-catalog.png)
 
-Run the minimum local validation with:
+> O projeto está consolidando sua primeira versão pública. As quatro capabilities atualmente implementadas continuarão recebendo novos estudos antes da expansão para outras famílias de problemas.
 
-```sh
-scripts/validate-m2.sh
+## O que o Atlas apresenta
+
+Para o visitante, o Atlas funciona como uma estante de estudos publicados:
+
+- catálogo de datasets disponíveis;
+- contexto do problema e origem dos dados;
+- target, features, modelo e release ativa;
+- métricas apresentadas de acordo com o tipo de problema;
+- visualizações analíticas interativas;
+- documentação técnica em Markdown;
+- inferência orientada por contrato, quando aplicável à capability;
+- estados de carregamento, indisponibilidade e validação sem exposição de detalhes internos.
+
+Nem toda análise precisa ter um formulário de predição. A disponibilidade da experiência interativa é definida pela capability e pela release. O estudo de forecasting univariado, por exemplo, apresenta avaliação final, forecast versus observado e diagnósticos temporais sem expor uma inferência pública de propósito duvidoso.
+
+## O que o Atlas não é
+
+O Atlas não se propõe a ser:
+
+- uma plataforma para upload público de datasets;
+- um ambiente público de treinamento ou execução de notebooks;
+- um marketplace de modelos;
+- uma solução de AutoML;
+- uma plataforma MLOps completa;
+- um sistema de decisões automatizadas em produção;
+- uma evidência de causalidade ou validade operacional dos modelos apresentados.
+
+As previsões e métricas pertencem ao escopo educacional e ao protocolo de avaliação documentado em cada estudo.
+
+## Estudos atualmente apresentados
+
+Os projetos científicos abaixo são **repositórios independentes**. Eles fornecem a referência metodológica usada durante a autoria, mas não são pacotes, submódulos nem dependências de runtime do Atlas.
+
+| Estudo científico | Capability no Atlas | Target | Fonte dos dados |
+|---|---|---|---|
+| [Telco Customer Churn](https://github.com/FabioAguiar/dataset-study-telco-customer-churn) | Classification / Binary | `Churn` | [Kaggle](https://www.kaggle.com/datasets/blastchar/telco-customer-churn) |
+| [Dry Bean](https://github.com/FabioAguiar/dataset-study-dry-bean) | Classification / Multiclass | `Class` | [UCI Machine Learning Repository](https://archive.ics.uci.edu/dataset/602/dry+bean+dataset) |
+| [Concrete Compressive Strength](https://github.com/FabioAguiar/dataset-study-concrete-compressives-strength) | Regression / Continuous | `Concrete compressive strength` | [UCI Machine Learning Repository](https://archive.ics.uci.edu/dataset/165/concrete+compressive+strength) |
+| [Nottingham Monthly Temperatures](https://github.com/FabioAguiar/dataset-study-nottingham-monthly-temperatures) | Forecasting / Univariate | `temperature` | [R `datasets::nottem`](https://stat.ethz.ch/R-manual/R-patched/library/datasets/html/nottem.html) |
+
+### Cobertura de problemas
+
+| Família | Variante | Estado | Estudo atual |
+|---|---|---|---|
+| Classification | Binary | Disponível | Telco Customer Churn |
+| Classification | Multiclass | Disponível | Dry Bean |
+| Classification | Multilabel | Planejado | — |
+| Classification | Ordinal | Planejado | — |
+| Regression | Continuous | Disponível | Concrete Compressive Strength |
+| Regression | Count | Planejado | — |
+| Regression | Multi-output | Planejado | — |
+| Forecasting | Univariate | Disponível | Nottingham Monthly Temperatures |
+| Forecasting | Multivariate | Planejado | — |
+| Forecasting | Hierarchical | Planejado | — |
+| Time-to-event | Survival | Planejado | — |
+| Detection | Anomaly | Planejado | — |
+| Ranking | Learning to rank | Planejado | — |
+
+“Planejado” representa direção de evolução, não promessa de prazo. A prioridade atual é aprofundar o catálogo nas quatro variantes já implementadas.
+
+## Experiência pública
+
+A Home apresenta o catálogo de datasets publicados. Cada card é derivado do perfil público do dataset e pode ter descrição, ícone ou imagem, tipo de problema, modelo e tema próprios.
+
+<details>
+<summary>Home e navegação responsiva</summary>
+
+![Catálogo público com os quatro estudos](https://raw.githubusercontent.com/FabioAguiar/ATLAS_ASSETS_REPOSITORY/main/atlas-dataflow/readme/01-public-home-dataset-catalog.png)
+
+![Navegação pública em viewport móvel](https://raw.githubusercontent.com/FabioAguiar/ATLAS_ASSETS_REPOSITORY/main/atlas-dataflow/readme/02-public-home-mobile-navigation.png)
+
+</details>
+
+### Dataset Detail orientado pela capability
+
+O Dataset Detail compartilha uma estrutura comum, mas adapta métricas, visualizações, target, inputs e resultados ao problema publicado.
+
+<details>
+<summary>Binary classification — Telco Customer Churn</summary>
+
+![Overview de classificação binária](https://raw.githubusercontent.com/FabioAguiar/ATLAS_ASSETS_REPOSITORY/main/atlas-dataflow/readme/03-dataset-detail-telco-overview.png)
+
+![Inferência e resultado de classificação binária](https://raw.githubusercontent.com/FabioAguiar/ATLAS_ASSETS_REPOSITORY/main/atlas-dataflow/readme/04-dataset-detail-telco-inference-result.png)
+
+</details>
+
+<details>
+<summary>Multiclass classification — Dry Bean</summary>
+
+![Overview de classificação multiclasse](https://raw.githubusercontent.com/FabioAguiar/ATLAS_ASSETS_REPOSITORY/main/atlas-dataflow/readme/05-dataset-detail-dry-bean-overview.png)
+
+![Inferência e distribuição de probabilidades multiclasse](https://raw.githubusercontent.com/FabioAguiar/ATLAS_ASSETS_REPOSITORY/main/atlas-dataflow/readme/06-dataset-detail-dry-bean-inference-result.png)
+
+</details>
+
+<details>
+<summary>Continuous regression — Concrete Compressive Strength</summary>
+
+![Overview de regressão contínua](https://raw.githubusercontent.com/FabioAguiar/ATLAS_ASSETS_REPOSITORY/main/atlas-dataflow/readme/07-dataset-detail-concrete-overview.png)
+
+![Inferência e resultado de regressão contínua](https://raw.githubusercontent.com/FabioAguiar/ATLAS_ASSETS_REPOSITORY/main/atlas-dataflow/readme/08-dataset-detail-concrete-inference-result.png)
+
+</details>
+
+<details>
+<summary>Univariate forecasting — Nottingham Monthly Temperatures</summary>
+
+![Overview de forecasting com forecast versus observado e diagnósticos](https://raw.githubusercontent.com/FabioAguiar/ATLAS_ASSETS_REPOSITORY/main/atlas-dataflow/readme/09-dataset-detail-nottem-overview.png)
+
+</details>
+
+<details>
+<summary>Documentação e interação com gráficos</summary>
+
+![Documentação técnica do dataset](https://raw.githubusercontent.com/FabioAguiar/ATLAS_ASSETS_REPOSITORY/main/atlas-dataflow/readme/10-dataset-detail-documentation.png)
+
+![Tooltip acessível em visualização analítica](https://raw.githubusercontent.com/FabioAguiar/ATLAS_ASSETS_REPOSITORY/main/atlas-dataflow/readme/11-dataset-detail-chart-tooltip.png)
+
+</details>
+
+## Área administrativa privada
+
+O Atlas também possui uma superfície administrativa para o operador que integra e publica os estudos. Essa área existe para apoiar curadoria e publicação; ela não transforma o Atlas em um produto multiusuário.
+
+No modo privado, o operador pode:
+
+- descobrir e pesquisar runs validadas;
+- promover uma run para um novo Dataset Detail ou atualizar uma apresentação existente;
+- editar conteúdo público sem alterar os contratos técnicos da release;
+- configurar card da Home, ícone ou imagem, foco de performance e tema;
+- organizar o formulário de inferência quando a capability admite predição pública;
+- personalizar a apresentação do resultado;
+- escrever e visualizar documentação em Markdown;
+- comparar o draft em Live Preview com os componentes públicos reais;
+- publicar snapshots determinísticos;
+- aprovar a revisão do Dataset Detail;
+- controlar a visibilidade do snapshot já publicado.
+
+O admin não é exposto no build público. O modo privado habilita rotas administrativas e deve permanecer limitado a loopback, rede privada ou túnel SSH; ele não possui login público e não deve ser publicado diretamente na internet.
+
+<details>
+<summary>Dashboard, runs e promoção</summary>
+
+![Dashboard administrativo com runs e Dataset Details](https://raw.githubusercontent.com/FabioAguiar/ATLAS_ASSETS_REPOSITORY/main/atlas-dataflow/readme/12-admin-dashboard.png)
+
+![Fluxo de promoção de uma run](https://raw.githubusercontent.com/FabioAguiar/ATLAS_ASSETS_REPOSITORY/main/atlas-dataflow/readme/13-admin-run-promotion.png)
+
+</details>
+
+<details>
+<summary>Dataset Admin — Public Content</summary>
+
+![Edição do conteúdo público](https://raw.githubusercontent.com/FabioAguiar/ATLAS_ASSETS_REPOSITORY/main/atlas-dataflow/readme/14-admin-dataset-public-content.png)
+
+</details>
+
+<details>
+<summary>Dataset Admin — Metadata & Card</summary>
+
+![Metadados, performance focus e preview do card](https://raw.githubusercontent.com/FabioAguiar/ATLAS_ASSETS_REPOSITORY/main/atlas-dataflow/readme/15-admin-dataset-metadata-card.png)
+
+</details>
+
+<details>
+<summary>Dataset Admin — Theme Preset</summary>
+
+![Seleção de tema do Dataset Detail](https://raw.githubusercontent.com/FabioAguiar/ATLAS_ASSETS_REPOSITORY/main/atlas-dataflow/readme/16-admin-dataset-theme-preset.png)
+
+</details>
+
+<details>
+<summary>Dataset Admin — Inference Form</summary>
+
+![Organização do formulário público](https://raw.githubusercontent.com/FabioAguiar/ATLAS_ASSETS_REPOSITORY/main/atlas-dataflow/readme/17-admin-dataset-inference-form.png)
+
+![Edição de apresentação de um campo](https://raw.githubusercontent.com/FabioAguiar/ATLAS_ASSETS_REPOSITORY/main/atlas-dataflow/readme/18-admin-dataset-field-editor.png)
+
+</details>
+
+<details>
+<summary>Dataset Admin — Result Card</summary>
+
+![Configuração e preview do cartão de resultado](https://raw.githubusercontent.com/FabioAguiar/ATLAS_ASSETS_REPOSITORY/main/atlas-dataflow/readme/19-admin-dataset-result-card.png)
+
+</details>
+
+<details>
+<summary>Dataset Admin — Documentation</summary>
+
+![Editor de documentação Markdown](https://raw.githubusercontent.com/FabioAguiar/ATLAS_ASSETS_REPOSITORY/main/atlas-dataflow/readme/20-admin-dataset-documentation-edit.png)
+
+![Preview da documentação](https://raw.githubusercontent.com/FabioAguiar/ATLAS_ASSETS_REPOSITORY/main/atlas-dataflow/readme/21-admin-dataset-documentation-preview.png)
+
+</details>
+
+<details>
+<summary>Dataset Admin — Publishing</summary>
+
+![Visibilidade, aprovação e console operacional](https://raw.githubusercontent.com/FabioAguiar/ATLAS_ASSETS_REPOSITORY/main/atlas-dataflow/readme/22-admin-dataset-publishing.png)
+
+</details>
+
+<details>
+<summary>Dataset Admin — Live Preview</summary>
+
+![Live Preview do Dataset Detail](https://raw.githubusercontent.com/FabioAguiar/ATLAS_ASSETS_REPOSITORY/main/atlas-dataflow/readme/23-admin-dataset-live-preview-detail.png)
+
+![Live Preview do card da Home](https://raw.githubusercontent.com/FabioAguiar/ATLAS_ASSETS_REPOSITORY/main/atlas-dataflow/readme/24-admin-dataset-live-preview-home-card.png)
+
+</details>
+
+<details>
+<summary>Settings e Help</summary>
+
+![Configuração do nome exibido no admin](https://raw.githubusercontent.com/FabioAguiar/ATLAS_ASSETS_REPOSITORY/main/atlas-dataflow/readme/25-admin-settings.png)
+
+![Ajuda administrativa](https://raw.githubusercontent.com/FabioAguiar/ATLAS_ASSETS_REPOSITORY/main/atlas-dataflow/readme/26-admin-help.png)
+
+</details>
+
+O roteiro completo de captura, com viewport, estado esperado e cuidados de sanitização, está em [`docs/readme-screenshot-plan.md`](docs/readme-screenshot-plan.md).
+
+## Arquitetura em poucas palavras
+
+O Atlas separa estudo científico, autoria, publicação e consumo público.
+
+```mermaid
+flowchart TB
+    study["Estudo científico externo"] --> notebook["Notebook de integração Atlas-native"]
+    notebook --> pipeline["Pipeline governado"]
+    pipeline --> publisher["Candidato, validação e promoção"]
+    publisher --> release["Release imutável e registry"]
+    release --> runtime["API pública e runtime de modelo"]
+    runtime --> web["Mostruário público em React"]
+    admin["Área administrativa privada"] --> publisher
+    admin --> release
 ```
 
-The validation builds and starts the local containers, confirms that
-`GET /health` returns the API health response, and confirms that the web root
-page loads. It does not deploy anything and does not require secrets.
+O estudo externo pode ser consultado durante a autoria para traduzir decisões científicas já revisadas. Depois disso, o Atlas opera exclusivamente com seus próprios notebooks, contratos, evidências, modelos, bundles e releases. Nenhum runtime deve ler caminhos ou artefatos do repositório científico externo.
 
-## Data Workbench boundary
+### Fontes de verdade
 
-Atlas dataset integration authoring converts reviewed, dataset-specific
-analysis into governed Atlas inputs without making the analysis environment a
-runtime dependency. Scientific analysis may occur in a separate external
-project. Lumen inspects that project and the Atlas repository during authoring
-only, then translates reviewed conclusions into dataset-specific Atlas intent.
-Atlas does not mount or resolve the external project after authoring.
+| Responsabilidade | Fonte principal |
+|---|---|
+| Estrutura e validação de entradas | Contratos versionados |
+| Aplicabilidade por tipo de problema | Capability profile |
+| Modelo, métricas e visualizações executáveis | Release imutável |
+| Release ativa por dataset | Registry |
+| Texto, tema, card, documentação e foco de performance | Perfil público e snapshot publicado |
+| Validação e promoção | Pipeline e publisher |
+| Consumo do visitante | API pública e frontend |
 
-- **Dataset integration notebooks** (`notebooks/`) are the human-facing Atlas
-  orchestration surface. The canonical Telco notebook is
-  `notebooks/datasets/telco-customer-churn/dataset_integration.ipynb`. This
-  dataset-specific notebook verifies the exact Atlas-owned input, records
-  semantic intent, invokes generic Atlas materializers, and orchestrates the
-  full S0179 extended boundary: capability-aware projection, external
-  fitted-model governed materialization, inference-bundle materialization,
-  release-candidate assembly, publisher structural validation, conditional
-  manifest generation, and one validated-run terminal outcome. It stops
-  unconditionally before publisher promotion, registry activation, or
-  runtime prediction. Input identity, drift, and authored-assumption checks
-  are distinct from re-performing scientific exploration, model training, or
-  model selection already established by authoritative external analysis.
-- **Durable authoring state** is a governed Atlas-native artifact suite rather
-  than notebook memory or an external filesystem layout. Notebook state alone
-  is never sufficient: generic core consumes validated, integrity-bound Atlas
-  artifacts. Release assembly, publisher validation, registry activation, and
-  runtime remain separate downstream governed stages.
-- **Current support boundary:** binary predictive classification is the only
-  currently evidenced operational capability. Capability-aware authoring and
-  publication are architectural direction implemented progressively by later
-  work; other analytical or prediction families must not be presented as
-  current functionality.
-- **Reusable authoring helpers** are logic that more than one notebook or
-  authoring run needs. They belong in a dedicated workbench-owned location,
-  separate from notebooks and separate from runtime `api/`/`web/` code — never
-  copied ad hoc between notebook cells. No such helpers exist yet; introducing
-  them is out of scope for this bootstrap and requires its own implementation
-  request.
-- **Dataset-local configuration and modeling-intent files** are the explicit,
-  reviewable files a dataset author writes to record scope, source, and
-  modeling intent for one dataset, distinct from a notebook's exploratory
-  cells and distinct from the generated pipeline/contract/release artifacts
-  those decisions eventually produce.
-- **Local authoring runs vs. publisher runs:** a local authoring/workbench run
-  is exploratory and disposable — it supports a human deciding what a dataset
-  needs. A publisher run (`publisher/validate.py`, `publisher/promote.py`) is
-  the official validation/promotion path and only ever consumes already
-  externalized, committed inputs (schemas under `contracts/`, pipeline
-  artifacts under `pipeline/`), never a notebook's in-memory or local-only
-  state.
-- **Promotion boundary:** exploratory/authoring artifacts stay local (ignored
-  by Git, see below) until a dataset author turns a decision into an explicit,
-  committed file — a discovery-evidence document, a source-contract input, a
-  release-candidate input, or a training-interface input matching the
-  existing `pipeline/*.schema.json` contracts. Only committed files are
-  eligible for `pipeline/`, `contracts/`, `releases/`, or `publisher/`
-  processing; nothing generated during a local run is promoted automatically.
-- **Ignored by default:** local workbench generated outputs, caches,
-  exploratory run artifacts, temporary/intermediate dataset dumps, model
-  binaries, and notebook checkpoints — see the Data Workbench section of
-  `.gitignore`. Promotion of any such output requires a later, explicit
-  implementation request; this bootstrap does not itself promote any file.
+Uma visão técnica mais detalhada e atual está em [`docs/current-architecture-overview.md`](docs/current-architecture-overview.md). A documentação normativa e histórica permanece em [`docs/architecture.md`](docs/architecture.md), [`docs/vision.md`](docs/vision.md) e [`docs/milestones.md`](docs/milestones.md).
 
-This documentation does not create or refactor a notebook, define schemas, or
-change training, release, publisher, registry, or runtime behavior. See
-[`docs/architecture.md`](docs/architecture.md#dataset-integration-authoring-architecture)
-for the normative authoring, capability, integrity, and compatibility rules.
+## Organização do repositório
 
-### Notebook runtime import contract
-
-Atlas notebook work uses three separate boundaries:
-
-- `atlas` is the main Atlas runtime environment. Do not install exploratory
-  notebook dependencies into it.
-- `atlas-notebooks` is the isolated Conda environment for Jupyter and
-  Data Workbench authoring. Select this kernel for notebook work; using `base`
-  or `atlas` is a setup error for this workflow.
-- `atlas-dataflow` is the source tree. Internal imports such as
-  `pipeline.discovery_evidence` resolve only after Python can see this
-  repository root.
-
-Jupyter for notebook authoring is expected to remain private on the VPS,
-bound to `127.0.0.1:8888`, and reached from an operator machine through an
-SSH tunnel such as:
-
-```sh
-ssh -L 18888:127.0.0.1:8888 <vps-host>
+```text
+atlas-dataflow/
+├── api/                 # API pública e operações privadas
+├── contracts/           # JSON Schemas e contratos por dataset
+├── docs/                # visão, arquitetura, milestones e operação
+├── external-inference/  # runtime isolado para perfis incompatíveis com a API principal
+├── notebooks/           # integração Atlas-native por dataset
+├── pipeline/            # autoria, preparação, treino, evidências e candidatos
+├── publisher/           # validação, promoção e evidências de publicação
+├── registry/            # datasets, profiles, snapshots, views e estado público
+├── releases/            # pacotes imutáveis promovidos
+├── runtime/             # adaptação e execução de inferência
+├── tests/               # regressões de contratos, pipeline, API, publisher e registry
+└── web/                 # React, TypeScript, Vite e Recharts
 ```
 
-Then open the local tunnel endpoint at `http://127.0.0.1:18888`. This access
-pattern does not change Jupyter configuration and does not authorize exposing
-Jupyter on `0.0.0.0` or any public interface.
+A organização segue **responsabilidade arquitetural**, não extensão de arquivo. Por isso, um módulo Python e o JSON Schema que ele governa podem legitimamente existir na mesma área. Instâncias geradas, evidências, runs e releases devem permanecer em subdiretórios próprios e com lifecycle explícito; criar uma pasta global para todos os arquivos `.json` aumentaria o acoplamento e reduziria a clareza de ownership.
 
-Install the repository in editable mode from the dedicated notebook
-environment before starting notebook work:
+## Stack principal
 
-```sh
-conda activate atlas-notebooks
-cd ~/Projetos/N8N/atlas-dataflow
-pip install -e .
+| Área | Tecnologias |
+|---|---|
+| Backend e runtime | Python, FastAPI, Uvicorn, JSON Schema |
+| Pipeline e modelos | Python, pandas, scikit-learn, statsmodels, joblib |
+| Frontend | React, TypeScript, Vite, Recharts |
+| Contratos e estado | JSON, JSON Schema, artefatos content-addressed com SHA-256 |
+| Operação | Docker, Docker Compose, Nginx e proxy HTTPS externo |
+| Qualidade | pytest, Vitest e validações de consistência entre artefatos |
+
+## Executando localmente
+
+O modo local inclui a superfície pública e o admin privado. O frontend fica ligado apenas ao loopback por padrão.
+
+### Requisitos
+
+- Git;
+- Docker Engine;
+- Docker Compose v2.
+
+### Inicialização
+
+```bash
+git clone https://github.com/FabioAguiar/atlas-dataflow.git
+cd atlas-dataflow
+docker compose up --build
 ```
 
-The editable install intentionally exposes only the repository's `pipeline`
-Python boundary for notebook helpers. It does not package API, web,
-notebooks, data, release, publisher, registry, support-root, generated
-evidence, runtime, cache, secret, or credential paths.
+Acesse:
 
-After editable installation, notebooks can import Atlas helpers directly:
-
-```python
-from pipeline.discovery_evidence import (
-    load_dataset_csv,
-    resolve_repository_path,
-    summarize_structure,
-)
+```text
+http://127.0.0.1:15174
 ```
 
-Do not use notebook `sys.path` cells, global Python startup files, hidden
-`.pth` files, Jupyter server state, or Conda site customization as the primary
-import mechanism. If the import fails after editable installation, verify that
-the notebook kernel is `atlas-notebooks` and not `base` or the main `atlas`
-runtime.
+Em uma VPS, mantenha o serviço privado no loopback e use túnel SSH para a operação administrativa. O túnel é apenas um caminho de acesso privado; ele não substitui autenticação nem autoriza exposição pública do admin.
 
-## Runtime mode operator note
+Para encerrar:
 
-Atlas currently has two Compose entry points with different exposure
-expectations:
+```bash
+docker compose down
+```
 
-- `docker-compose.yml` is the private/full-access stack for local operator use.
-  It enables backend admin APIs with `ATLAS_ADMIN_ENABLED=true` by default,
-  builds the web UI with `VITE_ENABLE_ADMIN=true` by default, and binds the web
-  service to `127.0.0.1:${ATLAS_PREVIEW_PORT:-15174}`. Use this mode for
-  operator configuration and publication work through loopback or an SSH tunnel.
-- `docker-compose.prod.yml` is the public/prod runtime stack. It disables
-  backend admin APIs with `ATLAS_ADMIN_ENABLED=false` by default, builds the web
-  UI with `VITE_ENABLE_ADMIN=false` by default, and exposes only the public
-  Atlas surface. Public/prod must deny admin UI routes `/admin` and `/admin/*`
-  and admin API routes `/api/admin` and `/api/admin/*`.
+## Validação
 
-When the private stack runs on a VPS or another host, reach it through a private
-network path such as SSH tunneling to the loopback-bound preview port. That
-tunnel is only an operational access path to the private runtime; it is not
-application authentication, an admin feature for public exposure, or a
-replacement for the runtime boundary. Do not expose the private stack publicly;
-public/prod admin denial is enforced by the runtime configuration that disables
-admin routes and the admin UI outside the private stack.
+Com as dependências de desenvolvimento instaladas:
 
-The first-version model does not introduce login, sessions, OAuth, admin access
-available to public users, or a browser-entered operator token as the admin UX.
-M49 readiness and evidence validation should validate this runtime mode
-separation after S0001 through S0005 are complete; M49 is not expected to add
-new runtime behavior.
+```bash
+python -m pytest -q
+
+npm --prefix web ci
+npm --prefix web test
+npm --prefix web run build
+```
+
+As validações cobrem contratos, capability profiles, treinamento, bundles, runtime, API, publisher, registry, superfícies públicas e fluxos administrativos.
+
+## Publicação de um estudo
+
+Em alto nível, um estudo chega ao mostruário por este caminho:
+
+1. o projeto científico registra exploração, preparação, comparação de modelos e avaliação;
+2. um notebook específico do Atlas verifica o input e traduz as decisões revisadas para artefatos Atlas-native;
+3. o pipeline materializa contratos, evidências, treinamento, bundle, métricas e visualizações;
+4. um release candidate passa pelas validações estruturais e de consistência;
+5. o publisher promove um pacote imutável;
+6. o registry associa o dataset à release ativa;
+7. o operador prepara o perfil, revisa o Live Preview, publica um snapshot e define a visibilidade;
+8. a API e o frontend resolvem exclusivamente a publicação ativa.
+
+O caminho continua deliberadamente governado e observável. Automatizar todas as etapas em uma única ação não é um objetivo mais importante do que preservar rastreabilidade e limites claros.
+
+## Próximos passos
+
+Antes de ampliar a taxonomia de problemas, a prioridade é:
+
+- publicar novos estudos de binary classification, multiclass classification, continuous regression e univariate forecasting;
+- consolidar a primeira versão pública e suas evidências de readiness;
+- manter documentação, screenshots e links alinhados ao comportamento real;
+- evoluir capabilities sem introduzir condições específicas por dataset no núcleo genérico;
+- preservar a independência entre projetos científicos e runtime do Atlas.
+
+Depois dessa consolidação, o projeto pode avançar gradualmente para multilabel e ordinal classification, count e multi-output regression, multivariate e hierarchical forecasting, survival analysis, anomaly detection e learning to rank.
+
+## Documentação
+
+- [`docs/current-architecture-overview.md`](docs/current-architecture-overview.md) — mapa técnico atual e limites entre componentes;
+- [`docs/architecture.md`](docs/architecture.md) — arquitetura normativa e decisões acumuladas;
+- [`docs/vision.md`](docs/vision.md) — visão e fronteiras do projeto;
+- [`docs/milestones.md`](docs/milestones.md) — evolução por milestones;
+- [`docs/operations/dataset-onboarding-path.md`](docs/operations/dataset-onboarding-path.md) — caminho operacional de onboarding;
+- [`docs/operations/release-flow.md`](docs/operations/release-flow.md) — checklist de validação de releases;
+- [`docs/readme-screenshot-plan.md`](docs/readme-screenshot-plan.md) — inventário dos screenshots deste README.
+
+## Limites de interpretação
+
+O Atlas organiza e apresenta estudos preditivos. Ele não converte automaticamente um bom resultado experimental em validade de produção.
+
+Cada publicação deve ser interpretada dentro de seus próprios dados, protocolo de split ou backtesting, métricas, limitações e condições de inferência. Correlação, feature importance e desempenho preditivo não demonstram causalidade. Uso operacional exigiria validação externa, monitoramento, análise de custos de erro, avaliação de fairness quando aplicável e governança própria do domínio.
+
+## Autor e licença
+
+Desenvolvido por [Fábio Aguiar](https://fabioaguiar.dev/).
+
+Distribuído sob a [MIT License](LICENSE).
+

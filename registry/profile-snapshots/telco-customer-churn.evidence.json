@@ -2,8 +2,8 @@
   "schema_version": "dataset-public-profile-snapshot-evidence.v1",
   "evidence_kind": "profile_publication_evidence",
   "dataset_slug": "telco-customer-churn",
-  "snapshot_identifier": "telco-customer-churn@2026-08-30T15:37:46Z",
-  "published_at": "2026-08-30T15:37:46Z",
+  "snapshot_identifier": "telco-customer-churn@2026-08-31T12:08:20Z",
+  "published_at": "2026-08-31T12:08:20Z",
   "active_release_at_publish_time": "release-20260830-001",
   "draft_source_reference": {
     "path": "registry/profile-drafts/telco-customer-churn.json",
@@ -12,13 +12,13 @@
   "candidate_validation": {
     "validation_outcome": "accepted",
     "errors": [],
-    "validated_at": "2026-08-30T15:37:46Z"
+    "validated_at": "2026-08-31T12:08:20Z"
   },
   "visibility_at_publish_time": {
     "value": "public",
     "source_field": "registry/datasets.json:public_metadata.visibility",
     "read_only_snapshot": true,
-    "captured_at": "2026-08-30T15:37:46Z"
+    "captured_at": "2026-08-31T12:08:20Z"
   },
   "evidence_safety": {
     "reduced_evidence_only": true,

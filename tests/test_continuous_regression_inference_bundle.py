@@ -456,6 +456,9 @@ def test_hist_gradient_boosting_generates_valid_native_bundle(tmp_path: Path) ->
         "display_name": "HistGradientBoosting",
     }
     assert bundle["runtime_execution"]["model_family"] == "hist_gradient_boosting"
+    # Project Spec S0285: native continuous-regression generation is
+    # explicitly in-process.
+    assert bundle["runtime_execution"]["execution_strategy"] == "in_process"
     assert bundle["output_schema"]["prediction_type"] == "number"
     assert bundle["model_provenance_origin"] == "atlas_internal_training"
     assert "external_model_evidence" not in bundle

@@ -273,7 +273,6 @@ atlas-dataflow/
 ├── api/                 # API pública e operações privadas
 ├── contracts/           # JSON Schemas e contratos por dataset
 ├── docs/                # visão, arquitetura, milestones e operação
-├── external-inference/  # runtime isolado para perfis incompatíveis com a API principal
 ├── notebooks/           # integração Atlas-native por dataset
 ├── pipeline/            # autoria, preparação, treino, evidências e candidatos
 ├── publisher/           # validação, promoção e evidências de publicação

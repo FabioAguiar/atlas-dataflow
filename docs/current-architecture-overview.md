@@ -99,7 +99,7 @@ O perfil editorial pode alterar título, texto, tema, card, documentação e apr
 
 `api/` serve endpoints públicos para catálogo, Dataset Detail, contrato, métricas, contexto, model card, visualizações, views e inferência. Também expõe operações administrativas somente quando `ATLAS_ADMIN_ENABLED=true`.
 
-`runtime/` executa inferência governada. `external-inference/` fornece isolamento para bundles cujo perfil de Python ou dependências não pode ser carregado com segurança no processo principal da API. Esse serviço é um boundary de execução, não um repositório de modelos.
+O processo principal da API é o runtime de inferência canônico. `runtime/inference.py` é o boundary governado de carregamento e execução, e `api/` resolve release, manifest, bundle e contrato antes de delegar a ele — não há um segundo serviço de inferência nem um cliente HTTP interno. O pacote de release é o boundary de ownership do modelo. Um modelo ou runtime incompatível é bloqueado/reconciliado no gate, nunca despachado para um serviço alternativo.
 
 ### 3.7 Frontend
 

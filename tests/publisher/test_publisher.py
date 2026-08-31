@@ -2214,6 +2214,86 @@ def test_candidate_model_hash_mismatch_with_bundle_declaration_is_rejected(tmp_p
     )
 
 
+def _set_predictive_bundle_runtime_execution(tmp_repo: Path, runtime_execution: dict) -> None:
+    bundle_path = _candidate_dir(tmp_repo) / _role_path("predictive_bundle")
+    bundle = json.loads(bundle_path.read_text())
+    bundle["runtime_execution"] = runtime_execution
+    bundle_path.write_text(json.dumps(bundle, indent=2), encoding="utf-8")
+
+
+_CANONICAL_RUNTIME_EXECUTION = {
+    "serialization_format": "joblib",
+    "loader_strategy": "joblib_sklearn_predict",
+    "prediction_interface": "predict",
+    "model_family": "gradient_boosting",
+}
+
+
+def test_candidate_isolated_service_execution_strategy_is_rejected(tmp_path):
+    # Project Spec S0285: a new candidate can never request isolated-service
+    # (or any alternate) runtime topology.
+    tmp_repo = _prepare_tmp_repo(tmp_path)
+    _set_predictive_bundle_runtime_execution(
+        tmp_repo,
+        {
+            **_CANONICAL_RUNTIME_EXECUTION,
+            "execution_strategy": "isolated_service",
+            "runtime_profile": {
+                "service_dispatch": {
+                    "service_id": "external-inference",
+                    "request_contract_version": "external_inference_request.v1",
+                }
+            },
+        },
+    )
+
+    validation_result = validate.run(str(_candidate_dir(tmp_repo)), repo_root=tmp_repo)
+
+    assert validation_result["validation_outcome"] == "rejected"
+    assert any(
+        r.get("safe_detail") == "predictive_bundle_alternate_runtime_topology_rejected"
+        for r in validation_result["rejection"]["reasons"]
+    )
+
+
+def test_candidate_runtime_profile_without_explicit_strategy_is_rejected(tmp_path):
+    tmp_repo = _prepare_tmp_repo(tmp_path)
+    _set_predictive_bundle_runtime_execution(
+        tmp_repo,
+        {**_CANONICAL_RUNTIME_EXECUTION, "runtime_profile": {"service_dispatch": {}}},
+    )
+
+    validation_result = validate.run(str(_candidate_dir(tmp_repo)), repo_root=tmp_repo)
+
+    assert validation_result["validation_outcome"] == "rejected"
+    assert any(
+        r.get("safe_detail") == "predictive_bundle_alternate_runtime_topology_rejected"
+        for r in validation_result["rejection"]["reasons"]
+    )
+
+
+def test_candidate_explicit_in_process_execution_strategy_is_accepted(tmp_path):
+    tmp_repo = _prepare_tmp_repo(tmp_path)
+    _set_predictive_bundle_runtime_execution(
+        tmp_repo,
+        {**_CANONICAL_RUNTIME_EXECUTION, "execution_strategy": "in_process"},
+    )
+
+    validation_result = validate.run(str(_candidate_dir(tmp_repo)), repo_root=tmp_repo)
+
+    assert validation_result["validation_outcome"] == "accepted"
+
+
+def test_candidate_omitted_execution_strategy_remains_accepted_as_legacy_in_process(tmp_path):
+    # Historical inference_bundle.v1 omission compatibility is preserved.
+    tmp_repo = _prepare_tmp_repo(tmp_path)
+    _set_predictive_bundle_runtime_execution(tmp_repo, dict(_CANONICAL_RUNTIME_EXECUTION))
+
+    validation_result = validate.run(str(_candidate_dir(tmp_repo)), repo_root=tmp_repo)
+
+    assert validation_result["validation_outcome"] == "accepted"
+
+
 def test_model_artifact_bytes_are_never_parsed_as_json(tmp_path):
     tmp_repo = _prepare_tmp_repo(tmp_path)
     # MODEL_ARTIFACT_BYTES is not valid JSON; a passing, accepted validation

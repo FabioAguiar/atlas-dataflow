@@ -309,9 +309,16 @@ publisher behavior is not claimed to implement this direction yet.
 Analysis capability, prediction capability, deployment runtime profile, and
 model delivery are related but distinct concerns. A study need not imply a
 prediction runtime, and a prediction capability does not by itself select how
-or where its model is delivered. Governed runtime isolation remains a
-legitimate compatibility mechanism, but no runtime implementation may depend
-on an external analysis path.
+or where its model is delivered. No runtime implementation may depend on an
+external analysis path.
+
+The main Atlas API process is the canonical inference runtime, and
+`runtime/inference.py` is its governed loader/execution boundary. There is a
+single executable inference topology: the API resolves the governed release,
+manifest, predictive bundle, and contract context, then executes in-process
+through `runtime/inference.py`. An incompatible model or runtime profile is
+blocked and reconciled at the gate -- it is never dispatched to a second
+service.
 
 Executable model delivery is owned by the immutable Atlas release lifecycle.
 The governed active release identifies its predictive bundle and
@@ -320,15 +327,17 @@ those artifacts beneath the releases root. The legacy `external-models/`
 lifecycle, which duplicated model delivery outside a release, has been retired
 and is no longer an operational or compatibility mechanism.
 
-`external-inference/` is distinct from that retired storage lifecycle. It
-remains the current internal inference service and runtime/dependency boundary
-for governed bundles that select isolated-service dispatch. The API delegates
-to it using release and bundle identity, and the service resolves the model
-from the governed release rather than from a parallel model tree. This
-isolation remains necessary when a bundle requires a runtime or dependency
-profile that cannot safely execute in the main API process; it is not a model
-store, a parallel release lifecycle, or a component made obsolete by retiring
-`external-models/`.
+Historically (Project Specs S0158-S0178) Atlas also carried an isolated
+`external-inference/` service as a runtime/dependency boundary for governed
+bundles that selected isolated-service dispatch. Project Spec S0285 retired
+that service, its internal HTTP client, its request/result contracts, and its
+Compose/build wiring: all four current predictive capabilities execute only in
+the main API runtime. The historical `isolated_service` structural vocabulary
+may still be recognised for versioned inference_bundle.v1 compatibility, but it
+is legacy/deprecated and confers no operational permission -- the Publisher
+rejects a new candidate that declares it and the API fails closed rather than
+dispatching. External scientific projects remain authoring-only references and
+never a runtime dependency.
 
 ### Backward compatibility and accepted authoring decisions
 

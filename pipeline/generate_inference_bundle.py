@@ -474,6 +474,12 @@ def _resolve_runtime_execution(training_record: dict[str, Any], args: argparse.N
             field="serializer.name",
         )
     runtime = {
+        # Project Spec S0285: every newly generated inference_bundle.v1
+        # predictive bundle explicitly declares the canonical in-process
+        # execution strategy. The main Atlas API process is the only
+        # admitted inference runtime; external fitted-model provenance is
+        # not permission for an alternate runtime topology.
+        "execution_strategy": "in_process",
         "serialization_format": SUPPORTED_SERIALIZATION_FORMAT,
         "loader_strategy": SUPPORTED_LOADER_STRATEGY,
         "prediction_interface": SUPPORTED_PREDICTION_INTERFACE,
@@ -2200,6 +2206,9 @@ def _build_external_bundle(
             "source_training_parameter_record_path": training_parameter_record_ref["path"],
         },
         "runtime_execution": {
+            # Project Spec S0285: validated external fitted-model provenance
+            # still converges to the canonical in-process execution strategy.
+            "execution_strategy": "in_process",
             "serialization_format": SUPPORTED_SERIALIZATION_FORMAT,
             "loader_strategy": SUPPORTED_LOADER_STRATEGY,
             "prediction_interface": SUPPORTED_PREDICTION_INTERFACE,

@@ -228,7 +228,7 @@
                 "in_process",
                 "isolated_service"
               ],
-              "description": "Governed dispatch strategy. Omission preserves the historical in-process behavior for inference_bundle.v1 artifacts."
+              "description": "Governed dispatch strategy. Omission preserves the historical in-process behavior for inference_bundle.v1 artifacts, and an explicit \"in_process\" is the canonical current declaration. Project Spec S0285: \"isolated_service\" is retained ONLY as historical inference_bundle.v1 structural vocabulary for backward compatibility -- it does NOT exist as a currently admitted Atlas execution topology. The Publisher rejects any new candidate whose predictive bundle declares it, and the main Atlas API fails closed (no HTTP dispatch, no second service) if a bundle is ever encountered with it at runtime. Schema validity of this value alone never authorizes isolated-service execution."
             },
             "serialization_format": {
               "type": "string",
@@ -266,7 +266,8 @@
               "minLength": 1
             },
             "runtime_profile": {
-              "$ref": "#/$defs/isolated_runtime_profile"
+              "$ref": "#/$defs/isolated_runtime_profile",
+              "description": "Project Spec S0285: legacy/deprecated structural syntax. Historical inference_bundle.v1 compatibility only, paired with the retired execution_strategy=isolated_service vocabulary. Not a currently admitted Atlas runtime topology; a new candidate declaring it is rejected by the Publisher and never dispatched by the API."
             }
           },
           "allOf": [
@@ -1100,6 +1101,7 @@
     },
     "isolated_runtime_profile": {
       "type": "object",
+      "description": "Project Spec S0285: legacy/deprecated, operationally unsupported structural vocabulary. Retained so historical inference_bundle.v1 documents that once described isolated-service dispatch remain parseable and structurally valid -- S0285 does not pretend this syntax never existed. It confers no operational permission: the Publisher rejects new candidates that carry it and the main Atlas API process never delegates to a second inference service.",
       "additionalProperties": false,
       "required": [
         "profile_id",

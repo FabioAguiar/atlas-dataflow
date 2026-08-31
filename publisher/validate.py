@@ -1229,6 +1229,13 @@ def validate_candidate(
     capability_conditional_validation = validate_capability_conditional_roles(candidate, role_results)
     rejection_reasons.extend(capability_conditional_validation["rejection_reasons"])
 
+    # Project Spec S0285: generic, provenance-neutral runtime topology
+    # admission -- a new candidate can never request isolated-service or any
+    # other alternate execution strategy.
+    rejection_reasons.extend(
+        _predictive_bundle_runtime_topology_admission(json_artifacts.get("predictive_bundle"))
+    )
+
     rejection_reasons.extend(
         _verify_capability_binding(candidate, resolved_repo_root, json_artifacts.get("predictive_bundle"))
     )
@@ -1346,6 +1353,54 @@ def _is_finite_numeric(value) -> bool:
     if isinstance(value, (int, float)):
         return math.isfinite(value)
     return False
+
+
+_ADMITTED_RUNTIME_EXECUTION_STRATEGY = "in_process"
+
+
+def _predictive_bundle_runtime_topology_admission(
+    predictive_bundle_data: dict | None,
+) -> list[dict]:
+    """Project Spec S0285: a new candidate's predictive bundle may only
+    request the canonical in-process runtime topology -- the main Atlas API
+    process. A bundle either omits ``runtime_execution.execution_strategy``
+    (historical inference_bundle.v1 compatibility, accepted as legacy
+    in-process) or declares it exactly ``in_process``. Any other value
+    (``isolated_service`` or any future alternate strategy), or the presence
+    of a ``runtime_profile`` describing dispatch to a service outside the
+    main API process, is rejected.
+
+    The rejection is deterministic, sanitized, capability-neutral and
+    dataset-neutral: it never inspects dataset slug, display title, active
+    release id, or a concrete model family. It complements -- and never
+    weakens -- the forecasting-specific runtime validation, which continues
+    to assert its own stricter loader/interface invariants.
+    """
+    if not isinstance(predictive_bundle_data, dict):
+        return []
+    runtime_execution = predictive_bundle_data.get("runtime_execution")
+    if not isinstance(runtime_execution, dict):
+        return []
+
+    reasons: list[dict] = []
+    strategy = runtime_execution.get("execution_strategy")
+    if strategy is not None and strategy != _ADMITTED_RUNTIME_EXECUTION_STRATEGY:
+        reasons.append(_safe_rejection_reason(
+            "contradictory_candidate_artifact",
+            "Predictive bundle requests a runtime execution strategy that is not "
+            "the canonical in-process Atlas API runtime.",
+            "predictive_bundle",
+            "predictive_bundle_alternate_runtime_topology_rejected",
+        ))
+    if "runtime_profile" in runtime_execution:
+        reasons.append(_safe_rejection_reason(
+            "contradictory_candidate_artifact",
+            "Predictive bundle declares a runtime profile for dispatch outside the "
+            "main Atlas API process, which is not an admitted execution topology.",
+            "predictive_bundle",
+            "predictive_bundle_alternate_runtime_topology_rejected",
+        ))
+    return reasons
 
 
 def _external_predictive_bundle_compatibility(predictive_bundle_data: dict | None) -> list[dict]:

@@ -736,6 +736,10 @@ def test_materialization_result_generates_schema_valid_external_inference_bundle
     assert bundle["external_model_evidence"]["origin"] == "validated_external_fitted_model"
     assert bundle["external_model_evidence"]["model_family"] == "hist_gradient_boosting"
     assert bundle["runtime_execution"]["model_family"] == "hist_gradient_boosting"
+    # Project Spec S0285: a validated external fitted-model bundle converges
+    # to the canonical in-process execution strategy -- external provenance is
+    # not permission for an alternate runtime topology.
+    assert bundle["runtime_execution"]["execution_strategy"] == "in_process"
     assert bundle["prepared_dataset"]["prepared_dataset_reference"]["path"] == (
         "contracts/sample/prepared-dataset.json"
     )
@@ -2275,6 +2279,9 @@ def test_v2_bundle_accepts_all_four_bounded_estimator_pairs(
     assert bundle["external_model_evidence"]["model_family"] == model_family
     assert bundle["external_model_evidence"]["estimator_identity"]["class_name"] == class_name
     assert bundle["runtime_execution"]["model_family"] == model_family
+    # Project Spec S0285: every bounded external estimator pairing still
+    # generates an explicitly in-process bundle.
+    assert bundle["runtime_execution"]["execution_strategy"] == "in_process"
 
 
 def test_v2_bundle_cross_paired_estimator_identity_blocks(tmp_path: Path) -> None:

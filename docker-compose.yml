@@ -34,27 +34,6 @@ services:
       timeout: 3s
       retries: 10
 
-  external-inference:
-    build:
-      context: .
-      dockerfile: external-inference/Dockerfile
-    environment:
-      EXTERNAL_INFERENCE_HOST: ${EXTERNAL_INFERENCE_HOST:-0.0.0.0}
-      EXTERNAL_INFERENCE_PORT: ${EXTERNAL_INFERENCE_PORT:-8100}
-    expose:
-      - "8100"
-    healthcheck:
-      test:
-        [
-          "CMD",
-          "python",
-          "-c",
-          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8100/live', timeout=2).read()"
-        ]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-
   web:
     build:
       context: ./web

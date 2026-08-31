@@ -51,9 +51,6 @@ from runtime.inference import (  # noqa: E402
     project_result_contract,
 )
 from inference_result_dispatch import validate_inference_result  # noqa: E402
-from external_inference_client import (  # noqa: E402
-    execute_external_inference,
-)
 from public_contract_loader import (  # noqa: E402
     PublicContractUnavailableError,
     load_public_contract,
@@ -789,49 +786,6 @@ def _inference_failure_response(
     return public_error_response(INFERENCE_FAILURE)
 
 
-def _execute_via_external_inference_service(
-    dataset_slug: str,
-    active_release: str,
-    normalized_payload: dict,
-    *,
-    bundle_identity: dict,
-    runtime_profile: dict,
-    expected_result_contract: dict,
-    include_runtime_diagnostic: bool,
-):
-    """S0161: delegates to the isolated external-inference service.
-
-    Reuses the exact same failure-response shaping as the local
-    joblib_sklearn_predict path (_inference_failure_response), so a caller
-    of _execute_governed_inference cannot tell which loader strategy served
-    a given release from the response shape alone.
-    """
-
-    try:
-        result = execute_external_inference(
-            normalized_payload,
-            release_id=active_release,
-            bundle_identity=bundle_identity,
-            runtime_profile=runtime_profile,
-            expected_result_contract=expected_result_contract,
-        )
-    except InferenceRuntimeError as exc:
-        return _inference_failure_response(
-            diagnostic_code=exc.diagnostic_code,
-            include_runtime_diagnostic=include_runtime_diagnostic,
-        )
-    except Exception:
-        return _inference_failure_response(
-            diagnostic_code=None,
-            include_runtime_diagnostic=include_runtime_diagnostic,
-        )
-
-    return {
-        "dataset_slug": dataset_slug,
-        "result": result,
-    }
-
-
 class RuntimeDispatchError(InferenceRuntimeError):
     """Deterministic failure raised while resolving governed runtime dispatch."""
 
@@ -841,6 +795,16 @@ class RuntimeDispatchError(InferenceRuntimeError):
 
 
 def _resolve_runtime_dispatch(declaration: dict) -> tuple[str, dict | None, dict]:
+    """Project Spec S0285: the main Atlas API process is the one and only
+    executable inference topology. A governed bundle either omits
+    ``execution_strategy`` (historical inference_bundle.v1 compatibility,
+    interpreted as in-process) or declares it explicitly as ``in_process``.
+    Any other value -- including the historical ``isolated_service``
+    structural vocabulary -- fails closed deterministically here; there is
+    no HTTP delegation, runtime-profile resolution, or second-service
+    dispatch. The tuple shape is retained for callers, but the second
+    element is always ``None``.
+    """
     runtime_execution = declaration.get("runtime_execution")
     if not isinstance(runtime_execution, dict):
         raise RuntimeDispatchError(
@@ -852,59 +816,12 @@ def _resolve_runtime_dispatch(declaration: dict) -> tuple[str, dict | None, dict
     strategy = runtime_execution.get("execution_strategy", "in_process")
     if strategy == "in_process":
         return strategy, None, runtime_execution
-    if strategy != "isolated_service":
-        raise RuntimeDispatchError(
-            "unsupported_execution_strategy",
-            "Governed runtime execution strategy is unsupported.",
-            diagnostic_code="INFERENCE_BUNDLE_UNAVAILABLE",
-        )
 
-    profile = runtime_execution.get("runtime_profile")
-    if not isinstance(profile, dict):
-        raise RuntimeDispatchError(
-            "runtime_profile_invalid",
-            "Governed isolated runtime profile is missing.",
-            diagnostic_code="INFERENCE_BUNDLE_UNAVAILABLE",
-        )
-    required = profile.get("required_consumer_runtime")
-    producer = profile.get("producer_runtime")
-    if not isinstance(required, dict) or not isinstance(required.get("dependencies"), dict):
-        raise RuntimeDispatchError(
-            "runtime_profile_invalid",
-            "Governed isolated runtime identity cannot be resolved.",
-            diagnostic_code="RUNTIME_DEPENDENCY_UNAVAILABLE",
-        )
-    if profile.get("compatibility_policy") == "exact" and producer != required:
-        raise RuntimeDispatchError(
-            "runtime_profile_mismatch",
-            "Governed producer and required runtime identities do not match.",
-            diagnostic_code="RUNTIME_DEPENDENCY_UNAVAILABLE",
-        )
-    if profile.get("trusted_source_required") is not True:
-        raise RuntimeDispatchError(
-            "untrusted_artifact",
-            "Governed isolated runtime requires a trusted artifact.",
-            diagnostic_code="INFERENCE_BUNDLE_UNAVAILABLE",
-        )
-    if profile.get("load_safe") is not True:
-        raise RuntimeDispatchError(
-            "load_not_safe",
-            "Governed isolated runtime is not declared load-safe.",
-            diagnostic_code="MODEL_DESERIALIZATION_FAILED",
-        )
-    integrity = profile.get("artifact_integrity")
-    model_artifact = declaration.get("model_artifact")
-    if (
-        not isinstance(integrity, dict)
-        or not isinstance(model_artifact, dict)
-        or integrity.get("model_sha256") != model_artifact.get("sha256")
-    ):
-        raise RuntimeDispatchError(
-            "artifact_integrity_mismatch",
-            "Governed isolated runtime integrity identity does not match the bundle artifact.",
-            diagnostic_code="MODEL_ARTIFACT_HASH_MISMATCH",
-        )
-    return strategy, profile, runtime_execution
+    raise RuntimeDispatchError(
+        "unsupported_execution_strategy",
+        "Governed runtime execution strategy is unsupported.",
+        diagnostic_code="INFERENCE_BUNDLE_UNAVAILABLE",
+    )
 
 
 def _execute_governed_inference(
@@ -976,7 +893,10 @@ def _execute_governed_inference(
                 "Inference result contract is unavailable.",
                 diagnostic_code=DIAGNOSTIC_RESULT_VALIDATION_FAILED,
             )
-        strategy, runtime_profile, _runtime_execution = _resolve_runtime_dispatch(declaration)
+        # Project Spec S0285: the only admitted strategy is in-process
+        # execution via runtime.inference; an unsupported/alternate strategy
+        # (e.g. the historical isolated_service) raises here and fails closed.
+        _resolve_runtime_dispatch(declaration)
     except InferenceRuntimeError as exc:
         return _inference_failure_response(
             diagnostic_code=exc.diagnostic_code,
@@ -985,27 +905,6 @@ def _execute_governed_inference(
     except Exception:
         return _inference_failure_response(
             diagnostic_code=None,
-            include_runtime_diagnostic=include_runtime_diagnostic,
-        )
-
-    if strategy == "isolated_service" and runtime_profile is not None:
-        bundle_identity = declaration.get("bundle_identity")
-        dataset_context = declaration.get("dataset_context")
-        if not isinstance(bundle_identity, dict) or not isinstance(dataset_context, dict):
-            return _inference_failure_response(
-                diagnostic_code="INFERENCE_BUNDLE_UNAVAILABLE",
-                include_runtime_diagnostic=include_runtime_diagnostic,
-            )
-        return _execute_via_external_inference_service(
-            dataset_slug,
-            active_release,
-            dict(validation_report.normalized_payload),
-            bundle_identity={
-                "bundle_id": bundle_identity.get("bundle_id"),
-                "dataset_slug": dataset_context.get("dataset_slug"),
-            },
-            runtime_profile=runtime_profile,
-            expected_result_contract=expected_result_contract,
             include_runtime_diagnostic=include_runtime_diagnostic,
         )
 

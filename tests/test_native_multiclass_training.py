@@ -547,6 +547,12 @@ class TestNativeMulticlassInferenceBundle:
         bundle = json.loads(dry_bean_native_bundle["bundle_output_path"].read_text())
         assert bundle["runtime_execution"]["model_family"] == "hist_gradient_boosting"
 
+    def test_bundle_runtime_execution_is_explicitly_in_process(self, dry_bean_native_bundle):
+        # Project Spec S0285: native multiclass generation declares the
+        # canonical in-process execution strategy.
+        bundle = json.loads(dry_bean_native_bundle["bundle_output_path"].read_text())
+        assert bundle["runtime_execution"]["execution_strategy"] == "in_process"
+
     def test_bundle_result_semantics_is_multiclass_argmax_with_real_class_order(self, dry_bean_native_bundle):
         bundle = json.loads(dry_bean_native_bundle["bundle_output_path"].read_text())
         result_semantics = bundle["result_semantics"]

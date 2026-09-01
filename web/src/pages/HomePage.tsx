@@ -1,14 +1,10 @@
 import { useEffect, useState } from "react";
-import DatasetCard from "../components/DatasetCard";
+import type { DatasetCardProps } from "../components/DatasetCard/DatasetCard";
+import HomeDatasetCarousel from "../components/HomeDatasetCarousel";
 import { Card, EmptyState, ErrorState } from "../components/ui";
 import { resolveDatasetIcon } from "../lib/datasetPresentation";
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "";
-
-// Placeholder per design/screens/home/content.md integration notes; replace
-// with the real Atlas repository URL once wired up.
-const REPOSITORY_URL = "https://github.com/<owner>/<atlas-repo>";
-const PORTFOLIO_URL = "https://fabioaguiar.dev/";
 
 type DatasetListing = {
   dataset_slug: string;
@@ -37,12 +33,34 @@ type HomeState =
   | { status: "ready"; datasets: DatasetListing[] }
   | { status: "error" };
 
-function GitHubMark() {
-  return (
-    <svg viewBox="0 0 24 24">
-      <path d="M12 3.5a8.5 8.5 0 0 0-2.69 16.56c.43.08.58-.18.58-.41v-1.43c-2.38.52-2.88-1.01-2.88-1.01-.39-.98-.95-1.24-.95-1.24-.77-.53.06-.52.06-.52.85.06 1.31.88 1.31.88.76 1.3 1.98.93 2.47.71.08-.55.3-.93.54-1.15-1.9-.22-3.9-.95-3.9-4.23 0-.93.33-1.69.87-2.29-.09-.22-.38-1.11.08-2.31 0 0 .72-.23 2.36.87a8.07 8.07 0 0 1 4.3 0c1.64-1.1 2.36-.87 2.36-.87.46 1.2.17 2.09.08 2.31.54.6.87 1.36.87 2.29 0 3.29-2.01 4.01-3.92 4.22.31.27.58.81.58 1.64v2.43c0 .23.15.49.59.41A8.5 8.5 0 0 0 12 3.5Z" />
-    </svg>
-  );
+// Project Spec S0286: one Fisher-Yates permutation over a copied array,
+// applied exactly once at fetch-resolution time -- the source response array
+// is never mutated in place, and this never re-runs from a rerender (nav
+// toggle, resize, carousel autoplay ticks) because it only executes inside
+// the fetch `.then` below, not in the render body.
+function shuffleDatasets(datasets: DatasetListing[]): DatasetListing[] {
+  const shuffled = [...datasets];
+  for (let i = shuffled.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+  return shuffled;
+}
+
+function toCarouselCardProps(ds: DatasetListing): DatasetCardProps {
+  return {
+    slug: ds.dataset_slug,
+    title: ds.display_title || ds.title || ds.dataset_slug,
+    summary: ds.short_description || ds.display_subtitle || ds.summary,
+    domain: ds.domain,
+    tags: ds.tags,
+    problemType: ds.problem_type ?? undefined,
+    performanceFocusId: ds.performance_focus_id,
+    modelDisplayName: ds.model_display_name,
+    iconOverride: resolveDatasetIcon(ds.home_card_icon, ds.domain, ds.tags),
+    mediaRef: ds.home_card_media_ref,
+    themePreset: ds.theme_preset,
+  };
 }
 
 export default function HomePage() {
@@ -61,7 +79,7 @@ export default function HomePage() {
       })
       .then((data) => {
         if (data && Array.isArray(data.datasets)) {
-          setState({ status: "ready", datasets: data.datasets });
+          setState({ status: "ready", datasets: shuffleDatasets(data.datasets) });
           return;
         }
         if (data) {
@@ -80,75 +98,47 @@ export default function HomePage() {
   return (
     <>
       <section className="hero" aria-labelledby="home-title">
-        <p className="hero__subtitle">DEMONSTRAÇÕES PÚBLICAS DE ANÁLISE PREDITIVA ORIENTADA POR CONTRATOS.</p>
         <h1 id="home-title" className="hero__title">
           Atlas DataFlow<span className="hero__title-mark">.</span>
         </h1>
         <p className="hero__description">
-          Coleção de datasets, modelos e demonstrações que seguem contratos de dados bem definidos para garantir
-          reprodutibilidade, qualidade e transparência em cada etapa.
+          Explore governed dataset studies that bring together models, evaluation metrics, interactive
+          visualizations, technical documentation, and capability-specific prediction or evaluation experiences.
         </p>
-        <div className="hero__actions" aria-label="Links principais">
-          <a className="hero__link hero__link--repo" href={REPOSITORY_URL} target="_blank" rel="noreferrer">
-            <span className="hero__link-icon" aria-hidden="true">
-              <GitHubMark />
-            </span>
-            Repositório
-            <span aria-hidden="true">↗</span>
-          </a>
-          <a className="hero__link hero__link--portfolio" href={PORTFOLIO_URL}>
-            <span aria-hidden="true">←</span>
-            Voltar ao Portfólio
-          </a>
-        </div>
       </section>
 
       <section className="featured-datasets" aria-labelledby="featured-title">
         <div className="featured-datasets__heading">
-          <h2 id="featured-title">Datasets em destaque</h2>
+          <h2 id="featured-title">Dataset studies</h2>
           <p>
-            Os cards abaixo representam os datasets públicos disponíveis hoje e o layout permanece pronto para
-            crescer conforme novas análises forem publicadas.
+            Browse the public studies currently available in Atlas. Each card opens a release-backed view of the
+            dataset, its analytical evidence, and the experience supported by its predictive capability.
           </p>
         </div>
 
         {state.status === "loading" && (
-          <Card aria-label="Carregando datasets">
-            <p>Carregando datasets...</p>
+          <Card aria-label="Loading datasets">
+            <p>Loading datasets...</p>
           </Card>
         )}
 
         {state.status === "error" && (
-          <ErrorState title="Datasets indisponíveis" message="Verifique se a API está em execução." />
+          <ErrorState
+            title="Datasets unavailable"
+            message="The dataset catalog could not be loaded. Please try again later."
+          />
         )}
 
         {state.status === "ready" &&
           (state.datasets.length === 0 ? (
-            <EmptyState title="Nenhum dataset disponível" message="Os datasets publicados aparecerão aqui." />
+            <EmptyState title="No datasets available" message="Published datasets will appear here." />
           ) : (
-            <div className="featured-datasets__grid">
-              {state.datasets.map((ds) => (
-                <DatasetCard
-                  key={ds.dataset_slug}
-                  slug={ds.dataset_slug}
-                  title={ds.display_title || ds.title || ds.dataset_slug}
-                  summary={ds.short_description || ds.display_subtitle || ds.summary}
-                  domain={ds.domain}
-                  tags={ds.tags}
-                  problemType={ds.problem_type ?? undefined}
-                  performanceFocusId={ds.performance_focus_id}
-                  modelDisplayName={ds.model_display_name}
-                  iconOverride={resolveDatasetIcon(ds.home_card_icon, ds.domain, ds.tags)}
-                  mediaRef={ds.home_card_media_ref}
-                  themePreset={ds.theme_preset}
-                />
-              ))}
-            </div>
+            <HomeDatasetCarousel datasets={state.datasets.map(toCarouselCardProps)} />
           ))}
       </section>
 
       <footer className="site-footer">
-        Atlas DataFlow é um projeto de <strong className="site-footer__highlight">Fábio Aguiar</strong>.
+        Atlas DataFlow is a project by <strong className="site-footer__highlight">Fábio Aguiar</strong>.
       </footer>
     </>
   );

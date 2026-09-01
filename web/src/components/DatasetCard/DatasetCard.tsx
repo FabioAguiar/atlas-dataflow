@@ -4,15 +4,17 @@ import { Card } from "../ui";
 import {
   datasetThemeStyle,
   getDatasetIcon,
-  getProblemTypeLabel,
   isSafeHomeCardMediaReference,
   presentHomeCardDescription,
   resolveDatasetThemePreset,
   type DatasetIconName,
 } from "../../lib/datasetPresentation";
-import DatasetIdentityBadges from "../DatasetIdentityBadges/DatasetIdentityBadges";
 
-type DatasetCardProps = {
+// Project Spec S0286: DatasetCard is the Home Card presentation boundary --
+// exported so HomeDatasetCarousel (the only other DatasetCard consumer that
+// needs the shape, not the semantics) can type its own `datasets` prop
+// without re-deriving these fields.
+export type DatasetCardProps = {
   slug: string;
   title: string;
   summary: string;
@@ -85,21 +87,24 @@ export function DatasetIcon({ name }: { name: DatasetIconName }) {
   return DATASET_ICONS[name] ?? <GenericDatasetIcon />;
 }
 
+// Project Spec S0286: DatasetCard no longer renders the Problem / Performance
+// Focus / Model badge triad -- DatasetIdentityBadges stays the shared,
+// governed composition, but it is now rendered only by Dataset Detail. The
+// problemType/performanceFocusId/modelDisplayName props stay on
+// DatasetCardProps (accepted, unused) purely so existing callers projecting
+// through those fields (e.g. Admin's projectHomeCardPreview) keep compiling
+// without an unrelated projection-shape churn.
 export default function DatasetCard({
   slug,
   title,
   summary,
   domain,
   tags = [],
-  problemType,
-  performanceFocusId,
-  modelDisplayName,
   iconOverride,
   mediaRef,
   themePreset,
 }: DatasetCardProps) {
   const icon = iconOverride ?? getDatasetIcon(domain, tags);
-  const analysisLabel = getProblemTypeLabel(problemType);
   const safeMediaRef = isSafeHomeCardMediaReference(mediaRef) ? mediaRef : null;
   const description = presentHomeCardDescription(summary);
   const resolvedTheme = resolveDatasetThemePreset(themePreset);
@@ -124,12 +129,6 @@ export default function DatasetCard({
       )}
       <div className="dataset-card__body">
         <h3 className="dataset-card__title">{title}</h3>
-        <DatasetIdentityBadges
-          problemLabel={analysisLabel}
-          performanceFocusId={performanceFocusId}
-          modelDisplayName={modelDisplayName}
-          groupClassName="dataset-card__badges"
-        />
         {description && <p className="dataset-card__description">{description}</p>}
       </div>
       <span className="dataset-card__action" aria-hidden="true">

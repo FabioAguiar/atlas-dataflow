@@ -18,10 +18,14 @@ function mockMatchMedia(matches: boolean) {
   }));
 }
 
-function renderPublicShell(mainMode?: "constrained" | "full_bleed", initialNavOpen?: boolean) {
+function renderPublicShell(
+  mainMode?: "constrained" | "full_bleed",
+  initialNavOpen?: boolean,
+  navigationLayout?: "inline" | "overlay",
+) {
   return render(
     <MemoryRouter>
-      <PublicShell mainMode={mainMode} initialNavOpen={initialNavOpen}>
+      <PublicShell mainMode={mainMode} initialNavOpen={initialNavOpen} navigationLayout={navigationLayout}>
         <div>content</div>
       </PublicShell>
     </MemoryRouter>,
@@ -45,14 +49,14 @@ describe("PublicShell nav overlay responsive behavior", () => {
     mockMatchMedia(true);
     renderPublicShell();
 
-    expect(screen.getByLabelText("Ocultar navegação")).toBeInTheDocument();
+    expect(screen.getByLabelText("Hide navigation")).toBeInTheDocument();
   });
 
   it("defaults the nav closed on mobile viewports", () => {
     mockMatchMedia(false);
     renderPublicShell();
 
-    const toggle = screen.getByLabelText("Mostrar navegação");
+    const toggle = screen.getByLabelText("Show navigation");
     expect(toggle).toBeInTheDocument();
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     expect(toggle).toHaveAttribute("aria-controls", "public-shell-nav");
@@ -69,62 +73,63 @@ describe("PublicShell nav overlay responsive behavior", () => {
     mockMatchMedia(false);
     renderPublicShell();
 
-    fireEvent.click(screen.getByLabelText("Mostrar navegação"));
+    fireEvent.click(screen.getByLabelText("Show navigation"));
 
     expect(getOverlay()).toBeInTheDocument();
-    expect(screen.getByLabelText("Ocultar navegação")).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByLabelText("Hide navigation")).toHaveAttribute("aria-expanded", "true");
   });
 
   it("closes the nav when the mobile overlay is clicked", () => {
     mockMatchMedia(false);
     renderPublicShell();
 
-    fireEvent.click(screen.getByLabelText("Mostrar navegação"));
+    fireEvent.click(screen.getByLabelText("Show navigation"));
     const overlay = getOverlay();
     expect(overlay).toBeInTheDocument();
 
     fireEvent.click(overlay as Element);
 
     expect(getOverlay()).not.toBeInTheDocument();
-    expect(screen.getByLabelText("Mostrar navegação")).toBeInTheDocument();
+    expect(screen.getByLabelText("Show navigation")).toBeInTheDocument();
   });
 
   it("closes the mobile nav when a nav link is clicked", () => {
     mockMatchMedia(false);
     renderPublicShell();
 
-    fireEvent.click(screen.getByLabelText("Mostrar navegação"));
+    fireEvent.click(screen.getByLabelText("Show navigation"));
     expect(getOverlay()).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("link", { name: "Home" }));
 
     expect(getOverlay()).not.toBeInTheDocument();
-    expect(screen.getByLabelText("Mostrar navegação")).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByLabelText("Show navigation")).toHaveAttribute("aria-expanded", "false");
   });
 
   it("closes the mobile nav with Escape and returns focus to the toggle", () => {
     mockMatchMedia(false);
     renderPublicShell();
 
-    fireEvent.click(screen.getByLabelText("Mostrar navegação"));
-    const toggle = screen.getByLabelText("Ocultar navegação");
+    fireEvent.click(screen.getByLabelText("Show navigation"));
+    const toggle = screen.getByLabelText("Hide navigation");
     expect(getOverlay()).toBeInTheDocument();
 
     fireEvent.keyDown(document, { key: "Escape" });
 
     expect(getOverlay()).not.toBeInTheDocument();
-    expect(screen.getByLabelText("Mostrar navegação")).toHaveFocus();
+    expect(screen.getByLabelText("Show navigation")).toHaveFocus();
     expect(toggle).toHaveAttribute("aria-controls", "public-shell-nav");
   });
 
-  it("preserves the existing nav item set and labels", () => {
+  // Project Spec S0286: shared public navigation labels/ARIA are English.
+  it("preserves the existing nav item set with English labels", () => {
     mockMatchMedia(true);
     renderPublicShell();
 
     expect(screen.getByRole("link", { name: "Home" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Projetos" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Projects" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "GitHub" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Contato" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Contact" })).toBeInTheDocument();
   });
 
   it("collapses the rail when the desktop nav toggle is clicked", () => {
@@ -133,10 +138,10 @@ describe("PublicShell nav overlay responsive behavior", () => {
 
     expect(container.querySelector(".public-shell")).toHaveClass("public-shell--nav-open");
 
-    fireEvent.click(screen.getByLabelText("Ocultar navegação"));
+    fireEvent.click(screen.getByLabelText("Hide navigation"));
 
     expect(container.querySelector(".public-shell")).not.toHaveClass("public-shell--nav-open");
-    expect(screen.getByLabelText("Mostrar navegação")).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByLabelText("Show navigation")).toHaveAttribute("aria-expanded", "false");
   });
 });
 
@@ -185,13 +190,13 @@ describe("PublicShell main mode (Project Spec S0130)", () => {
     mockMatchMedia(false);
     renderPublicShell("full_bleed");
 
-    const toggle = screen.getByLabelText("Mostrar navegação");
+    const toggle = screen.getByLabelText("Show navigation");
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     expect(toggle).toHaveAttribute("aria-controls", "public-shell-nav");
 
     fireEvent.click(toggle);
     expect(getOverlay()).toBeInTheDocument();
-    expect(screen.getByLabelText("Ocultar navegação")).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByLabelText("Hide navigation")).toHaveAttribute("aria-expanded", "true");
   });
 });
 
@@ -208,7 +213,7 @@ describe("PublicShell initial navigation authority (Project Spec S0137)", () => 
     mockMatchMedia(true);
     const { container } = renderPublicShell();
 
-    expect(screen.getByLabelText("Ocultar navegação")).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByLabelText("Hide navigation")).toHaveAttribute("aria-expanded", "true");
     expect(container.querySelector(".public-shell")).toHaveClass("public-shell--nav-open");
   });
 
@@ -216,7 +221,7 @@ describe("PublicShell initial navigation authority (Project Spec S0137)", () => 
     mockMatchMedia(false);
     const { container } = renderPublicShell();
 
-    expect(screen.getByLabelText("Mostrar navegação")).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByLabelText("Show navigation")).toHaveAttribute("aria-expanded", "false");
     expect(container.querySelector(".public-shell")).not.toHaveClass("public-shell--nav-open");
   });
 
@@ -224,7 +229,7 @@ describe("PublicShell initial navigation authority (Project Spec S0137)", () => 
     mockMatchMedia(true);
     const { container } = renderPublicShell(undefined, false);
 
-    const toggle = screen.getByLabelText("Mostrar navegação");
+    const toggle = screen.getByLabelText("Show navigation");
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     expect(toggle).toHaveAttribute("aria-controls", "public-shell-nav");
     expect(container.querySelector(".public-shell")).not.toHaveClass("public-shell--nav-open");
@@ -235,7 +240,7 @@ describe("PublicShell initial navigation authority (Project Spec S0137)", () => 
     mockMatchMedia(false);
     const { container } = renderPublicShell(undefined, false);
 
-    const toggle = screen.getByLabelText("Mostrar navegação");
+    const toggle = screen.getByLabelText("Show navigation");
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     expect(container.querySelector(".public-shell")).not.toHaveClass("public-shell--nav-open");
     expect(getOverlay()).not.toBeInTheDocument();
@@ -245,14 +250,14 @@ describe("PublicShell initial navigation authority (Project Spec S0137)", () => 
     mockMatchMedia(true);
     const { container } = renderPublicShell(undefined, false);
 
-    fireEvent.click(screen.getByLabelText("Mostrar navegação"));
+    fireEvent.click(screen.getByLabelText("Show navigation"));
 
-    expect(screen.getByLabelText("Ocultar navegação")).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByLabelText("Hide navigation")).toHaveAttribute("aria-expanded", "true");
     expect(container.querySelector(".public-shell")).toHaveClass("public-shell--nav-open");
 
-    fireEvent.click(screen.getByLabelText("Ocultar navegação"));
+    fireEvent.click(screen.getByLabelText("Hide navigation"));
 
-    expect(screen.getByLabelText("Mostrar navegação")).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByLabelText("Show navigation")).toHaveAttribute("aria-expanded", "false");
     expect(container.querySelector(".public-shell")).not.toHaveClass("public-shell--nav-open");
   });
 
@@ -260,14 +265,14 @@ describe("PublicShell initial navigation authority (Project Spec S0137)", () => 
     mockMatchMedia(false);
     renderPublicShell(undefined, false);
 
-    fireEvent.click(screen.getByLabelText("Mostrar navegação"));
-    const toggle = screen.getByLabelText("Ocultar navegação");
+    fireEvent.click(screen.getByLabelText("Show navigation"));
+    const toggle = screen.getByLabelText("Hide navigation");
     expect(getOverlay()).toBeInTheDocument();
 
     fireEvent.keyDown(document, { key: "Escape" });
 
     expect(getOverlay()).not.toBeInTheDocument();
-    expect(screen.getByLabelText("Mostrar navegação")).toHaveFocus();
+    expect(screen.getByLabelText("Show navigation")).toHaveFocus();
     expect(toggle).toHaveAttribute("aria-controls", "public-shell-nav");
   });
 
@@ -275,7 +280,7 @@ describe("PublicShell initial navigation authority (Project Spec S0137)", () => 
     mockMatchMedia(true);
     const { container } = renderPublicShell("full_bleed");
 
-    expect(screen.getByLabelText("Ocultar navegação")).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByLabelText("Hide navigation")).toHaveAttribute("aria-expanded", "true");
     expect(container.querySelector(".public-shell")).toHaveClass("public-shell--nav-open");
   });
 
@@ -283,12 +288,89 @@ describe("PublicShell initial navigation authority (Project Spec S0137)", () => 
     mockMatchMedia(true);
     const { container } = renderPublicShell("full_bleed", false);
 
-    const toggle = screen.getByLabelText("Mostrar navegação");
+    const toggle = screen.getByLabelText("Show navigation");
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     expect(container.querySelector(".public-shell")).not.toHaveClass("public-shell--nav-open");
 
     const main = getMain(container);
     expect(main).toHaveClass("public-shell__main--full-bleed");
     expect(main).toHaveAttribute("data-main-mode", "full_bleed");
+  });
+});
+
+// Project Spec S0286: one explicit, bounded navigationLayout prop -- inline
+// stays every pre-S0286 caller's default; overlay is Home's own selection
+// and changes only the desktop-breakpoint stacking model owned by App.css,
+// never PublicShell's own omitted-initialNavOpen contract.
+describe("PublicShell navigation layout mode (Project Spec S0286)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("emits the inline/default navigation layout class/attribute when navigationLayout is omitted", () => {
+    mockMatchMedia(true);
+    const { container } = renderPublicShell();
+
+    expect(container.querySelector(".public-shell")).toHaveAttribute("data-nav-layout", "inline");
+  });
+
+  it("emits only the explicit overlay navigation layout class/attribute when Home selects it", () => {
+    mockMatchMedia(true);
+    const { container } = renderPublicShell(undefined, undefined, "overlay");
+
+    expect(container.querySelector(".public-shell")).toHaveAttribute("data-nav-layout", "overlay");
+    expect(container.querySelector(".public-shell")).not.toHaveAttribute("data-nav-layout", "inline");
+  });
+
+  it("does not change PublicShell's omitted-initialNavOpen default when overlay is selected", () => {
+    mockMatchMedia(true);
+    const { container } = renderPublicShell(undefined, undefined, "overlay");
+
+    expect(screen.getByLabelText("Hide navigation")).toHaveAttribute("aria-expanded", "true");
+    expect(container.querySelector(".public-shell")).toHaveClass("public-shell--nav-open");
+  });
+
+  it("renders the mobile overlay backdrop for the overlay layout, same as the default layout", () => {
+    mockMatchMedia(false);
+    renderPublicShell(undefined, undefined, "overlay");
+
+    fireEvent.click(screen.getByLabelText("Show navigation"));
+
+    expect(getOverlay()).toBeInTheDocument();
+    expect(screen.getByLabelText("Hide navigation")).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("preserves mobile Escape close and focus restoration under the overlay layout", () => {
+    mockMatchMedia(false);
+    renderPublicShell(undefined, undefined, "overlay");
+
+    fireEvent.click(screen.getByLabelText("Show navigation"));
+    expect(getOverlay()).toBeInTheDocument();
+
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    expect(getOverlay()).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Show navigation")).toHaveFocus();
+  });
+});
+
+// Project Spec S0286: the shared public navigation labels/ARIA are English
+// on every layout mode -- the navigation component itself is shared, so this
+// is proven once, not per-mode.
+describe("PublicShell English navigation copy (Project Spec S0286)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("uses English Show/Hide navigation toggle labels and Main navigation ARIA label", () => {
+    mockMatchMedia(false);
+    renderPublicShell();
+
+    expect(screen.getByLabelText("Show navigation")).toBeInTheDocument();
+    expect(screen.getByLabelText("Main navigation")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByLabelText("Show navigation"));
+
+    expect(screen.getByLabelText("Hide navigation")).toBeInTheDocument();
   });
 });

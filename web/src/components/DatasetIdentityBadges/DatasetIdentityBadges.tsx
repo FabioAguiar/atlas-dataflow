@@ -28,9 +28,11 @@ export type DatasetIdentityBadgesProps = {
 
 /**
  * Project Spec S0238: the single shared presentational Dataset identity
- * badge composition, reused unmodified by DatasetCard (Home) and
- * DatasetDetailHeader (Dataset Detail), including their Dataset Admin Live
- * Preview counterparts. Accepts only already-bounded semantic values -- no
+ * badge composition. Project Spec S0286 retired its Home Card renderer --
+ * DatasetCard (Home, and its Admin Metadata & Card / Live Preview Home Card
+ * previews) no longer imports or renders this component. DatasetDetailHeader
+ * (Dataset Detail, including its Dataset Admin Live Preview counterpart)
+ * remains its sole owner. Accepts only already-bounded semantic values -- no
  * fetch, registry/release inspection, or per-surface semantic branching
  * happens here. Renders the known roles in the fixed order problem -> focus
  * -> model, each carrying its own Theme Preset-derived color role

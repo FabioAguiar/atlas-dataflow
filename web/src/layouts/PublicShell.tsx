@@ -3,10 +3,17 @@ import { NavLink } from "react-router-dom";
 
 export type PublicShellMainMode = "constrained" | "full_bleed";
 
+// Project Spec S0286: inline is the pre-existing shared/default geometry
+// (nav claims a grid column when open); overlay is selected only by Home so
+// the opened rail layers above the canvas instead of resizing it. PublicShell
+// never inspects routes to choose between them -- the caller decides.
+export type PublicShellNavigationLayout = "inline" | "overlay";
+
 type PublicShellProps = {
   children: ReactNode;
   mainMode?: PublicShellMainMode;
   initialNavOpen?: boolean;
+  navigationLayout?: PublicShellNavigationLayout;
 };
 
 // Placeholders per design/screens/home/content.md integration notes; replace
@@ -57,9 +64,9 @@ type NavItem = {
 
 const NAV_ITEMS: NavItem[] = [
   { key: "home", label: "Home", icon: <HomeIcon />, external: false, to: "/" },
-  { key: "projetos", label: "Projetos", icon: <ProjectsIcon />, external: true, href: PORTFOLIO_PROJECTS_URL },
+  { key: "projetos", label: "Projects", icon: <ProjectsIcon />, external: true, href: PORTFOLIO_PROJECTS_URL },
   { key: "github", label: "GitHub", icon: <GitHubIcon />, external: true, href: REPOSITORY_URL },
-  { key: "contato", label: "Contato", icon: <ContactIcon />, external: true, href: PORTFOLIO_CONTACT_URL },
+  { key: "contato", label: "Contact", icon: <ContactIcon />, external: true, href: PORTFOLIO_CONTACT_URL },
 ];
 
 function isDesktopViewport() {
@@ -71,7 +78,12 @@ function isDesktopViewport() {
 // stays "constrained" so every pre-existing public route is unaffected;
 // only a route that explicitly requests "full_bleed" drops the centered
 // main-width constraint for the outer route boundary.
-export default function PublicShell({ children, mainMode = "constrained", initialNavOpen }: PublicShellProps) {
+export default function PublicShell({
+  children,
+  mainMode = "constrained",
+  initialNavOpen,
+  navigationLayout = "inline",
+}: PublicShellProps) {
   const navToggleRef = useRef<HTMLButtonElement | null>(null);
   // Project Spec S0137: `initialNavOpen` governs only the first-render nav
   // state. Omitted, it preserves the existing viewport-derived default; an
@@ -117,12 +129,15 @@ export default function PublicShell({ children, mainMode = "constrained", initia
   };
 
   return (
-    <div className={`public-shell${navOpen ? " public-shell--nav-open" : ""}`}>
+    <div
+      className={`public-shell${navOpen ? " public-shell--nav-open" : ""}`}
+      data-nav-layout={navigationLayout}
+    >
       <button
         ref={navToggleRef}
         type="button"
         className="public-shell__nav-toggle"
-        aria-label={navOpen ? "Ocultar navegação" : "Mostrar navegação"}
+        aria-label={navOpen ? "Hide navigation" : "Show navigation"}
         aria-expanded={navOpen}
         aria-controls="public-shell-nav"
         onClick={() => setNavOpen((open) => !open)}
@@ -132,7 +147,7 @@ export default function PublicShell({ children, mainMode = "constrained", initia
         <span aria-hidden="true" />
       </button>
 
-      {navOpen && !isDesktop && (
+      {navOpen && (navigationLayout === "overlay" || !isDesktop) && (
         <div
           className="public-shell__nav-overlay"
           aria-hidden="true"
@@ -140,7 +155,7 @@ export default function PublicShell({ children, mainMode = "constrained", initia
         />
       )}
 
-      <aside id="public-shell-nav" className="public-shell__nav" aria-label="Navegação principal">
+      <aside id="public-shell-nav" className="public-shell__nav" aria-label="Main navigation">
         <nav>
           <ul className="public-shell__nav-list">
             {NAV_ITEMS.map((item) => (

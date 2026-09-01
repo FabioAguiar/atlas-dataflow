@@ -30,6 +30,20 @@ function DatasetDetailRoute() {
   );
 }
 
+// Project Spec S0286: Home owns an explicit collapsed route-entry navigation
+// state and the overlay navigation layout, analogous in intent to
+// DatasetDetailRoute above. The static key guarantees a fresh Home shell
+// instance (and a fresh application of initialNavOpen={false}) whenever the
+// app enters this route from elsewhere, without PublicShell ever inspecting
+// the route itself.
+function HomeRoute() {
+  return (
+    <PublicShell key="home" initialNavOpen={false} navigationLayout="overlay">
+      <HomePage />
+    </PublicShell>
+  );
+}
+
 function renderAdminRoutes() {
   if (!AdminShell || !DashboardPage || !DatasetAdminPage || !HelpPage || !SettingsPage) {
     return <Route path="/admin/*" element={null} />;
@@ -67,14 +81,7 @@ export default function App() {
           }
         />
         <Route path="/dataset/:slug" element={<DatasetDetailRoute />} />
-        <Route
-          path="/"
-          element={
-            <PublicShell>
-              <HomePage />
-            </PublicShell>
-          }
-        />
+        <Route path="/" element={<HomeRoute />} />
       </Routes>
     </Suspense>
   );

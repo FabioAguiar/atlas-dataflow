@@ -3345,7 +3345,10 @@ describe("DatasetAdminPage", () => {
     expect(screen.queryByText("Select a controlled icon for the public Home card.")).not.toBeInTheDocument();
     expect(screen.queryByRole("combobox", { name: "Home card icon" })).not.toBeInTheDocument();
     expect(screen.queryByText("Uses the same shared card projection as Live Preview.")).not.toBeInTheDocument();
-    expect(screen.getAllByText("Binary Classification")).toHaveLength(2);
+    // Project Spec S0286: DatasetCard no longer renders the Problem/Focus/Model
+    // badge triad, so the only remaining "Binary Classification" text is the
+    // Problem type display widget beside the preview, not the preview card itself.
+    expect(screen.getAllByText("Binary Classification")).toHaveLength(1);
     expect(screen.getByRole("link", { name: /Explore dataset/ })).toBeInTheDocument();
     expect(screen.queryByText("Explorar dataset")).not.toBeInTheDocument();
     expect(screen.queryByText("The focus controls the bounded score catalog below.")).not.toBeInTheDocument();
@@ -3367,9 +3370,13 @@ describe("DatasetAdminPage", () => {
     const problemTypeDisplay = screen.getByLabelText("Problem type display");
     expect(within(problemTypeDisplay).queryByRole("radio")).not.toBeInTheDocument();
 
+    // Project Spec S0286: the Home card preview renders through DatasetCard,
+    // which no longer shows the Problem badge -- the release-governed problem
+    // type stays visible only through the Problem type display widget.
     const previewCard = screen.getByRole("heading", { name: "Home card preview" }).closest<HTMLElement>(".dataset-admin-preview-card")!;
-    expect(within(previewCard).getByText("Binary Classification")).toBeInTheDocument();
+    expect(within(previewCard).queryByText("Binary Classification")).not.toBeInTheDocument();
     expect(within(previewCard).queryByText("Predictive Analysis")).not.toBeInTheDocument();
+    expect(previewCard.querySelector(".dataset-card__badges")).not.toBeInTheDocument();
     expect(within(problemTypeDisplay).getByText("Binary Classification")).toBeInTheDocument();
     expect(within(problemTypeDisplay).getByText("Release-governed")).toBeInTheDocument();
     expect(within(problemTypeDisplay).queryByText("Regression")).not.toBeInTheDocument();
@@ -3380,23 +3387,26 @@ describe("DatasetAdminPage", () => {
   // Live Preview Home Card, Live Preview Dataset Detail header) without
   // requiring Publish changes, alongside the unchanged problem-type badge.
   describe("Performance focus badge across preview surfaces (Project Spec S0204)", () => {
-    it("renders the selected Performance focus badge in the Metadata & Card Home card preview, alongside the problem-type badge", async () => {
+    // Project Spec S0286: DatasetCard (the shared Home Card renderer) no
+    // longer shows the Problem/Performance Focus/Model badge triad -- this
+    // stays true even as the Performance focus selection changes.
+    it("renders no Performance focus or problem-type badge in the Metadata & Card Home card preview, even as the focus changes", async () => {
       installFetchMock();
       renderAdminPage();
       await loadDraftOnly();
       fireEvent.click(screen.getByRole("tab", { name: "Metadata & Card" }));
 
       const previewCard = screen.getByRole("heading", { name: "Home card preview" }).closest<HTMLElement>(".dataset-admin-preview-card")!;
-      expect(within(previewCard).getByText("Binary Classification")).toBeInTheDocument();
-      expect(within(previewCard).getByText("Positive-class detection")).toBeInTheDocument();
+      expect(within(previewCard).queryByText("Binary Classification")).not.toBeInTheDocument();
+      expect(within(previewCard).queryByText("Positive-class detection")).not.toBeInTheDocument();
 
       fireEvent.change(screen.getByLabelText("Performance focus"), { target: { value: "balanced_classification" } });
-      expect(within(previewCard).getByText("Balanced classification")).toBeInTheDocument();
-      expect(within(previewCard).queryByText("Positive-class detection")).not.toBeInTheDocument();
-      expect(within(previewCard).getByText("Binary Classification")).toBeInTheDocument();
+      expect(within(previewCard).queryByText("Balanced classification")).not.toBeInTheDocument();
+      expect(within(previewCard).queryByText("Binary Classification")).not.toBeInTheDocument();
+      expect(previewCard.querySelector(".dataset-card__badges")).not.toBeInTheDocument();
     });
 
-    it("renders the selected Performance focus badge in Live Preview's Home Card", async () => {
+    it("renders no Performance focus or problem-type badge in Live Preview's Home Card", async () => {
       installFetchMock();
       renderAdminPage();
       await loadDraftOnly();
@@ -3407,8 +3417,9 @@ describe("DatasetAdminPage", () => {
       fireEvent.click(screen.getByRole("tab", { name: "Home Card" }));
 
       const homeCardPanel = screen.getByRole("article", { name: "Home Card preview" });
-      expect(within(homeCardPanel).getByText("Balanced classification")).toBeInTheDocument();
-      expect(within(homeCardPanel).getByText("Binary Classification")).toBeInTheDocument();
+      expect(within(homeCardPanel).queryByText("Balanced classification")).not.toBeInTheDocument();
+      expect(within(homeCardPanel).queryByText("Binary Classification")).not.toBeInTheDocument();
+      expect(homeCardPanel.querySelector(".dataset-card__badges")).not.toBeInTheDocument();
     });
 
     it("renders the selected Performance focus badge in Live Preview's Dataset Detail header", async () => {
@@ -3425,7 +3436,7 @@ describe("DatasetAdminPage", () => {
       expect(within(headerBadges).getByText("Balanced classification")).toBeInTheDocument();
     });
 
-    it("updates all three preview surfaces immediately when Performance focus changes, without requiring Publish changes", async () => {
+    it("keeps both Home Card previews badge-free while updating the Dataset Detail header immediately, without requiring Publish changes", async () => {
       const fetchMock = installFetchMock();
       renderAdminPage();
       await loadDraftOnly();
@@ -3434,11 +3445,11 @@ describe("DatasetAdminPage", () => {
       fireEvent.change(screen.getByLabelText("Performance focus"), { target: { value: "probability_quality" } });
 
       const metadataPreviewCard = screen.getByRole("heading", { name: "Home card preview" }).closest<HTMLElement>(".dataset-admin-preview-card")!;
-      expect(within(metadataPreviewCard).getByText("Probability quality")).toBeInTheDocument();
+      expect(within(metadataPreviewCard).queryByText("Probability quality")).not.toBeInTheDocument();
 
       fireEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
       fireEvent.click(screen.getByRole("tab", { name: "Home Card" }));
-      expect(within(screen.getByRole("article", { name: "Home Card preview" })).getByText("Probability quality")).toBeInTheDocument();
+      expect(within(screen.getByRole("article", { name: "Home Card preview" })).queryByText("Probability quality")).not.toBeInTheDocument();
 
       fireEvent.click(screen.getByRole("tab", { name: "Dataset Detail" }));
       const headerBadges = document.querySelector(".dataset-detail-header__badges") as HTMLElement;
@@ -3460,22 +3471,18 @@ describe("DatasetAdminPage", () => {
   // request, and always the same authority on both Home Card and Dataset
   // Detail Live Preview.
   describe("Dataset identity badge triad across preview surfaces (Project Spec S0238)", () => {
-    it("renders the release-bound Model badge in the Metadata & Card Home card preview, in problem/focus/model order", async () => {
+    it("renders no Problem/Focus/Model badges in the Metadata & Card Home card preview", async () => {
       installFetchMock();
       renderAdminPage();
       await loadDraftOnly();
       fireEvent.click(screen.getByRole("tab", { name: "Metadata & Card" }));
 
       const previewCard = screen.getByRole("heading", { name: "Home card preview" }).closest<HTMLElement>(".dataset-admin-preview-card")!;
-      const badges = Array.from(previewCard.querySelectorAll(".dataset-card__badges .atlas-badge"));
-      expect(badges.map((badge) => badge.textContent)).toEqual([
-        "Binary Classification",
-        "Positive-class detection",
-        "Retention model",
-      ]);
+      expect(previewCard.querySelectorAll(".dataset-card__badges .atlas-badge")).toHaveLength(0);
+      expect(previewCard.querySelector(".dataset-card__badges")).not.toBeInTheDocument();
     });
 
-    it("renders the release-bound Model badge in Live Preview's Home Card, matching the Metadata & Card preview's authority", async () => {
+    it("renders no Problem/Focus/Model badges in Live Preview's Home Card", async () => {
       const fetchMock = installFetchMock();
       renderAdminPage();
       await loadDraftOnly();
@@ -3483,12 +3490,8 @@ describe("DatasetAdminPage", () => {
       fireEvent.click(screen.getByRole("tab", { name: "Home Card" }));
 
       const homeCardPanel = screen.getByRole("article", { name: "Home Card preview" });
-      const badges = Array.from(homeCardPanel.querySelectorAll(".dataset-card__badges .atlas-badge"));
-      expect(badges.map((badge) => badge.textContent)).toEqual([
-        "Binary Classification",
-        "Positive-class detection",
-        "Retention model",
-      ]);
+      expect(homeCardPanel.querySelectorAll(".dataset-card__badges .atlas-badge")).toHaveLength(0);
+      expect(homeCardPanel.querySelector(".dataset-card__badges")).not.toBeInTheDocument();
       // No extra request beyond the authoring context already fetched.
       expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/contract"))).toBe(false);
       expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/model-card"))).toBe(false);
@@ -3746,7 +3749,7 @@ describe("DatasetAdminPage", () => {
       expect(screen.getByLabelText("R² value")).toHaveValue("0.9694");
     });
 
-    it("renders the Regression performance badge in the Home card preview", async () => {
+    it("renders no Regression performance badge in the Home card preview", async () => {
       installFetchMock({ resultContractOverride: continuousRegressionResultContract });
       renderAdminPage();
       await loadDraftOnly();
@@ -3754,7 +3757,8 @@ describe("DatasetAdminPage", () => {
 
       await waitFor(() => expect(screen.getByLabelText("Performance focus")).toHaveValue("regression_performance"));
       const previewCard = screen.getByRole("heading", { name: "Home card preview" }).closest<HTMLElement>(".dataset-admin-preview-card")!;
-      expect(within(previewCard).getByText("Regression performance")).toBeInTheDocument();
+      expect(within(previewCard).queryByText("Regression performance")).not.toBeInTheDocument();
+      expect(previewCard.querySelector(".dataset-card__badges")).not.toBeInTheDocument();
     });
 
     it("carries regression_performance and mae/rmse/r2 in the Publish changes payload, without automatically publishing merely because the rebind happened", async () => {
@@ -3954,8 +3958,16 @@ describe("DatasetAdminPage", () => {
       fireEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
       fireEvent.click(screen.getByRole("tab", { name: "Home Card" }));
 
+      // Project Spec S0286: the Home Card no longer shows a Performance
+      // focus badge -- the rebind is proven through the Dataset Detail
+      // header instead.
       const homeCardPanel = await screen.findByRole("article", { name: "Home Card preview" });
-      await waitFor(() => expect(within(homeCardPanel).getByText("Forecasting performance")).toBeInTheDocument());
+      expect(within(homeCardPanel).queryByText("Forecasting performance")).not.toBeInTheDocument();
+      expect(homeCardPanel.querySelector(".dataset-card__badges")).not.toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("tab", { name: "Dataset Detail" }));
+      const headerBadges = document.querySelector(".dataset-detail-header__badges") as HTMLElement;
+      await waitFor(() => expect(within(headerBadges).getByText("Forecasting performance")).toBeInTheDocument());
       expect(screen.queryByRole("tab", { name: "Metadata & Card", selected: true })).not.toBeInTheDocument();
     });
   });
@@ -3996,7 +4008,7 @@ describe("DatasetAdminPage", () => {
       },
     };
 
-    it("shows Regression performance in Live Preview's Home Card without ever visiting Metadata & Card", async () => {
+    it("shows no Regression performance badge in Live Preview's Home Card, but converges the Dataset Detail header, without ever visiting Metadata & Card", async () => {
       installFetchMock({ resultContractOverride: continuousRegressionResultContract });
       renderAdminPage();
       await loadDraftOnly();
@@ -4005,7 +4017,12 @@ describe("DatasetAdminPage", () => {
       fireEvent.click(screen.getByRole("tab", { name: "Home Card" }));
 
       const homeCardPanel = await screen.findByRole("article", { name: "Home Card preview" });
-      await waitFor(() => expect(within(homeCardPanel).getByText("Regression performance")).toBeInTheDocument());
+      expect(within(homeCardPanel).queryByText("Regression performance")).not.toBeInTheDocument();
+      expect(homeCardPanel.querySelector(".dataset-card__badges")).not.toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("tab", { name: "Dataset Detail" }));
+      const headerBadges = document.querySelector(".dataset-detail-header__badges") as HTMLElement;
+      await waitFor(() => expect(within(headerBadges).getByText("Regression performance")).toBeInTheDocument());
       expect(screen.queryByRole("tab", { name: "Metadata & Card", selected: true })).not.toBeInTheDocument();
     });
 
@@ -4097,7 +4114,12 @@ describe("DatasetAdminPage", () => {
       fireEvent.click(screen.getByRole("tab", { name: "Home Card" }));
 
       const homeCardPanel = await screen.findByRole("article", { name: "Home Card preview" });
-      await waitFor(() => expect(within(homeCardPanel).getByText("Balanced classification")).toBeInTheDocument());
+      expect(within(homeCardPanel).queryByText("Balanced classification")).not.toBeInTheDocument();
+      expect(homeCardPanel.querySelector(".dataset-card__badges")).not.toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("tab", { name: "Dataset Detail" }));
+      const headerBadges = document.querySelector(".dataset-detail-header__badges") as HTMLElement;
+      await waitFor(() => expect(within(headerBadges).getByText("Balanced classification")).toBeInTheDocument());
       expect(screen.queryByRole("tab", { name: "Metadata & Card", selected: true })).not.toBeInTheDocument();
     });
 

@@ -435,10 +435,81 @@ h1 {
   line-height: var(--atlas-line-normal);
 }
 
-.featured-datasets__grid {
+/*
+ * Project Spec S0286: HomeDatasetCarousel-owned classes replace the retired
+ * featured-datasets__grid. The viewport is the sole horizontal-scroll
+ * boundary -- the track is a plain flex row holding exactly one item per
+ * dataset (no cloned/duplicate track), sized to its natural content width so
+ * real overflow against the viewport stays measurable via
+ * scrollWidth/clientWidth. Native overflow-x keeps touch/manual scrolling
+ * and keyboard usability intact; the scrollbar is only visually suppressed,
+ * never functionally removed. No continuous marquee animation is used --
+ * motion is discrete, JS-driven scrollTo steps only.
+ */
+.home-dataset-carousel {
+  position: relative;
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
+  gap: var(--atlas-space-4);
+}
+
+.home-dataset-carousel__viewport {
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-snap-type: x proximity;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.home-dataset-carousel__viewport::-webkit-scrollbar {
+  display: none;
+}
+
+.home-dataset-carousel__track {
+  display: flex;
   gap: var(--atlas-space-6);
+  width: max-content;
+}
+
+.home-dataset-carousel__item {
+  flex: 0 0 auto;
+  width: min(18rem, 85vw);
+  scroll-snap-align: start;
+}
+
+.home-dataset-carousel__item .dataset-card {
+  height: 100%;
+}
+
+.home-dataset-carousel__controls {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--atlas-space-3);
+}
+
+.home-dataset-carousel__control {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  border: 1px solid var(--atlas-color-border-strong);
+  border-radius: var(--atlas-radius-md);
+  color: var(--atlas-color-accent-strong);
+  background: var(--atlas-color-surface);
+  font-size: 1.5rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.home-dataset-carousel__control:hover {
+  border-color: var(--public-shell-color-accent, var(--atlas-color-accent));
+  transform: translateY(-1px);
+}
+
+.home-dataset-carousel__control:focus-visible {
+  outline: none;
+  box-shadow: var(--atlas-focus-ring);
 }
 
 /* Dataset themes are deliberately local: their concrete values are resolved
@@ -569,19 +640,6 @@ h1 {
 .dataset-card__action {
   color: var(--atlas-color-accent-strong);
   font-weight: 700;
-}
-
-/*
- * Project Spec S0204: scoped Home Card badge row -- problem-type and
- * Performance focus badges sit side by side when space permits and wrap
- * naturally at narrow card widths, without introducing a second Home Card
- * layout or new color semantics.
- */
-.dataset-card__badges {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--atlas-space-2);
 }
 
 /* Project Spec S0117: shared public Dataset Detail access-state surface
@@ -777,9 +835,10 @@ h1 {
 
 /*
  * Project Spec S0238: three Theme Preset-aware badge color roles, owned by
- * the shared DatasetIdentityBadges composition and reused unmodified by
- * both the Home Card badge row (.dataset-card__badges above) and this
- * Dataset Detail header badge group. Every value traces back to an
+ * the shared DatasetIdentityBadges composition. Project Spec S0286 retired
+ * the Home Card badge row (DatasetCard no longer renders
+ * DatasetIdentityBadges); this Dataset Detail header badge group remains its
+ * sole live consumer. Every value traces back to an
  * existing Theme Preset token family -- accent for problem, chart_secondary
  * for focus, border_strong/surface for model -- never a hardcoded
  * hex/rgb/hsl value or a dataset/model-specific color map. Color stays
@@ -2653,9 +2712,46 @@ h1 {
     gap: var(--atlas-space-6);
   }
 
-  .featured-datasets__grid {
-    grid-template-columns: repeat(auto-fit, minmax(min(100%, 20rem), 1fr));
-    gap: var(--atlas-space-8);
+  /*
+   * Project Spec S0286: Home selects the overlay navigation layout so the
+   * opened rail layers above the canvas at existing nav/toggle z-indexes
+   * instead of claiming the shared shell's `auto` grid column -- the main
+   * Home track width stays identical whether the rail is open or closed.
+   * Reuses the exact fixed-position/translateX/backdrop stacking model the
+   * base rules above already use below 768px; only the desktop breakpoint's
+   * grid-column/sticky-width behavior is overridden here, and only for this
+   * explicit `data-nav-layout="overlay"` selection.
+   */
+  .public-shell[data-nav-layout="overlay"] {
+    grid-template-columns: 1fr;
+  }
+
+  .public-shell[data-nav-layout="overlay"] .public-shell__nav {
+    position: fixed;
+    inset: 0 auto 0 0;
+    width: var(--public-nav-rail-width);
+    min-width: 0;
+    padding: var(--public-nav-control-slot-height) var(--atlas-space-3) var(--atlas-space-6);
+    border-right: 1px solid var(--public-shell-color-border);
+    overflow-y: auto;
+    transform: translateX(-100%);
+    transition: transform 0.2s ease;
+  }
+
+  .public-shell[data-nav-layout="overlay"].public-shell--nav-open .public-shell__nav {
+    transform: translateX(0);
+  }
+
+  .public-shell[data-nav-layout="overlay"] .public-shell__nav-overlay {
+    display: block !important;
+  }
+
+  .public-shell[data-nav-layout="overlay"]:not(.public-shell--nav-open) .public-shell__nav-overlay {
+    display: none !important;
+  }
+
+  .home-dataset-carousel__item {
+    width: 20rem;
   }
 
   .dataset-detail-overview__analytics {
@@ -2727,8 +2823,8 @@ h1 {
     width: min(100% - 8rem, 1500px);
   }
 
-  .featured-datasets__grid {
-    grid-template-columns: repeat(auto-fit, minmax(21rem, 1fr));
+  .home-dataset-carousel__item {
+    width: 21rem;
   }
 
   .dataset-detail-header__metadata {

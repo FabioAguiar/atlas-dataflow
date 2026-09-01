@@ -386,19 +386,23 @@ describe("PublicShell initial navigation route isolation (Project Spec S0137)", 
     const { container } = await renderApp("/dataset/telco-customer-churn", false);
     await screen.findByRole("heading", { name: "Telco Customer Churn", level: 1 });
 
-    const toggle = screen.getByLabelText("Mostrar navegação");
+    const toggle = screen.getByLabelText("Show navigation");
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     expect(container.querySelector(".public-shell")).not.toHaveClass("public-shell--nav-open");
   });
 
-  it("keeps / open by default on a desktop viewport", async () => {
+  // Project Spec S0286: / no longer inherits PublicShell's viewport-derived
+  // default -- Home now requests an explicit initialNavOpen={false}, same as
+  // Dataset Detail, so this S0137-era "open by default on desktop" behavior
+  // is a deliberate regression, not a preserved one.
+  it("starts / collapsed on a desktop viewport (Project Spec S0286)", async () => {
     mockMatchMedia(true);
     const { container } = await renderApp("/", false);
     await screen.findByRole("heading", { name: /Atlas DataFlow/i });
 
-    const toggle = screen.getByLabelText("Ocultar navegação");
-    expect(toggle).toHaveAttribute("aria-expanded", "true");
-    expect(container.querySelector(".public-shell")).toHaveClass("public-shell--nav-open");
+    const toggle = screen.getByLabelText("Show navigation");
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(container.querySelector(".public-shell")).not.toHaveClass("public-shell--nav-open");
   });
 
   it("keeps /dataset/:slug/view/:viewId open by default on a desktop viewport", async () => {
@@ -406,7 +410,7 @@ describe("PublicShell initial navigation route isolation (Project Spec S0137)", 
     const { container } = await renderApp("/dataset/telco-customer-churn/view/churn-risk-overview", false);
     await screen.findByRole("heading", { name: "Churn risk overview", level: 1 });
 
-    const toggle = screen.getByLabelText("Ocultar navegação");
+    const toggle = screen.getByLabelText("Hide navigation");
     expect(toggle).toHaveAttribute("aria-expanded", "true");
     expect(container.querySelector(".public-shell")).toHaveClass("public-shell--nav-open");
   });
@@ -416,7 +420,7 @@ describe("PublicShell initial navigation route isolation (Project Spec S0137)", 
     const { container } = await renderApp("/dataset/telco-customer-churn", false);
     await screen.findByRole("heading", { name: "Telco Customer Churn", level: 1 });
 
-    const toggle = screen.getByLabelText("Mostrar navegação");
+    const toggle = screen.getByLabelText("Show navigation");
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     expect(container.querySelector(".public-shell")).not.toHaveClass("public-shell--nav-open");
   });
@@ -426,7 +430,7 @@ describe("PublicShell initial navigation route isolation (Project Spec S0137)", 
     const { container: homeContainer } = await renderApp("/", false);
     await screen.findByRole("heading", { name: /Atlas DataFlow/i });
 
-    expect(screen.getByLabelText("Mostrar navegação")).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByLabelText("Show navigation")).toHaveAttribute("aria-expanded", "false");
     expect(homeContainer.querySelector(".public-shell")).not.toHaveClass("public-shell--nav-open");
   });
 
@@ -435,15 +439,83 @@ describe("PublicShell initial navigation route isolation (Project Spec S0137)", 
     const { container } = await renderApp("/dataset/telco-customer-churn", false);
     await screen.findByRole("heading", { name: "Telco Customer Churn", level: 1 });
 
-    fireEvent.click(screen.getByLabelText("Mostrar navegação"));
+    fireEvent.click(screen.getByLabelText("Show navigation"));
 
-    expect(screen.getByLabelText("Ocultar navegação")).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByLabelText("Hide navigation")).toHaveAttribute("aria-expanded", "true");
     expect(container.querySelector(".public-shell")).toHaveClass("public-shell--nav-open");
 
-    fireEvent.click(screen.getByLabelText("Ocultar navegação"));
+    fireEvent.click(screen.getByLabelText("Hide navigation"));
 
-    expect(screen.getByLabelText("Mostrar navegação")).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByLabelText("Show navigation")).toHaveAttribute("aria-expanded", "false");
     expect(container.querySelector(".public-shell")).not.toHaveClass("public-shell--nav-open");
+  });
+});
+
+// Project Spec S0286: Home explicitly starts collapsed at every viewport and
+// explicitly selects the overlay navigation layout mode, while Dataset
+// Detail and Predict View keep their own existing regressions unchanged.
+describe("Home explicit collapsed route entry and overlay navigation layout (Project Spec S0286)", () => {
+  beforeEach(() => {
+    installFetchMock();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+
+  it("starts Home collapsed on a desktop viewport", async () => {
+    mockMatchMedia(true);
+    const { container } = await renderApp("/", false);
+    await screen.findByRole("heading", { name: /Atlas DataFlow/i });
+
+    expect(screen.getByLabelText("Show navigation")).toHaveAttribute("aria-expanded", "false");
+    expect(container.querySelector(".public-shell")).not.toHaveClass("public-shell--nav-open");
+  });
+
+  it("starts Home collapsed on a mobile viewport", async () => {
+    mockMatchMedia(false);
+    const { container } = await renderApp("/", false);
+    await screen.findByRole("heading", { name: /Atlas DataFlow/i });
+
+    expect(screen.getByLabelText("Show navigation")).toHaveAttribute("aria-expanded", "false");
+    expect(container.querySelector(".public-shell")).not.toHaveClass("public-shell--nav-open");
+  });
+
+  it("starts Home collapsed even after entering from an open Predict View shell", async () => {
+    mockMatchMedia(true);
+    const { container, navigate } = await renderAppWithNavigation(
+      "/dataset/telco-customer-churn/view/churn-risk-overview",
+    );
+    expect(
+      await screen.findByRole("heading", { name: "Churn risk overview", level: 1 }),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("Hide navigation")).toHaveAttribute("aria-expanded", "true");
+
+    navigate("/");
+
+    expect(await screen.findByRole("heading", { name: /Atlas DataFlow/i })).toBeInTheDocument();
+    expect(screen.getByLabelText("Show navigation")).toHaveAttribute("aria-expanded", "false");
+    expect(container.querySelector(".public-shell")).not.toHaveClass("public-shell--nav-open");
+  });
+
+  it("selects the overlay navigation layout for Home only", async () => {
+    mockMatchMedia(true);
+    const { container: homeContainer } = await renderApp("/", false);
+    await screen.findByRole("heading", { name: /Atlas DataFlow/i });
+    expect(homeContainer.querySelector(".public-shell")).toHaveAttribute("data-nav-layout", "overlay");
+
+    const { container: datasetContainer } = await renderApp("/dataset/telco-customer-churn", false);
+    await screen.findByRole("heading", { name: "Telco Customer Churn", level: 1 });
+    expect(datasetContainer.querySelector(".public-shell")).toHaveAttribute("data-nav-layout", "inline");
+
+    const { container: predictViewContainer } = await renderApp(
+      "/dataset/telco-customer-churn/view/churn-risk-overview",
+      false,
+    );
+    await screen.findByRole("heading", { name: "Churn risk overview", level: 1 });
+    expect(predictViewContainer.querySelector(".public-shell")).toHaveAttribute("data-nav-layout", "inline");
   });
 });
 
@@ -464,17 +536,24 @@ describe("Dataset Detail route-entry navigation reset (Project Spec S0139)", () 
     vi.resetModules();
   });
 
-  it("collapses navigation entering Dataset Detail from Home without a page reload", async () => {
+  // Project Spec S0286: Home itself now starts collapsed, so this proves the
+  // real transition -- open the Home overlay nav manually, then navigate,
+  // and confirm Dataset Detail still forces a fresh collapsed state rather
+  // than inheriting the open rail.
+  it("collapses navigation entering Dataset Detail from an opened Home without a page reload", async () => {
     const { container, navigate } = await renderAppWithNavigation("/");
     expect(await screen.findByRole("heading", { name: /Atlas DataFlow/i })).toBeInTheDocument();
-    expect(screen.getByLabelText("Ocultar navegação")).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByLabelText("Show navigation")).toHaveAttribute("aria-expanded", "false");
+
+    fireEvent.click(screen.getByLabelText("Show navigation"));
+    expect(screen.getByLabelText("Hide navigation")).toHaveAttribute("aria-expanded", "true");
 
     navigate("/dataset/telco-customer-churn");
 
     expect(
       await screen.findByRole("heading", { name: "Telco Customer Churn", level: 1 }),
     ).toBeInTheDocument();
-    expect(screen.getByLabelText("Mostrar navegação")).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByLabelText("Show navigation")).toHaveAttribute("aria-expanded", "false");
     expect(container.querySelector(".public-shell")).not.toHaveClass("public-shell--nav-open");
     expect(container.querySelector("main")).toHaveAttribute("data-main-mode", "full_bleed");
   });
@@ -486,31 +565,31 @@ describe("Dataset Detail route-entry navigation reset (Project Spec S0139)", () 
     expect(
       await screen.findByRole("heading", { name: "Churn risk overview", level: 1 }),
     ).toBeInTheDocument();
-    expect(screen.getByLabelText("Ocultar navegação")).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByLabelText("Hide navigation")).toHaveAttribute("aria-expanded", "true");
 
     navigate("/dataset/telco-customer-churn");
 
     expect(
       await screen.findByRole("heading", { name: "Telco Customer Churn", level: 1 }),
     ).toBeInTheDocument();
-    expect(screen.getByLabelText("Mostrar navegação")).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByLabelText("Show navigation")).toHaveAttribute("aria-expanded", "false");
     expect(container.querySelector(".public-shell")).not.toHaveClass("public-shell--nav-open");
   });
 
   it("re-collapses on a Dataset Detail A -> Dataset Detail B slug transition even after the user opened navigation", async () => {
     const { container, navigate } = await renderAppWithNavigation("/dataset/telco-customer-churn");
     await screen.findByRole("heading", { name: "Telco Customer Churn", level: 1 });
-    expect(screen.getByLabelText("Mostrar navegação")).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByLabelText("Show navigation")).toHaveAttribute("aria-expanded", "false");
 
-    fireEvent.click(screen.getByLabelText("Mostrar navegação"));
-    expect(screen.getByLabelText("Ocultar navegação")).toHaveAttribute("aria-expanded", "true");
+    fireEvent.click(screen.getByLabelText("Show navigation"));
+    expect(screen.getByLabelText("Hide navigation")).toHaveAttribute("aria-expanded", "true");
 
     navigate("/dataset/atlas-sample-dataset-two");
 
     expect(
       await screen.findByRole("heading", { name: "Atlas Sample Dataset Two", level: 1 }),
     ).toBeInTheDocument();
-    expect(screen.getByLabelText("Mostrar navegação")).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByLabelText("Show navigation")).toHaveAttribute("aria-expanded", "false");
     expect(container.querySelector(".public-shell")).not.toHaveClass("public-shell--nav-open");
   });
 
@@ -520,10 +599,10 @@ describe("Dataset Detail route-entry navigation reset (Project Spec S0139)", () 
 
     navigate("/dataset/telco-customer-churn");
     await screen.findByRole("heading", { name: "Telco Customer Churn", level: 1 });
-    expect(screen.getByLabelText("Mostrar navegação")).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByLabelText("Show navigation")).toHaveAttribute("aria-expanded", "false");
 
-    fireEvent.click(screen.getByLabelText("Mostrar navegação"));
-    expect(screen.getByLabelText("Ocultar navegação")).toHaveAttribute("aria-expanded", "true");
+    fireEvent.click(screen.getByLabelText("Show navigation"));
+    expect(screen.getByLabelText("Hide navigation")).toHaveAttribute("aria-expanded", "true");
 
     navigate(-1);
     await screen.findByRole("heading", { name: /Atlas DataFlow/i });
@@ -533,7 +612,7 @@ describe("Dataset Detail route-entry navigation reset (Project Spec S0139)", () 
     expect(
       await screen.findByRole("heading", { name: "Telco Customer Churn", level: 1 }),
     ).toBeInTheDocument();
-    expect(screen.getByLabelText("Mostrar navegação")).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByLabelText("Show navigation")).toHaveAttribute("aria-expanded", "false");
   });
 
   it("keeps navigation open through Dataset Page data resolution once the user opens it", async () => {
@@ -542,33 +621,37 @@ describe("Dataset Detail route-entry navigation reset (Project Spec S0139)", () 
 
     navigate("/dataset/telco-customer-churn");
     await screen.findByRole("heading", { name: "Telco Customer Churn", level: 1 });
-    expect(screen.getByLabelText("Mostrar navegação")).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByLabelText("Show navigation")).toHaveAttribute("aria-expanded", "false");
 
-    fireEvent.click(screen.getByLabelText("Mostrar navegação"));
-    expect(screen.getByLabelText("Ocultar navegação")).toHaveAttribute("aria-expanded", "true");
+    fireEvent.click(screen.getByLabelText("Show navigation"));
+    expect(screen.getByLabelText("Hide navigation")).toHaveAttribute("aria-expanded", "true");
 
     // Dataset Page keeps resolving auxiliary sections (context, metrics,
     // contract, visualizations) well after the primary heading appears --
     // none of those re-renders may undo the user's manual open.
     await screen.findByText("Public-safe context");
 
-    expect(screen.getByLabelText("Ocultar navegação")).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByLabelText("Hide navigation")).toHaveAttribute("aria-expanded", "true");
     expect(container.querySelector(".public-shell")).toHaveClass("public-shell--nav-open");
   });
 
-  it("keeps / and the Predict View route open by default even after visiting collapsed Dataset Detail", async () => {
+  // Project Spec S0286: Home no longer keeps a viewport-derived open default
+  // -- it always starts collapsed, even after visiting collapsed Dataset
+  // Detail. Predict View's own existing viewport-derived default (open on
+  // desktop) is unaffected by that Home-only regression.
+  it("keeps / collapsed and the Predict View route open by default even after visiting collapsed Dataset Detail", async () => {
     const { navigate } = await renderAppWithNavigation("/dataset/telco-customer-churn");
     await screen.findByRole("heading", { name: "Telco Customer Churn", level: 1 });
-    expect(screen.getByLabelText("Mostrar navegação")).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByLabelText("Show navigation")).toHaveAttribute("aria-expanded", "false");
 
     navigate("/");
     expect(await screen.findByRole("heading", { name: /Atlas DataFlow/i })).toBeInTheDocument();
-    expect(screen.getByLabelText("Ocultar navegação")).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByLabelText("Show navigation")).toHaveAttribute("aria-expanded", "false");
 
     navigate("/dataset/telco-customer-churn/view/churn-risk-overview");
     expect(
       await screen.findByRole("heading", { name: "Churn risk overview", level: 1 }),
     ).toBeInTheDocument();
-    expect(screen.getByLabelText("Ocultar navegação")).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByLabelText("Hide navigation")).toHaveAttribute("aria-expanded", "true");
   });
 });

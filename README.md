@@ -6,9 +6,11 @@ O Atlas DataFlow nasceu da necessidade de estudar diferentes datasets e modelos 
 
 Cada dataset publicado ganha uma apresentação própria, com contexto, métricas, visualizações, documentação e, quando a capability permite, uma experiência interativa de predição. Por trás dessa apresentação existe um fluxo governado de contratos, evidências, releases e validações que mantém o estudo rastreável.
 
-O Atlas tem aparência e ergonomia de produto, mas seu propósito é outro: **ele é um projeto pessoal de estudo e portfólio de conhecimento em dados e programação**. Não há intenção de transformá-lo em uma plataforma comercial, marketplace de modelos ou serviço de MLOps.
+O resultado tem aparência e ergonomia de produto, mas preserva sua origem e seu propósito: **um projeto pessoal de estudo e portfólio de conhecimento em dados e programação**.
 
-![Catálogo público do Atlas DataFlow](https://raw.githubusercontent.com/FabioAguiar/ATLAS_ASSETS_REPOSITORY/main/atlas-dataflow/readme/01-public-home-dataset-catalog.png)
+![Catálogo público do Atlas DataFlow](https://raw.githubusercontent.com/FabioAguiar/project-assets/main/projects/atlas-dataflow/screenshots/raw/01-public-home-dataset-catalog.png)
+
+*A Home reúne os estudos disponíveis em um catálogo visual. Cada card apresenta o problema analisado e conduz ao respectivo Dataset Detail.*
 
 > O projeto está consolidando sua primeira versão pública. As quatro capabilities atualmente implementadas continuarão recebendo novos estudos antes da expansão para outras famílias de problemas.
 
@@ -25,28 +27,14 @@ Para o visitante, o Atlas funciona como uma estante de estudos publicados:
 - inferência orientada por contrato, quando aplicável à capability;
 - estados de carregamento, indisponibilidade e validação sem exposição de detalhes internos.
 
-Nem toda análise precisa ter um formulário de predição. A disponibilidade da experiência interativa é definida pela capability e pela release. O estudo de forecasting univariado, por exemplo, apresenta avaliação final, forecast versus observado e diagnósticos temporais sem expor uma inferência pública de propósito duvidoso.
-
-## O que o Atlas não é
-
-O Atlas não se propõe a ser:
-
-- uma plataforma para upload público de datasets;
-- um ambiente público de treinamento ou execução de notebooks;
-- um marketplace de modelos;
-- uma solução de AutoML;
-- uma plataforma MLOps completa;
-- um sistema de decisões automatizadas em produção;
-- uma evidência de causalidade ou validade operacional dos modelos apresentados.
-
-As previsões e métricas pertencem ao escopo educacional e ao protocolo de avaliação documentado em cada estudo.
+Nem toda análise precisa ter um formulário de predição. A disponibilidade da experiência interativa é definida pela capability e pela release. O estudo de forecasting univariado, por exemplo, apresenta avaliação final, forecast versus observado e diagnósticos temporais sem oferecer um formulário público de inferência.
 
 ## Estudos atualmente apresentados
 
 Os projetos científicos abaixo são **repositórios independentes**. Eles fornecem a referência metodológica usada durante a autoria, mas não são pacotes, submódulos nem dependências de runtime do Atlas.
 
 | Estudo científico | Capability no Atlas | Target | Fonte dos dados |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | [Telco Customer Churn](https://github.com/FabioAguiar/dataset-study-telco-customer-churn) | Classification / Binary | `Churn` | [Kaggle](https://www.kaggle.com/datasets/blastchar/telco-customer-churn) |
 | [Dry Bean](https://github.com/FabioAguiar/dataset-study-dry-bean) | Classification / Multiclass | `Class` | [UCI Machine Learning Repository](https://archive.ics.uci.edu/dataset/602/dry+bean+dataset) |
 | [Concrete Compressive Strength](https://github.com/FabioAguiar/dataset-study-concrete-compressives-strength) | Regression / Continuous | `Concrete compressive strength` | [UCI Machine Learning Repository](https://archive.ics.uci.edu/dataset/165/concrete+compressive+strength) |
@@ -55,7 +43,7 @@ Os projetos científicos abaixo são **repositórios independentes**. Eles forne
 ### Cobertura de problemas
 
 | Família | Variante | Estado | Estudo atual |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | Classification | Binary | Disponível | Telco Customer Churn |
 | Classification | Multiclass | Disponível | Dry Bean |
 | Classification | Multilabel | Planejado | — |
@@ -74,74 +62,36 @@ Os projetos científicos abaixo são **repositórios independentes**. Eles forne
 
 ## Experiência pública
 
-A Home apresenta o catálogo de datasets publicados. Cada card é derivado do perfil público do dataset e pode ter descrição, ícone ou imagem, tipo de problema, modelo e tema próprios.
+O Dataset Detail compartilha uma estrutura comum entre os estudos, mas adapta métricas, visualizações, target, inputs e resultados ao problema publicado.
 
-<details>
-<summary>Home e navegação responsiva</summary>
+### Overview analítico
 
-![Catálogo público com os quatro estudos](https://raw.githubusercontent.com/FabioAguiar/ATLAS_ASSETS_REPOSITORY/main/atlas-dataflow/readme/01-public-home-dataset-catalog.png)
+![Overview do Dataset Detail de Dry Bean](https://raw.githubusercontent.com/FabioAguiar/project-assets/main/projects/atlas-dataflow/screenshots/raw/02-dataset-detail-overview.png)
 
-![Navegação pública em viewport móvel](https://raw.githubusercontent.com/FabioAguiar/ATLAS_ASSETS_REPOSITORY/main/atlas-dataflow/readme/02-public-home-mobile-navigation.png)
+*O Overview de Dry Bean combina resumo de performance, distribuição do target, importância das features e matriz de confusão. O conteúdo e os componentes são definidos pela capability de classificação multiclasse e pela release ativa.*
 
-</details>
+### Inferência orientada por contrato
 
-### Dataset Detail orientado pela capability
+![Formulário e resultado de inferência do Telco Customer Churn](https://raw.githubusercontent.com/FabioAguiar/project-assets/main/projects/atlas-dataflow/screenshots/raw/03-dataset-detail-inference-result.png)
 
-O Dataset Detail compartilha uma estrutura comum, mas adapta métricas, visualizações, target, inputs e resultados ao problema publicado.
+*Quando a capability admite predição interativa, o formulário organiza os campos do contrato em grupos compreensíveis e apresenta o resultado do modelo com score, classificação e contexto de leitura.*
 
-<details>
-<summary>Binary classification — Telco Customer Churn</summary>
+### Documentação do estudo
 
-![Overview de classificação binária](https://raw.githubusercontent.com/FabioAguiar/ATLAS_ASSETS_REPOSITORY/main/atlas-dataflow/readme/03-dataset-detail-telco-overview.png)
+![Documentação técnica do Telco Customer Churn](https://raw.githubusercontent.com/FabioAguiar/project-assets/main/projects/atlas-dataflow/screenshots/raw/04-dataset-detail-documentation.png)
 
-![Inferência e resultado de classificação binária](https://raw.githubusercontent.com/FabioAguiar/ATLAS_ASSETS_REPOSITORY/main/atlas-dataflow/readme/04-dataset-detail-telco-inference-result.png)
-
-</details>
-
-<details>
-<summary>Multiclass classification — Dry Bean</summary>
-
-![Overview de classificação multiclasse](https://raw.githubusercontent.com/FabioAguiar/ATLAS_ASSETS_REPOSITORY/main/atlas-dataflow/readme/05-dataset-detail-dry-bean-overview.png)
-
-![Inferência e distribuição de probabilidades multiclasse](https://raw.githubusercontent.com/FabioAguiar/ATLAS_ASSETS_REPOSITORY/main/atlas-dataflow/readme/06-dataset-detail-dry-bean-inference-result.png)
-
-</details>
-
-<details>
-<summary>Continuous regression — Concrete Compressive Strength</summary>
-
-![Overview de regressão contínua](https://raw.githubusercontent.com/FabioAguiar/ATLAS_ASSETS_REPOSITORY/main/atlas-dataflow/readme/07-dataset-detail-concrete-overview.png)
-
-![Inferência e resultado de regressão contínua](https://raw.githubusercontent.com/FabioAguiar/ATLAS_ASSETS_REPOSITORY/main/atlas-dataflow/readme/08-dataset-detail-concrete-inference-result.png)
-
-</details>
-
-<details>
-<summary>Univariate forecasting — Nottingham Monthly Temperatures</summary>
-
-![Overview de forecasting com forecast versus observado e diagnósticos](https://raw.githubusercontent.com/FabioAguiar/ATLAS_ASSETS_REPOSITORY/main/atlas-dataflow/readme/09-dataset-detail-nottem-overview.png)
-
-</details>
-
-<details>
-<summary>Documentação e interação com gráficos</summary>
-
-![Documentação técnica do dataset](https://raw.githubusercontent.com/FabioAguiar/ATLAS_ASSETS_REPOSITORY/main/atlas-dataflow/readme/10-dataset-detail-documentation.png)
-
-![Tooltip acessível em visualização analítica](https://raw.githubusercontent.com/FabioAguiar/ATLAS_ASSETS_REPOSITORY/main/atlas-dataflow/readme/11-dataset-detail-chart-tooltip.png)
-
-</details>
+*A aba Documentation preserva, junto da apresentação pública, a origem dos dados, o protocolo de avaliação, as métricas, as limitações e outras informações necessárias para interpretar o estudo.*
 
 ## Área administrativa privada
 
-O Atlas também possui uma superfície administrativa para o operador que integra e publica os estudos. Essa área existe para apoiar curadoria e publicação; ela não transforma o Atlas em um produto multiusuário.
+O Atlas também possui uma superfície administrativa para o operador que integra, prepara e publica os estudos. Essa área existe para apoiar curadoria e publicação; ela não transforma o projeto em um produto multiusuário.
 
 No modo privado, o operador pode:
 
 - descobrir e pesquisar runs validadas;
 - promover uma run para um novo Dataset Detail ou atualizar uma apresentação existente;
 - editar conteúdo público sem alterar os contratos técnicos da release;
-- configurar card da Home, ícone ou imagem, foco de performance e tema;
+- configurar o card da Home, o foco de performance e o tema;
 - organizar o formulário de inferência quando a capability admite predição pública;
 - personalizar a apresentação do resultado;
 - escrever e visualizar documentação em Markdown;
@@ -152,87 +102,41 @@ No modo privado, o operador pode:
 
 O admin não é exposto no build público. O modo privado habilita rotas administrativas e deve permanecer limitado a loopback, rede privada ou túnel SSH; ele não possui login público e não deve ser publicado diretamente na internet.
 
-<details>
-<summary>Dashboard, runs e promoção</summary>
+### Dashboard operacional
 
-![Dashboard administrativo com runs e Dataset Details](https://raw.githubusercontent.com/FabioAguiar/ATLAS_ASSETS_REPOSITORY/main/atlas-dataflow/readme/12-admin-dashboard.png)
+![Dashboard administrativo do Atlas DataFlow](https://raw.githubusercontent.com/FabioAguiar/project-assets/main/projects/atlas-dataflow/screenshots/raw/05-admin-dashboard.png)
 
-![Fluxo de promoção de uma run](https://raw.githubusercontent.com/FabioAguiar/ATLAS_ASSETS_REPOSITORY/main/atlas-dataflow/readme/13-admin-run-promotion.png)
+*O Dashboard reúne Dataset Details e runs conhecidas pelo Atlas. A partir dele, o operador acompanha estados, pesquisa registros e inicia ações de curadoria ou promoção.*
 
-</details>
+### Conteúdo público
 
-<details>
-<summary>Dataset Admin — Public Content</summary>
+![Edição do conteúdo público do Dataset Detail](https://raw.githubusercontent.com/FabioAguiar/project-assets/main/projects/atlas-dataflow/screenshots/raw/06-admin-dataset-public-content.png)
 
-![Edição do conteúdo público](https://raw.githubusercontent.com/FabioAguiar/ATLAS_ASSETS_REPOSITORY/main/atlas-dataflow/readme/14-admin-dataset-public-content.png)
+*A aba Public Content concentra título, subtítulo, resumo do problema, fonte e informações editoriais apresentadas ao visitante, sem modificar os valores técnicos governados pela release.*
 
-</details>
+### Metadados e card da Home
 
-<details>
-<summary>Dataset Admin — Metadata & Card</summary>
+![Configuração de metadados e card da Home](https://raw.githubusercontent.com/FabioAguiar/project-assets/main/projects/atlas-dataflow/screenshots/raw/07-admin-dataset-metadata-card.png)
 
-![Metadados, performance focus e preview do card](https://raw.githubusercontent.com/FabioAguiar/ATLAS_ASSETS_REPOSITORY/main/atlas-dataflow/readme/15-admin-dataset-metadata-card.png)
+*A aba Metadata & Card permite escolher a identidade visual, definir o foco de performance e revisar uma prévia do card que será exibido no catálogo público.*
 
-</details>
+### Tema do Dataset Detail
 
-<details>
-<summary>Dataset Admin — Theme Preset</summary>
+![Seleção de tema do Dataset Detail](https://raw.githubusercontent.com/FabioAguiar/project-assets/main/projects/atlas-dataflow/screenshots/raw/08-admin-dataset-theme-preset.png)
 
-![Seleção de tema do Dataset Detail](https://raw.githubusercontent.com/FabioAguiar/ATLAS_ASSETS_REPOSITORY/main/atlas-dataflow/readme/16-admin-dataset-theme-preset.png)
+*Os presets de tema ajustam a identidade cromática da apresentação sem alterar a estrutura analítica nem os contratos do estudo.*
 
-</details>
+### Organização do formulário de inferência
 
-<details>
-<summary>Dataset Admin — Inference Form</summary>
+![Organização administrativa do formulário de inferência](https://raw.githubusercontent.com/FabioAguiar/project-assets/main/projects/atlas-dataflow/screenshots/raw/09-admin-dataset-inference-form.png)
 
-![Organização do formulário público](https://raw.githubusercontent.com/FabioAguiar/ATLAS_ASSETS_REPOSITORY/main/atlas-dataflow/readme/17-admin-dataset-inference-form.png)
+*Para capabilities com inferência pública, o operador pode agrupar, ordenar e revisar os campos que compõem o formulário. A disponibilidade da aba continua sendo determinada pelo contrato da capability.*
 
-![Edição de apresentação de um campo](https://raw.githubusercontent.com/FabioAguiar/ATLAS_ASSETS_REPOSITORY/main/atlas-dataflow/readme/18-admin-dataset-field-editor.png)
+### Autoria da documentação
 
-</details>
+![Editor administrativo de documentação](https://raw.githubusercontent.com/FabioAguiar/project-assets/main/projects/atlas-dataflow/screenshots/raw/10-admin-dataset-documentation-edit.png)
 
-<details>
-<summary>Dataset Admin — Result Card</summary>
-
-![Configuração e preview do cartão de resultado](https://raw.githubusercontent.com/FabioAguiar/ATLAS_ASSETS_REPOSITORY/main/atlas-dataflow/readme/19-admin-dataset-result-card.png)
-
-</details>
-
-<details>
-<summary>Dataset Admin — Documentation</summary>
-
-![Editor de documentação Markdown](https://raw.githubusercontent.com/FabioAguiar/ATLAS_ASSETS_REPOSITORY/main/atlas-dataflow/readme/20-admin-dataset-documentation-edit.png)
-
-![Preview da documentação](https://raw.githubusercontent.com/FabioAguiar/ATLAS_ASSETS_REPOSITORY/main/atlas-dataflow/readme/21-admin-dataset-documentation-preview.png)
-
-</details>
-
-<details>
-<summary>Dataset Admin — Publishing</summary>
-
-![Visibilidade, aprovação e console operacional](https://raw.githubusercontent.com/FabioAguiar/ATLAS_ASSETS_REPOSITORY/main/atlas-dataflow/readme/22-admin-dataset-publishing.png)
-
-</details>
-
-<details>
-<summary>Dataset Admin — Live Preview</summary>
-
-![Live Preview do Dataset Detail](https://raw.githubusercontent.com/FabioAguiar/ATLAS_ASSETS_REPOSITORY/main/atlas-dataflow/readme/23-admin-dataset-live-preview-detail.png)
-
-![Live Preview do card da Home](https://raw.githubusercontent.com/FabioAguiar/ATLAS_ASSETS_REPOSITORY/main/atlas-dataflow/readme/24-admin-dataset-live-preview-home-card.png)
-
-</details>
-
-<details>
-<summary>Settings e Help</summary>
-
-![Configuração do nome exibido no admin](https://raw.githubusercontent.com/FabioAguiar/ATLAS_ASSETS_REPOSITORY/main/atlas-dataflow/readme/25-admin-settings.png)
-
-![Ajuda administrativa](https://raw.githubusercontent.com/FabioAguiar/ATLAS_ASSETS_REPOSITORY/main/atlas-dataflow/readme/26-admin-help.png)
-
-</details>
-
-O roteiro completo de captura, com viewport, estado esperado e cuidados de sanitização, está em [`docs/readme-screenshot-plan.md`](docs/readme-screenshot-plan.md).
+*A documentação é escrita em Markdown na área administrativa e publicada como parte do snapshot revisado do Dataset Detail.*
 
 ## Arquitetura em poucas palavras
 
@@ -252,10 +156,12 @@ flowchart TB
 
 O estudo externo pode ser consultado durante a autoria para traduzir decisões científicas já revisadas. Depois disso, o Atlas opera exclusivamente com seus próprios notebooks, contratos, evidências, modelos, bundles e releases. Nenhum runtime deve ler caminhos ou artefatos do repositório científico externo.
 
+O fluxo foi desenhado para a autoria curada dos estudos do portfólio. Upload público de datasets, execução pública de notebooks, AutoML, marketplace de modelos e operação MLOps de propósito geral não fazem parte de seu escopo. A governança existente serve à rastreabilidade das análises publicadas no próprio mostruário.
+
 ### Fontes de verdade
 
 | Responsabilidade | Fonte principal |
-|---|---|
+| --- | --- |
 | Estrutura e validação de entradas | Contratos versionados |
 | Aplicabilidade por tipo de problema | Capability profile |
 | Modelo, métricas e visualizações executáveis | Release imutável |
@@ -288,7 +194,7 @@ A organização segue **responsabilidade arquitetural**, não extensão de arqui
 ## Stack principal
 
 | Área | Tecnologias |
-|---|---|
+| --- | --- |
 | Backend e runtime | Python, FastAPI, Uvicorn, JSON Schema |
 | Pipeline e modelos | Python, pandas, scikit-learn, statsmodels, joblib |
 | Frontend | React, TypeScript, Vite, Recharts |
@@ -334,7 +240,6 @@ Com as dependências de desenvolvimento instaladas:
 
 ```bash
 python -m pytest -q
-
 npm --prefix web ci
 npm --prefix web test
 npm --prefix web run build
@@ -376,12 +281,11 @@ Depois dessa consolidação, o projeto pode avançar gradualmente para multilabe
 - [`docs/vision.md`](docs/vision.md) — visão e fronteiras do projeto;
 - [`docs/milestones.md`](docs/milestones.md) — evolução por milestones;
 - [`docs/operations/dataset-onboarding-path.md`](docs/operations/dataset-onboarding-path.md) — caminho operacional de onboarding;
-- [`docs/operations/release-flow.md`](docs/operations/release-flow.md) — checklist de validação de releases;
-- [`docs/readme-screenshot-plan.md`](docs/readme-screenshot-plan.md) — inventário dos screenshots deste README.
+- [`docs/operations/release-flow.md`](docs/operations/release-flow.md) — checklist de validação de releases.
 
 ## Limites de interpretação
 
-O Atlas organiza e apresenta estudos preditivos. Ele não converte automaticamente um bom resultado experimental em validade de produção.
+O Atlas organiza e apresenta estudos preditivos. Um bom resultado experimental não implica automaticamente validade de produção.
 
 Cada publicação deve ser interpretada dentro de seus próprios dados, protocolo de split ou backtesting, métricas, limitações e condições de inferência. Correlação, feature importance e desempenho preditivo não demonstram causalidade. Uso operacional exigiria validação externa, monitoramento, análise de custos de erro, avaliação de fairness quando aplicável e governança própria do domínio.
 
@@ -390,4 +294,3 @@ Cada publicação deve ser interpretada dentro de seus próprios dados, protocol
 Desenvolvido por [Fábio Aguiar](https://fabioaguiar.dev/).
 
 Distribuído sob a [MIT License](LICENSE).
-

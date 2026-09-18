@@ -16,6 +16,12 @@ services:
       ATLAS_MEDIA_ROOT: /app/media
     expose:
       - "8000"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add: []
+    read_only: true
     volumes:
       - ./contracts:/app/contracts:ro
       - ./publisher/runs:/app/publisher/runs
@@ -97,6 +103,14 @@ services:
         exec nginx -g 'daemon off;'
     ports:
       - "127.0.0.1:${ATLAS_PREVIEW_PORT:-15174}:80"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    # The private startup command writes its Admin-enabled Nginx config.
+    read_only: false
     depends_on:
       api:
         condition: service_healthy

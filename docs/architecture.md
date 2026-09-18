@@ -515,6 +515,32 @@ Area responsible for packaging, configuration, container execution, HTTPS, envir
 
 Operation must consider VPS and containerized environment from the beginning.
 
+The API and web images run as dedicated `atlas` users with fixed UID/GID
+`10001:10001`. Before either stack is started on a deployment host, operators
+must recursively reconcile ownership or group-write access for every writable
+bind-mount source to that identity. The private stack requires this for
+`registry`, `releases`, `publisher/runs`, and `media/home-cards`; the public
+stack requires it only for `media/home-cards`. These are the only intended
+persistent application-state write paths, and the repository image content
+remains immutable at runtime.
+
+Both services drop all Linux capabilities and enable
+`no-new-privileges:true`. The web service restores only
+`NET_BIND_SERVICE`, which its non-root process needs to listen on port 80; the
+API restores no capabilities. The API root filesystem is read-only in both
+compose modes. The public web root filesystem is also read-only, with bounded
+tmpfs mounts for `/var/cache/nginx`, `/var/run`, and `/tmp`. The private web
+service is the single documented exception: its root filesystem remains
+writable because its startup command generates the private, Admin-enabled
+Nginx configuration in `/etc/nginx/conf.d` before starting Nginx.
+
+Numeric CPU, memory, and PID limits are intentionally not declared yet. The
+issue requires measured limits rather than estimates, and no representative
+2-vCPU/4-GB load baseline is available in this implementation phase. A later,
+separately authorized deployment exercise must measure cold model loading,
+public inference, and the complete private Admin publication/media workflow,
+then set per-service values with observed headroom in both compose modes.
+
 ## Responsibilities
 
 ### Public Web Experience

@@ -19,6 +19,7 @@ PRIVATE_COMPOSE_PATH = REPO_ROOT / "docker-compose.yml"
 PROD_COMPOSE_PATH = REPO_ROOT / "docker-compose.prod.yml"
 DOCKERIGNORE_PATH = REPO_ROOT / ".dockerignore"
 API_DOCKERFILE_PATH = REPO_ROOT / "api" / "Dockerfile"
+WEB_DOCKERFILE_PATH = REPO_ROOT / "web" / "Dockerfile"
 
 _COMPOSE_PATHS = (PRIVATE_COMPOSE_PATH, PROD_COMPOSE_PATH)
 
@@ -101,3 +102,44 @@ def test_dockerignore_admits_the_governed_contracts_build_context():
 def test_api_image_packages_governed_contracts_at_runtime_path():
     instructions = API_DOCKERFILE_PATH.read_text(encoding="utf-8").splitlines()
     assert "COPY contracts/ ./contracts/" in instructions
+
+
+def test_api_and_web_images_use_dedicated_non_root_runtime_users():
+    for path in (API_DOCKERFILE_PATH, WEB_DOCKERFILE_PATH):
+        users = [
+            line.split(maxsplit=1)[1].strip()
+            for line in path.read_text(encoding="utf-8").splitlines()
+            if line.strip().upper().startswith("USER ")
+        ]
+        assert users, f"No runtime USER in {path.relative_to(REPO_ROOT)}"
+        assert users[-1].lower() not in {"0", "root", "0:0", "root:root"}
+
+
+def test_api_and_web_services_drop_privileges_in_both_compose_modes():
+    for path in _COMPOSE_PATHS:
+        services = _load(path)["services"]
+        for name in ("api", "web"):
+            service = services[name]
+            assert "no-new-privileges:true" in (
+                service.get("security_opt") or []
+            ), f"{path.name}:{name}"
+            assert "ALL" in (service.get("cap_drop") or []), f"{path.name}:{name}"
+
+            added = service.get("cap_add") or []
+            if name == "api":
+                assert added == [], f"{path.name}:{name}"
+            else:
+                assert added == ["NET_BIND_SERVICE"], f"{path.name}:{name}"
+
+
+def test_read_only_roots_match_public_and_private_write_requirements():
+    private_services = _load(PRIVATE_COMPOSE_PATH)["services"]
+    assert private_services["api"]["read_only"] is True
+    assert private_services["web"]["read_only"] is False
+
+    prod_services = _load(PROD_COMPOSE_PATH)["services"]
+    assert prod_services["api"]["read_only"] is True
+    assert prod_services["web"]["read_only"] is True
+
+    prod_web_tmpfs = {entry.split(":", 1)[0] for entry in prod_services["web"]["tmpfs"]}
+    assert prod_web_tmpfs == {"/var/cache/nginx", "/var/run", "/tmp"}

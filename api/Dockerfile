@@ -16,8 +16,14 @@ COPY releases/ ./releases/
 COPY publisher/*.py ./publisher/
 COPY publisher/release-candidate.operational-note.json ./publisher/release-candidate.operational-note.json
 
+RUN groupadd --gid 10001 atlas \
+    && useradd --uid 10001 --gid atlas --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin atlas \
+    && chown -R atlas:atlas /app
+
 WORKDIR /app/api
 
 EXPOSE 8000
+
+USER atlas
 
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--no-access-log"]

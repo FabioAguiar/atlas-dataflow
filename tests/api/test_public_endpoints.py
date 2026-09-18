@@ -12,6 +12,7 @@ or directly:
     python tests/api/test_public_endpoints.py
 """
 
+import asyncio
 import json
 import os
 import sys
@@ -27,7 +28,8 @@ sys.path.insert(0, str(API_ROOT))
 
 import main as api_main  # noqa: E402
 import public_predict_view_customization_loader as customization_loader_module  # noqa: E402
-from fastapi import Request  # noqa: E402
+from fastapi import FastAPI, Request  # noqa: E402
+from fastapi.responses import Response  # noqa: E402
 from registry.list import AdminListedDataset, ListedDataset, list_admin_datasets, list_datasets  # noqa: E402
 from registry.resolve import (  # noqa: E402
     DatasetUnavailableError,
@@ -89,6 +91,159 @@ _EMPTY_PUBLIC_CONTEXT_OVERLAY = {
     "date_format": None,
     "primary_metric_key": None,
 }
+
+
+def _run_asgi_request_chunks(application, path: str, chunks: list[bytes], headers=None):
+    """Drive an ASGI application with deterministic request-body chunks."""
+    response_messages = []
+    request_index = 0
+
+    async def receive():
+        nonlocal request_index
+        if request_index < len(chunks):
+            chunk = chunks[request_index]
+            request_index += 1
+            return {
+                "type": "http.request",
+                "body": chunk,
+                "more_body": request_index < len(chunks),
+            }
+        return {"type": "http.disconnect"}
+
+    async def send(message):
+        response_messages.append(message)
+
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0", "spec_version": "2.3"},
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "http",
+        "path": path,
+        "raw_path": path.encode("ascii"),
+        "query_string": b"",
+        "root_path": "",
+        "headers": list(headers or []),
+        "client": ("test-client", 50000),
+        "server": ("test-server", 80),
+    }
+    asyncio.run(application(scope, receive, send))
+    start = next(message for message in response_messages if message["type"] == "http.response.start")
+    body = b"".join(
+        message.get("body", b"") for message in response_messages if message["type"] == "http.response.body"
+    )
+    return start["status"], body, request_index
+
+
+def _payload_echo_application():
+    downstream = FastAPI()
+
+    @downstream.post("/echo")
+    async def echo_body(request: Request):
+        return Response(content=await request.body(), media_type="application/octet-stream")
+
+    return api_main.PayloadSizeLimitMiddleware(downstream, max_size=api_main._PAYLOAD_SIZE_LIMIT)
+
+
+def _payload_too_large_body() -> dict:
+    return {
+        "error_type": "invalid_payload",
+        "error_code": "PAYLOAD_TOO_LARGE",
+        "message": "The request payload exceeds the maximum allowed size.",
+    }
+
+
+# ---------------------------------------------------------------------------
+# request payload size boundary
+# ---------------------------------------------------------------------------
+
+def test_payload_size_limit_rejects_declared_and_chunked_oversized_bodies_with_the_same_envelope():
+    limit = api_main._PAYLOAD_SIZE_LIMIT
+    application = _payload_echo_application()
+
+    declared_status, declared_body, declared_reads = _run_asgi_request_chunks(
+        application,
+        "/echo",
+        [b"unread"],
+        headers=[(b"content-length", str(limit + 1).encode("ascii"))],
+    )
+    chunked_status, chunked_body, chunked_reads = _run_asgi_request_chunks(
+        application,
+        "/echo",
+        [b"a" * limit, b"b", b"unread"],
+    )
+
+    assert declared_status == chunked_status == 413
+    assert json.loads(declared_body) == json.loads(chunked_body) == _payload_too_large_body()
+    assert declared_body == chunked_body
+    assert declared_reads == 0
+    assert chunked_reads == 2
+
+
+def test_payload_size_limit_enforces_actual_bytes_for_understated_and_malformed_lengths():
+    limit = api_main._PAYLOAD_SIZE_LIMIT
+    application = _payload_echo_application()
+
+    for declared_length in (b"1", b"not-a-number"):
+        status, body, reads = _run_asgi_request_chunks(
+            application,
+            "/echo",
+            [b"a" * (limit // 2), b"b" * (limit // 2 + 1), b"unread"],
+            headers=[(b"content-length", declared_length)],
+        )
+
+        assert status == 413
+        assert json.loads(body) == _payload_too_large_body()
+        assert reads == 2
+
+
+def test_payload_size_limit_admits_exact_boundary_and_rejects_one_byte_over():
+    limit = api_main._PAYLOAD_SIZE_LIMIT
+    application = _payload_echo_application()
+    exact_chunks = [b"a" * (limit // 2), b"b" * (limit // 2)]
+
+    exact_status, exact_body, exact_reads = _run_asgi_request_chunks(application, "/echo", exact_chunks)
+    over_status, over_body, over_reads = _run_asgi_request_chunks(
+        application,
+        "/echo",
+        [exact_chunks[0], exact_chunks[1], b"c", b"unread"],
+    )
+
+    assert exact_status == 200
+    assert exact_body == b"".join(exact_chunks)
+    assert exact_reads == 2
+    assert over_status == 413
+    assert json.loads(over_body) == _payload_too_large_body()
+    assert over_reads == 3
+
+
+def test_payload_size_limit_preserves_valid_multi_chunk_body_once_and_in_order():
+    chunks = [b"first-", b"second-", b"third"]
+
+    status, body, reads = _run_asgi_request_chunks(
+        _payload_echo_application(),
+        "/echo",
+        chunks,
+        headers=[(b"content-length", str(sum(map(len, chunks))).encode("ascii"))],
+    )
+
+    assert status == 200
+    assert body == b"first-second-third"
+    assert reads == len(chunks)
+
+
+def test_payload_size_limit_rejects_before_real_route_json_parsing():
+    limit = api_main._PAYLOAD_SIZE_LIMIT
+    status, body, reads = _run_asgi_request_chunks(
+        api_main.app,
+        "/datasets/oversized/inference",
+        [b'{"padding":"', b"x" * limit, b'"}', b"unread"],
+        headers=[(b"content-type", b"application/json"), (b"content-length", b"1")],
+    )
+
+    assert status == 413
+    assert json.loads(body) == _payload_too_large_body()
+    assert reads == 2
 
 
 def _write_registry(tmp_dir: Path, content: dict) -> Path:

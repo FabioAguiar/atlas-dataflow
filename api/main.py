@@ -13,6 +13,7 @@ import uvicorn
 from fastapi import Body, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
+from starlette.requests import ClientDisconnect
 
 # Ensure the repository root is on the Python path so registry/ is importable
 # when main.py is invoked from the api/ subdirectory.
@@ -574,25 +575,72 @@ class PayloadSizeLimitMiddleware:
         self.max_size = max_size
 
     async def __call__(self, scope, receive, send) -> None:
-        if scope["type"] == "http":
-            for name, value in scope.get("headers", []):
-                if name == b"content-length":
-                    try:
-                        if int(value) > self.max_size:
-                            response = JSONResponse(
-                                status_code=413,
-                                content={
-                                    "error_type": "invalid_payload",
-                                    "error_code": "PAYLOAD_TOO_LARGE",
-                                    "message": "The request payload exceeds the maximum allowed size.",
-                                },
-                            )
-                            await response(scope, receive, send)
-                            return
-                    except ValueError:
-                        pass
-                    break
-        await self.app(scope, receive, send)
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        for name, value in scope.get("headers", []):
+            if name == b"content-length":
+                try:
+                    if int(value) > self.max_size:
+                        response = JSONResponse(
+                            status_code=413,
+                            content={
+                                "error_type": "invalid_payload",
+                                "error_code": "PAYLOAD_TOO_LARGE",
+                                "message": "The request payload exceeds the maximum allowed size.",
+                            },
+                        )
+                        await response(scope, receive, send)
+                        return
+                except ValueError:
+                    pass
+                break
+
+        received_size = 0
+        limit_exceeded = False
+        rejection_sent = False
+
+        async def send_payload_too_large() -> None:
+            nonlocal rejection_sent
+            if rejection_sent:
+                return
+            rejection_sent = True
+            response = JSONResponse(
+                status_code=413,
+                content={
+                    "error_type": "invalid_payload",
+                    "error_code": "PAYLOAD_TOO_LARGE",
+                    "message": "The request payload exceeds the maximum allowed size.",
+                },
+            )
+            await response(scope, receive, send)
+
+        async def limited_receive():
+            nonlocal received_size, limit_exceeded
+            if limit_exceeded:
+                return {"type": "http.disconnect"}
+
+            message = await receive()
+            if message["type"] == "http.request":
+                received_size += len(message.get("body", b""))
+                if received_size > self.max_size:
+                    limit_exceeded = True
+                    return {"type": "http.disconnect"}
+            return message
+
+        async def limited_send(message) -> None:
+            if limit_exceeded:
+                await send_payload_too_large()
+                return
+            await send(message)
+
+        try:
+            await self.app(scope, limited_receive, limited_send)
+        except ClientDisconnect:
+            if not limit_exceeded:
+                raise
+            await send_payload_too_large()
 
 
 app = FastAPI()

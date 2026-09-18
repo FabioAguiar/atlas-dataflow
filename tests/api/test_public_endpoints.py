@@ -13,6 +13,7 @@ or directly:
 """
 
 import asyncio
+import concurrent.futures
 import json
 import os
 import sys
@@ -5288,6 +5289,94 @@ def test_m50_03_capacity_two_admits_two_concurrently_and_rejects_third_before_mo
         assert not thread_d.is_alive()
         assert recovery_results["c"]["result"] == _S0109_VALID_BINARY_RESULT
         assert recovery_results["d"]["result"] == _S0109_VALID_BINARY_RESULT
+
+
+def test_m50_06_timeout_keeps_capacity_until_real_completion_then_recovers(monkeypatch):
+    """A caller deadline never releases either still-running capacity slot."""
+    release_id = "release-m50-06-timeout-fixture"
+    limiter = api_main._InferenceCapacityLimiter(api_main._INFERENCE_CAPACITY)
+    monkeypatch.setattr(api_main, "_INFERENCE_CAPACITY_LIMITER", limiter)
+    monkeypatch.setattr(api_main, "_INFERENCE_EXECUTION_DEADLINE_SECONDS", 0.05)
+    monkeypatch.setattr(api_main, "load_contract", lambda _active_release: _M32_SELECT_PATH_RUNTIME_CONTRACT)
+    monkeypatch.setattr(api_main, "_reconcile_runtime_cache_from_registry", lambda: None)
+    monkeypatch.setattr(api_main, "get_cached_runtime_bundle_adapter", _runtime_adapter_stub)
+
+    admission_barrier = threading.Barrier(api_main._INFERENCE_CAPACITY + 1)
+    release_gate = threading.Event()
+    execution_lock = threading.Lock()
+    execution_count = 0
+
+    def _blocking_first_two_executions(*_args, **_kwargs):
+        nonlocal execution_count
+        with execution_lock:
+            execution_count += 1
+            current_execution = execution_count
+        if current_execution <= api_main._INFERENCE_CAPACITY:
+            admission_barrier.wait(timeout=5)
+            release_gate.wait(timeout=5)
+        return {"result": _S0109_VALID_BINARY_RESULT}
+
+    monkeypatch.setattr(api_main, "execute_prediction", _blocking_first_two_executions)
+
+    original_release = limiter.release
+    releases_lock = threading.Lock()
+    release_count = 0
+    timed_out_work_released = threading.Event()
+
+    def _tracked_release():
+        nonlocal release_count
+        original_release()
+        with releases_lock:
+            release_count += 1
+            if release_count == api_main._INFERENCE_CAPACITY:
+                timed_out_work_released.set()
+
+    monkeypatch.setattr(limiter, "release", _tracked_release)
+
+    with tempfile.TemporaryDirectory() as releases_root:
+        release_dir = Path(releases_root) / release_id
+        _s0109_write_release_with_bundle(release_dir, _s0212_binary_fixture_manifest())
+        monkeypatch.setattr(api_main, "_inference_releases_root", lambda: Path(releases_root))
+
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=api_main._INFERENCE_CAPACITY
+        ) as executor:
+            monkeypatch.setattr(api_main, "_INFERENCE_EXECUTION_EXECUTOR", executor)
+            try:
+                first_timeout = api_main._execute_governed_inference(
+                    "fixture-dataset", release_id, {"customer_segment": "premium"}
+                )
+                second_timeout = api_main._execute_governed_inference(
+                    "fixture-dataset", release_id, {"customer_segment": "premium"}
+                )
+                admission_barrier.wait(timeout=5)
+
+                saturated = api_main._execute_governed_inference(
+                    "fixture-dataset", release_id, {"customer_segment": "premium"}
+                )
+            finally:
+                release_gate.set()
+
+            expected_timeout = {
+                "error_type": "inference_timeout",
+                "error_code": "INFERENCE_TIMEOUT",
+                "message": api_main.INFERENCE_TIMEOUT.message,
+            }
+            assert first_timeout.status_code == 503
+            assert second_timeout.status_code == 503
+            assert _response_json(first_timeout) == expected_timeout
+            assert _response_json(second_timeout) == expected_timeout
+            _assert_no_internal_public_exposure(expected_timeout)
+
+            assert saturated.status_code == 503
+            assert _response_json(saturated)["error_code"] == "INFERENCE_CAPACITY_EXCEEDED"
+            assert timed_out_work_released.wait(timeout=5)
+
+            monkeypatch.setattr(api_main, "_INFERENCE_EXECUTION_DEADLINE_SECONDS", 1.0)
+            recovered = api_main._execute_governed_inference(
+                "fixture-dataset", release_id, {"customer_segment": "premium"}
+            )
+            assert recovered["result"] == _S0109_VALID_BINARY_RESULT
 
 
 def test_m50_03_capacity_releases_after_classified_runtime_failure_and_after_unexpected_exception(monkeypatch):

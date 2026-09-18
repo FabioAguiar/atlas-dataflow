@@ -86,6 +86,16 @@ INFERENCE_FAILURE = PublicError(
     message="Inference is temporarily unavailable.",
 )
 
+# Issue M50-06: deterministic caller-facing deadline expiry. The message is
+# fixed and sanitized; it never includes the configured duration, release,
+# model, payload, stack trace, worker, or underlying runtime state.
+INFERENCE_TIMEOUT = PublicError(
+    status_code=503,
+    error_type="inference_timeout",
+    error_code="INFERENCE_TIMEOUT",
+    message="Inference timed out. Please retry shortly.",
+)
+
 # Issue M50-03: the single process-local capacity limiter is saturated.
 # Deliberately distinct from INFERENCE_FAILURE (a classified or unexpected
 # execution failure) -- this is admission being refused before any model
@@ -122,4 +132,3 @@ def validation_error_response(failures: list[ValidationFailure]) -> JSONResponse
         for failure in failures
     ]
     return INVALID_PAYLOAD.response(errors=safe_errors)
-

@@ -823,3 +823,26 @@ def test_m50_03_admin_unauthorized_request_never_consumes_or_probes_capacity(mon
         response = api_main.post_admin_dataset_inference(DATASET_SLUG, None, payload={"MonthlyCharges": 10})
         assert response.status_code == 404
         assert json.loads(response.body) == {"detail": "Not Found"}
+
+
+def test_m50_06_admin_route_returns_shared_sanitized_timeout(monkeypatch):
+    """Authorized Admin inference preserves access order and shared timeout shape."""
+    _install_controlled_read_only_dependencies(monkeypatch)
+    monkeypatch.setattr(
+        api_main,
+        "_execute_governed_inference",
+        lambda *_args, **_kwargs: api_main.public_error_response(api_main.INFERENCE_TIMEOUT),
+    )
+
+    status_code, body, response_text = _post_json(
+        f"/admin/datasets/{DATASET_SLUG}/inference", {"MonthlyCharges": 10}
+    )
+
+    assert status_code == 503
+    assert body == {
+        "error_type": "inference_timeout",
+        "error_code": "INFERENCE_TIMEOUT",
+        "message": "Inference timed out. Please retry shortly.",
+    }
+    for forbidden in ("traceback", "exception", ACTIVE_RELEASE, "bundle", "credential"):
+        assert forbidden not in response_text.lower()

@@ -365,8 +365,28 @@ Uvicorn worker count would multiply effective process-local capacity beyond
 this approved baseline and is not authorized by this issue. This local
 capacity control is deliberately narrow: it is not the visitor
 identity/rate-limiting/quota policy reserved for a later gateway layer, and it
-does not yet bound caller-side request timeouts, which Issue M50-06 will
-integrate against this same admitted-slot lifecycle.
+now composes with the Issue M50-06 application execution deadline. Baseline
+measurement against the real active `dry-bean` release recorded 2.058041s for
+the first cold-load governed inference and 0.041286s for the immediately
+cached/warm inference. `_INFERENCE_EXECUTION_DEADLINE_SECONDS` is therefore
+10.0s, roughly 4.8 times the observed cold path. After admission, the complete
+capacity-held section runs in a dedicated two-worker executor; the caller
+waits at most 10s, then receives sanitized HTTP 503 `INFERENCE_TIMEOUT`.
+Timing out never cancels the synchronous Python work and never releases its
+slot: the submitted worker remains the sole releaser and holds capacity until
+its real success or failure completes. This bounds caller wait and executor
+thread growth, while retaining the residual risk that pathological work can
+occupy one slot for its full real duration.
+
+The three timeout layers remain intentionally distinct. The 10s application
+deadline bounds only how long the API caller waits for governed inference.
+Nginx's implicit 60s `proxy_read_timeout` and `proxy_send_timeout` remain above
+that deadline, so neither `docker-compose.yml` nor `web/nginx.conf` needs an
+override. Uvicorn's default 5s keep-alive governs only an idle connection
+between requests, not an in-flight inference, and therefore does not race the
+application deadline; both compose files retain the approved single-worker
+API configuration. `docker-compose.yml`, `docker-compose.prod.yml`, and
+`web/nginx.conf` are consequently unchanged.
 
 Historically (Project Specs S0158-S0178) Atlas also carried an isolated
 `external-inference/` service as a runtime/dependency boundary for governed

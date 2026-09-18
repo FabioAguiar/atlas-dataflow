@@ -1,3 +1,4 @@
+import concurrent.futures
 import json
 import math
 import os
@@ -33,6 +34,7 @@ from public_errors import (  # noqa: E402
     DATASET_NOT_FOUND,
     INFERENCE_CAPACITY_EXCEEDED,
     INFERENCE_FAILURE,
+    INFERENCE_TIMEOUT,
     PUBLIC_CONTRACT_UNAVAILABLE,
     PublicError,
     REGISTRY_UNAVAILABLE,
@@ -892,6 +894,12 @@ def _resolve_runtime_dispatch(declaration: dict) -> tuple[str, dict | None, dict
 # value, since no separately validated configuration contract exists yet.
 _INFERENCE_CAPACITY = 2
 
+# Issue M50-06: one cold-load inference against the active dry-bean release
+# measured 2.058041s and the immediately cached path measured 0.041286s on
+# the implementation baseline. Ten seconds leaves roughly 4.8x headroom over
+# the observed cold path while remaining well below Nginx's 60s proxy default.
+_INFERENCE_EXECUTION_DEADLINE_SECONDS = 10.0
+
 
 class _InferenceCapacityLimiter:
     """
@@ -916,6 +924,10 @@ class _InferenceCapacityLimiter:
 
 
 _INFERENCE_CAPACITY_LIMITER = _InferenceCapacityLimiter(_INFERENCE_CAPACITY)
+_INFERENCE_EXECUTION_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
+    max_workers=_INFERENCE_CAPACITY,
+    thread_name_prefix="atlas-inference",
+)
 
 
 def _execute_governed_inference(
@@ -987,7 +999,7 @@ def _execute_governed_inference(
     if not _INFERENCE_CAPACITY_LIMITER.try_acquire():
         return public_error_response(INFERENCE_CAPACITY_EXCEEDED)
 
-    try:
+    def _execute_with_held_capacity():
         try:
             _reconcile_runtime_cache_from_registry()
             runtime_adapter = get_cached_runtime_bundle_adapter(
@@ -1067,11 +1079,24 @@ def _execute_governed_inference(
             "dataset_slug": dataset_slug,
             "result": result,
         }
-    finally:
-        # A slot is only ever released once every admitted terminal path
-        # above (success, classified runtime failure, or unexpected
-        # exception) has fully stopped consuming it -- never before.
-        _INFERENCE_CAPACITY_LIMITER.release()
+
+    def _execute_and_release_capacity():
+        try:
+            return _execute_with_held_capacity()
+        finally:
+            # The submitted work is the sole owner and releaser of its slot.
+            # A caller-side deadline never releases capacity while this worker
+            # is still loading, predicting, validating, or handling failure.
+            _INFERENCE_CAPACITY_LIMITER.release()
+
+    future = _INFERENCE_EXECUTION_EXECUTOR.submit(_execute_and_release_capacity)
+    try:
+        return future.result(timeout=_INFERENCE_EXECUTION_DEADLINE_SECONDS)
+    except concurrent.futures.TimeoutError:
+        # Do not cancel the future or touch the limiter here: Python cannot
+        # forcibly terminate the synchronous model thread. The worker keeps
+        # its slot until its own finally block observes real completion.
+        return public_error_response(INFERENCE_TIMEOUT)
 
 
 @app.post("/datasets/{dataset_slug}/inference")

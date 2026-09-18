@@ -16,6 +16,7 @@ import json
 import os
 import sys
 import tempfile
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -5002,6 +5003,303 @@ def test_s0271_private_admin_inference_is_not_capability_gated(monkeypatch):
     response = api_main.post_admin_dataset_inference("fixture-s0271", request, payload={"period": "2026-01"})
 
     assert response is sentinel
+
+
+# ---------------------------------------------------------------------------
+# Issue M50-03: bound single-process inference concurrency with deterministic
+# saturation rejection. Every concurrency test below replaces
+# api_main._INFERENCE_CAPACITY_LIMITER with a fresh instance via monkeypatch
+# (auto-restored at test end) so prior-test state or ordering can never leak
+# into another test, and every spawned thread is joined with a bounded
+# timeout before assertions run.
+# ---------------------------------------------------------------------------
+
+
+def test_m50_03_capacity_two_admits_two_concurrently_and_rejects_third_before_model_execution(monkeypatch):
+    """
+    Exactly two concurrent governed inferences occupy the shared
+    process-local capacity limiter; a third simultaneous eligible request is
+    rejected with a deterministic, bounded HTTP 503
+    INFERENCE_CAPACITY_EXCEEDED before any cache reconciliation, adapter
+    acquisition, model loading, prediction, or result validation -- proven
+    with a synchronization barrier rather than response timing. Once both
+    admitted requests complete, capacity recovers and two fresh concurrent
+    requests are admitted again.
+    """
+    release_id = "release-m50-03-capacity-fixture"
+    adapter = _runtime_adapter_stub()
+    monkeypatch.setattr(
+        api_main,
+        "_INFERENCE_CAPACITY_LIMITER",
+        api_main._InferenceCapacityLimiter(api_main._INFERENCE_CAPACITY),
+    )
+    monkeypatch.setattr(api_main, "load_contract", lambda _active_release: _M32_SELECT_PATH_RUNTIME_CONTRACT)
+
+    cache_calls = []
+
+    def _capture_cached_adapter(dataset_slug, active_release_id, *_args, **_kwargs):
+        cache_calls.append((dataset_slug, active_release_id))
+        return adapter
+
+    monkeypatch.setattr(api_main, "get_cached_runtime_bundle_adapter", _capture_cached_adapter)
+
+    admission_barrier = threading.Barrier(3)
+    release_gate = threading.Event()
+
+    def _blocking_execution(*_args, **_kwargs):
+        admission_barrier.wait(timeout=5)
+        release_gate.wait(timeout=5)
+        return {"result": _S0109_VALID_BINARY_RESULT}
+
+    monkeypatch.setattr(api_main, "execute_prediction", _blocking_execution)
+
+    with tempfile.TemporaryDirectory() as releases_root:
+        release_dir = Path(releases_root) / release_id
+        _s0109_write_release_with_bundle(release_dir, _s0212_binary_fixture_manifest())
+        monkeypatch.setattr(api_main, "_inference_releases_root", lambda: Path(releases_root))
+
+        results = {}
+
+        def _run(name):
+            results[name] = api_main._execute_governed_inference(
+                "fixture-dataset", release_id, {"customer_segment": "premium"}
+            )
+
+        thread_a = threading.Thread(target=_run, args=("a",))
+        thread_b = threading.Thread(target=_run, args=("b",))
+        thread_a.start()
+        thread_b.start()
+        try:
+            # Unblocks only once both admitted requests are concurrently
+            # inside model execution -- both slots are already held by then,
+            # since acquisition happens before execute_prediction is called.
+            admission_barrier.wait(timeout=5)
+
+            third_response = api_main._execute_governed_inference(
+                "fixture-dataset", release_id, {"customer_segment": "premium"}
+            )
+        finally:
+            release_gate.set()
+            thread_a.join(timeout=5)
+            thread_b.join(timeout=5)
+
+        assert not thread_a.is_alive()
+        assert not thread_b.is_alive()
+        assert results["a"]["result"] == _S0109_VALID_BINARY_RESULT
+        assert results["b"]["result"] == _S0109_VALID_BINARY_RESULT
+
+        assert third_response.status_code == 503
+        third_body = _response_json(third_response)
+        assert third_body == {
+            "error_type": "inference_capacity_exceeded",
+            "error_code": "INFERENCE_CAPACITY_EXCEEDED",
+            "message": api_main.INFERENCE_CAPACITY_EXCEEDED.message,
+        }
+        _assert_no_internal_public_exposure(third_body)
+        # The rejected third request never reached cached-adapter/model work:
+        # only the two admitted requests called get_cached_runtime_bundle_adapter.
+        assert len(cache_calls) == 2
+
+        # Capacity recovers once both admitted requests have fully completed.
+        recovery_barrier = threading.Barrier(3)
+        recovery_gate = threading.Event()
+
+        def _blocking_execution_recovery(*_args, **_kwargs):
+            recovery_barrier.wait(timeout=5)
+            recovery_gate.wait(timeout=5)
+            return {"result": _S0109_VALID_BINARY_RESULT}
+
+        monkeypatch.setattr(api_main, "execute_prediction", _blocking_execution_recovery)
+
+        recovery_results = {}
+
+        def _run_recovery(name):
+            recovery_results[name] = api_main._execute_governed_inference(
+                "fixture-dataset", release_id, {"customer_segment": "premium"}
+            )
+
+        thread_c = threading.Thread(target=_run_recovery, args=("c",))
+        thread_d = threading.Thread(target=_run_recovery, args=("d",))
+        thread_c.start()
+        thread_d.start()
+        try:
+            recovery_barrier.wait(timeout=5)
+        finally:
+            recovery_gate.set()
+            thread_c.join(timeout=5)
+            thread_d.join(timeout=5)
+
+        assert not thread_c.is_alive()
+        assert not thread_d.is_alive()
+        assert recovery_results["c"]["result"] == _S0109_VALID_BINARY_RESULT
+        assert recovery_results["d"]["result"] == _S0109_VALID_BINARY_RESULT
+
+
+def test_m50_03_capacity_releases_after_classified_runtime_failure_and_after_unexpected_exception(monkeypatch):
+    """
+    A slot is released through every admitted terminal path, including a
+    classified InferenceRuntimeError and an unclassified unexpected
+    exception -- proven by fully saturating capacity again immediately after
+    each failure rather than by inspecting limiter internals.
+    """
+    release_id = "release-m50-03-capacity-failure-fixture"
+    monkeypatch.setattr(
+        api_main,
+        "_INFERENCE_CAPACITY_LIMITER",
+        api_main._InferenceCapacityLimiter(api_main._INFERENCE_CAPACITY),
+    )
+    monkeypatch.setattr(api_main, "load_contract", lambda _active_release: _M32_SELECT_PATH_RUNTIME_CONTRACT)
+
+    with tempfile.TemporaryDirectory() as releases_root:
+        release_dir = Path(releases_root) / release_id
+        _s0109_write_release_with_bundle(release_dir, _s0212_binary_fixture_manifest())
+        monkeypatch.setattr(api_main, "_inference_releases_root", lambda: Path(releases_root))
+
+        def _raise_runtime_error(*_args, **_kwargs):
+            raise api_main.InferenceRuntimeError(
+                "fixture forced classified failure",
+                diagnostic_code=api_main.DIAGNOSTIC_RESULT_VALIDATION_FAILED,
+            )
+
+        monkeypatch.setattr(api_main, "get_cached_runtime_bundle_adapter", _raise_runtime_error)
+        classified_failure_response = api_main._execute_governed_inference(
+            "fixture-dataset", release_id, {"customer_segment": "premium"}
+        )
+        assert classified_failure_response.status_code == 503
+        assert _response_json(classified_failure_response)["error_code"] == "INFERENCE_FAILURE"
+
+        def _raise_unexpected(*_args, **_kwargs):
+            raise RuntimeError("fixture forced unexpected failure")
+
+        monkeypatch.setattr(api_main, "get_cached_runtime_bundle_adapter", _raise_unexpected)
+        unexpected_failure_response = api_main._execute_governed_inference(
+            "fixture-dataset", release_id, {"customer_segment": "premium"}
+        )
+        assert unexpected_failure_response.status_code == 503
+        assert _response_json(unexpected_failure_response)["error_code"] == "INFERENCE_FAILURE"
+
+        # Neither failure leaked a slot: two fresh concurrent requests are
+        # admitted together right afterward, proving capacity is still two.
+        adapter = _runtime_adapter_stub()
+        monkeypatch.setattr(api_main, "get_cached_runtime_bundle_adapter", lambda *_a, **_k: adapter)
+
+        admission_barrier = threading.Barrier(3)
+        release_gate = threading.Event()
+
+        def _blocking_execution(*_args, **_kwargs):
+            admission_barrier.wait(timeout=5)
+            release_gate.wait(timeout=5)
+            return {"result": _S0109_VALID_BINARY_RESULT}
+
+        monkeypatch.setattr(api_main, "execute_prediction", _blocking_execution)
+
+        results = {}
+
+        def _run(name):
+            results[name] = api_main._execute_governed_inference(
+                "fixture-dataset", release_id, {"customer_segment": "premium"}
+            )
+
+        thread_a = threading.Thread(target=_run, args=("a",))
+        thread_b = threading.Thread(target=_run, args=("b",))
+        thread_a.start()
+        thread_b.start()
+        try:
+            admission_barrier.wait(timeout=5)
+        finally:
+            release_gate.set()
+            thread_a.join(timeout=5)
+            thread_b.join(timeout=5)
+
+        assert not thread_a.is_alive()
+        assert not thread_b.is_alive()
+        assert results["a"]["result"] == _S0109_VALID_BINARY_RESULT
+        assert results["b"]["result"] == _S0109_VALID_BINARY_RESULT
+
+
+def test_m50_03_public_and_admin_inference_share_the_same_capacity_pool(monkeypatch):
+    """
+    The public inference route and the private Admin Live Preview inference
+    route draw from the exact same two-slot process-local pool -- one
+    admitted public request and one admitted Admin request together saturate
+    capacity, and a second public request is rejected while both are held.
+    """
+    release_id = "release-m50-03-capacity-shared-fixture"
+    adapter = _runtime_adapter_stub()
+    monkeypatch.setattr(
+        api_main,
+        "_INFERENCE_CAPACITY_LIMITER",
+        api_main._InferenceCapacityLimiter(api_main._INFERENCE_CAPACITY),
+    )
+    monkeypatch.setenv("ATLAS_ADMIN_ENABLED", "true")
+    monkeypatch.setattr(
+        api_main,
+        "resolve_dataset",
+        lambda dataset_slug: SimpleNamespace(dataset_slug=dataset_slug, active_release=release_id),
+    )
+    monkeypatch.setattr(api_main, "load_contract", lambda _active_release: _M32_SELECT_PATH_RUNTIME_CONTRACT)
+    monkeypatch.setattr(api_main, "get_cached_runtime_bundle_adapter", lambda *_a, **_k: adapter)
+    original_snapshot_readiness = _install_snapshot_ready_stub()
+
+    admission_barrier = threading.Barrier(3)
+    release_gate = threading.Event()
+
+    def _blocking_execution(*_args, **_kwargs):
+        admission_barrier.wait(timeout=5)
+        release_gate.wait(timeout=5)
+        return {"result": _S0109_VALID_BINARY_RESULT}
+
+    monkeypatch.setattr(api_main, "execute_prediction", _blocking_execution)
+
+    try:
+        with tempfile.TemporaryDirectory() as releases_root:
+            release_dir = Path(releases_root) / release_id
+            _s0109_write_release_with_bundle(release_dir, _s0212_binary_fixture_manifest())
+            monkeypatch.setattr(api_main, "_inference_releases_root", lambda: Path(releases_root))
+
+            results = {}
+
+            def _run_public():
+                results["public"] = api_main.validate_dataset_inference_payload(
+                    "fixture-dataset", payload={"customer_segment": "premium"}
+                )
+
+            def _run_admin():
+                request = Request(
+                    {
+                        "type": "http",
+                        "method": "POST",
+                        "path": "/admin/datasets/fixture-dataset/inference",
+                        "headers": [],
+                    }
+                )
+                results["admin"] = api_main.post_admin_dataset_inference(
+                    "fixture-dataset", request, payload={"customer_segment": "premium"}
+                )
+
+            thread_public = threading.Thread(target=_run_public)
+            thread_admin = threading.Thread(target=_run_admin)
+            thread_public.start()
+            thread_admin.start()
+            try:
+                admission_barrier.wait(timeout=5)
+
+                third_response = api_main.validate_dataset_inference_payload(
+                    "fixture-dataset", payload={"customer_segment": "premium"}
+                )
+            finally:
+                release_gate.set()
+                thread_public.join(timeout=5)
+                thread_admin.join(timeout=5)
+
+            assert not thread_public.is_alive()
+            assert not thread_admin.is_alive()
+            assert results["public"]["result"] == _S0109_VALID_BINARY_RESULT
+            assert results["admin"]["result"] == _S0109_VALID_BINARY_RESULT
+            assert third_response.status_code == 503
+            assert _response_json(third_response)["error_code"] == "INFERENCE_CAPACITY_EXCEEDED"
+    finally:
+        _restore_snapshot_ready_stub(original_snapshot_readiness)
 
 
 # ---------------------------------------------------------------------------

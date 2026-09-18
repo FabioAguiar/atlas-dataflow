@@ -5,6 +5,7 @@ import pickle
 import re
 import sys
 import tarfile
+import threading
 from datetime import datetime
 from pathlib import Path
 
@@ -29,6 +30,7 @@ from public_errors import (  # noqa: E402
     CONTRACT_UNAVAILABLE,
     DATASET_MAINTENANCE,
     DATASET_NOT_FOUND,
+    INFERENCE_CAPACITY_EXCEEDED,
     INFERENCE_FAILURE,
     PUBLIC_CONTRACT_UNAVAILABLE,
     PublicError,
@@ -837,6 +839,37 @@ def _resolve_runtime_dispatch(declaration: dict) -> tuple[str, dict | None, dict
     )
 
 
+# Issue M50-03: capacity is fixed at two for the approved single-worker
+# baseline -- a code-level constant, not an environment/runtime-configurable
+# value, since no separately validated configuration contract exists yet.
+_INFERENCE_CAPACITY = 2
+
+
+class _InferenceCapacityLimiter:
+    """
+    Issue M50-03: the single process-local, non-queuing capacity limiter
+    shared by every governed inference execution -- public and authorized
+    Admin alike -- across every dataset and route. Acquisition is one
+    non-blocking attempt: saturation never creates an application queue,
+    semaphore waiter, polling loop, or retry sleep. Tests use this same
+    production singleton with disciplined acquire/release to deterministically
+    hold and release slots rather than mutating capacity or reaching for a
+    separate injected instance.
+    """
+
+    def __init__(self, capacity: int) -> None:
+        self._semaphore = threading.Semaphore(capacity)
+
+    def try_acquire(self) -> bool:
+        return self._semaphore.acquire(blocking=False)
+
+    def release(self) -> None:
+        self._semaphore.release()
+
+
+_INFERENCE_CAPACITY_LIMITER = _InferenceCapacityLimiter(_INFERENCE_CAPACITY)
+
+
 def _execute_governed_inference(
     dataset_slug: str,
     active_release: str,
@@ -858,6 +891,14 @@ def _execute_governed_inference(
     explicit, route-level decision to allow one bounded allowlisted
     ``runtime_diagnostic.code`` onto an otherwise-unchanged generic
     INFERENCE_FAILURE response -- the public route always omits it.
+
+    Issue M50-03: payload shape checking, contract loading, payload
+    normalization, and manifest resolution happen before capacity is
+    consulted at all -- only the cached-adapter/model boundary (cache
+    reconciliation, adapter acquisition, model loading, prediction, and
+    result validation) is gated by ``_INFERENCE_CAPACITY_LIMITER``, shared
+    unmodified by both callers so public and authorized Admin inference
+    draw from the same two-slot pool.
     """
     if not isinstance(payload, dict):
         return validation_error_response(
@@ -889,85 +930,100 @@ def _execute_governed_inference(
         return public_error_response(INFERENCE_FAILURE)
     release_dir, manifest = resolved_manifest
 
+    # Issue M50-03: a single non-blocking attempt against the shared
+    # process-local capacity-two limiter, immediately before any cache
+    # reconciliation, adapter acquisition, model loading, prediction, or
+    # result validation. Saturation never queues, waits, or retries -- it
+    # rejects here with a bounded, deterministic 503 before any of that
+    # cached-adapter/model work begins.
+    if not _INFERENCE_CAPACITY_LIMITER.try_acquire():
+        return public_error_response(INFERENCE_CAPACITY_EXCEEDED)
+
     try:
-        _reconcile_runtime_cache_from_registry()
-        runtime_adapter = get_cached_runtime_bundle_adapter(
-            dataset_slug,
-            active_release,
-            {"path": str(release_dir), "artifacts": manifest.get("artifacts", [])},
-            manifest=manifest,
-            bundle_loader=_load_bundle,
-            loader_strategies=_INFERENCE_LOADER_STRATEGIES,
-            supported_serialization_formats=_INFERENCE_SUPPORTED_SERIALIZATION_FORMATS,
-        )
-        declaration = runtime_adapter.declaration
-        projected_result_contract = project_result_contract(declaration)
-        expected_result_contract = projected_result_contract.get("semantics")
-        if (
-            projected_result_contract.get("status") != "available"
-            or not isinstance(expected_result_contract, dict)
-        ):
-            raise InferenceRuntimeError(
-                "Inference result contract is unavailable.",
-                diagnostic_code=DIAGNOSTIC_RESULT_VALIDATION_FAILED,
+        try:
+            _reconcile_runtime_cache_from_registry()
+            runtime_adapter = get_cached_runtime_bundle_adapter(
+                dataset_slug,
+                active_release,
+                {"path": str(release_dir), "artifacts": manifest.get("artifacts", [])},
+                manifest=manifest,
+                bundle_loader=_load_bundle,
+                loader_strategies=_INFERENCE_LOADER_STRATEGIES,
+                supported_serialization_formats=_INFERENCE_SUPPORTED_SERIALIZATION_FORMATS,
             )
-        # Project Spec S0285: the only admitted strategy is in-process
-        # execution via runtime.inference; an unsupported/alternate strategy
-        # (e.g. the historical isolated_service) raises here and fails closed.
-        _resolve_runtime_dispatch(declaration)
-    except InferenceRuntimeError as exc:
-        return _inference_failure_response(
-            diagnostic_code=exc.diagnostic_code,
-            include_runtime_diagnostic=include_runtime_diagnostic,
-        )
-    except Exception:
-        return _inference_failure_response(
-            diagnostic_code=None,
-            include_runtime_diagnostic=include_runtime_diagnostic,
-        )
+            declaration = runtime_adapter.declaration
+            projected_result_contract = project_result_contract(declaration)
+            expected_result_contract = projected_result_contract.get("semantics")
+            if (
+                projected_result_contract.get("status") != "available"
+                or not isinstance(expected_result_contract, dict)
+            ):
+                raise InferenceRuntimeError(
+                    "Inference result contract is unavailable.",
+                    diagnostic_code=DIAGNOSTIC_RESULT_VALIDATION_FAILED,
+                )
+            # Project Spec S0285: the only admitted strategy is in-process
+            # execution via runtime.inference; an unsupported/alternate strategy
+            # (e.g. the historical isolated_service) raises here and fails closed.
+            _resolve_runtime_dispatch(declaration)
+        except InferenceRuntimeError as exc:
+            return _inference_failure_response(
+                diagnostic_code=exc.diagnostic_code,
+                include_runtime_diagnostic=include_runtime_diagnostic,
+            )
+        except Exception:
+            return _inference_failure_response(
+                diagnostic_code=None,
+                include_runtime_diagnostic=include_runtime_diagnostic,
+            )
 
-    try:
-        prediction_result = execute_prediction(
-            {"path": str(release_dir), "artifacts": manifest.get("artifacts", [])},
-            dict(validation_report.normalized_payload),
-            manifest=manifest,
-            bundle_loader=_load_bundle,
-            loader_strategies=_INFERENCE_LOADER_STRATEGIES,
-            supported_serialization_formats=_INFERENCE_SUPPORTED_SERIALIZATION_FORMATS,
-            runtime_feature_metadata=_runtime_feature_metadata(runtime_contract),
-            runtime_contract=runtime_contract,
-            runtime_adapter=runtime_adapter,
-        )
-    except InferenceRuntimeError as exc:
-        return _inference_failure_response(
-            diagnostic_code=exc.diagnostic_code,
-            include_runtime_diagnostic=include_runtime_diagnostic,
-        )
-    except Exception:
-        return _inference_failure_response(
-            diagnostic_code=None,
-            include_runtime_diagnostic=include_runtime_diagnostic,
-        )
+        try:
+            prediction_result = execute_prediction(
+                {"path": str(release_dir), "artifacts": manifest.get("artifacts", [])},
+                dict(validation_report.normalized_payload),
+                manifest=manifest,
+                bundle_loader=_load_bundle,
+                loader_strategies=_INFERENCE_LOADER_STRATEGIES,
+                supported_serialization_formats=_INFERENCE_SUPPORTED_SERIALIZATION_FORMATS,
+                runtime_feature_metadata=_runtime_feature_metadata(runtime_contract),
+                runtime_contract=runtime_contract,
+                runtime_adapter=runtime_adapter,
+            )
+        except InferenceRuntimeError as exc:
+            return _inference_failure_response(
+                diagnostic_code=exc.diagnostic_code,
+                include_runtime_diagnostic=include_runtime_diagnostic,
+            )
+        except Exception:
+            return _inference_failure_response(
+                diagnostic_code=None,
+                include_runtime_diagnostic=include_runtime_diagnostic,
+            )
 
-    result = prediction_result.get("result") if isinstance(prediction_result, dict) else None
-    if not isinstance(result, dict):
-        return _inference_failure_response(
-            diagnostic_code=DIAGNOSTIC_RESULT_VALIDATION_FAILED,
-            include_runtime_diagnostic=include_runtime_diagnostic,
-        )
+        result = prediction_result.get("result") if isinstance(prediction_result, dict) else None
+        if not isinstance(result, dict):
+            return _inference_failure_response(
+                diagnostic_code=DIAGNOSTIC_RESULT_VALIDATION_FAILED,
+                include_runtime_diagnostic=include_runtime_diagnostic,
+            )
 
-    try:
-        validate_inference_result(result, expected_result_contract)
-    except InferenceRuntimeError as exc:
-        return _inference_failure_response(
-            diagnostic_code=exc.diagnostic_code,
-            include_runtime_diagnostic=include_runtime_diagnostic,
-        )
+        try:
+            validate_inference_result(result, expected_result_contract)
+        except InferenceRuntimeError as exc:
+            return _inference_failure_response(
+                diagnostic_code=exc.diagnostic_code,
+                include_runtime_diagnostic=include_runtime_diagnostic,
+            )
 
-    return {
-        "dataset_slug": dataset_slug,
-        "result": result,
-    }
+        return {
+            "dataset_slug": dataset_slug,
+            "result": result,
+        }
+    finally:
+        # A slot is only ever released once every admitted terminal path
+        # above (success, classified runtime failure, or unexpected
+        # exception) has fully stopped consuming it -- never before.
+        _INFERENCE_CAPACITY_LIMITER.release()
 
 
 @app.post("/datasets/{dataset_slug}/inference")

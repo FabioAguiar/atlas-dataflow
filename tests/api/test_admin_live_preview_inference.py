@@ -797,3 +797,29 @@ def test_private_admin_route_still_rejects_missing_required_feature_before_execu
     assert body["error_code"] == "INVALID_PAYLOAD"
     assert body["errors"][0]["field"] == "tenure"
     assert body["errors"][0]["error_code"] == "MISSING_REQUIRED_FIELD"
+
+
+def test_m50_03_admin_unauthorized_request_never_consumes_or_probes_capacity(monkeypatch):
+    """
+    Issue M50-03: unauthorized Admin requests are rejected by
+    _admin_request_authorized before dataset resolution -- entirely upstream
+    of the shared _execute_governed_inference capacity boundary -- so an
+    unauthorized burst can never consume, or even probe, the shared
+    process-local capacity pool.
+    """
+    monkeypatch.setattr(
+        api_main,
+        "_INFERENCE_CAPACITY_LIMITER",
+        api_main._InferenceCapacityLimiter(api_main._INFERENCE_CAPACITY),
+    )
+    monkeypatch.delenv("ATLAS_ADMIN_ENABLED", raising=False)
+
+    def _fail_if_probed():
+        raise AssertionError("unauthorized requests must never touch the capacity limiter")
+
+    monkeypatch.setattr(api_main._INFERENCE_CAPACITY_LIMITER, "try_acquire", _fail_if_probed)
+
+    for _ in range(3):
+        response = api_main.post_admin_dataset_inference(DATASET_SLUG, None, payload={"MonthlyCharges": 10})
+        assert response.status_code == 404
+        assert json.loads(response.body) == {"detail": "Not Found"}

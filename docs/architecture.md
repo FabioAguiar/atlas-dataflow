@@ -349,6 +349,25 @@ exist for process lifecycle and deterministic tests. This cache is strictly
 process-local: it provides no Redis-backed, cross-process, or multi-worker
 coherence and does not implement prediction-capacity control.
 
+Issue M50-03 adds that capacity control one layer up, at the shared
+`_execute_governed_inference` boundary in `api/main.py` rather than inside
+this runtime cache: a single non-queuing, process-local limiter fixed at
+capacity two for the approved one-Uvicorn-worker VPS baseline, acquired
+immediately before cache reconciliation, adapter acquisition, model loading,
+prediction, or result validation begin, and released through every admitted
+terminal path (success, classified runtime failure, or unexpected exception).
+A third simultaneous eligible request is rejected immediately with
+deterministic HTTP 503 `INFERENCE_CAPACITY_EXCEEDED` -- never HTTP 429, and
+never by waiting in an application queue. Public and authorized Admin
+inference share this one pool across every dataset and route without
+weakening either route's own access-resolution ordering. Increasing the
+Uvicorn worker count would multiply effective process-local capacity beyond
+this approved baseline and is not authorized by this issue. This local
+capacity control is deliberately narrow: it is not the visitor
+identity/rate-limiting/quota policy reserved for a later gateway layer, and it
+does not yet bound caller-side request timeouts, which Issue M50-06 will
+integrate against this same admitted-slot lifecycle.
+
 Historically (Project Specs S0158-S0178) Atlas also carried an isolated
 `external-inference/` service as a runtime/dependency boundary for governed
 bundles that selected isolated-service dispatch. Project Spec S0285 retired

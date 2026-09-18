@@ -86,6 +86,19 @@ INFERENCE_FAILURE = PublicError(
     message="Inference is temporarily unavailable.",
 )
 
+# Issue M50-03: the single process-local capacity limiter is saturated.
+# Deliberately distinct from INFERENCE_FAILURE (a classified or unexpected
+# execution failure) -- this is admission being refused before any model
+# work starts. The message is a fixed policy string, never derived from
+# request content, dataset, release, model, payload, slot count, thread, or
+# any other runtime state, and HTTP 429 is never used for this limiter.
+INFERENCE_CAPACITY_EXCEEDED = PublicError(
+    status_code=503,
+    error_type="inference_capacity_exceeded",
+    error_code="INFERENCE_CAPACITY_EXCEEDED",
+    message="Inference capacity is temporarily exhausted. Please retry shortly.",
+)
+
 UNEXPECTED_ERROR = PublicError(
     status_code=500,
     error_type="unexpected_error",

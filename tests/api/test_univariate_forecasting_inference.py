@@ -35,6 +35,10 @@ FORECAST_HORIZON = 4
 SEASONAL_EFFECT = [0.0, 2.0, -1.0, 3.0]
 DATASET_SLUG = "fixture-forecasting-dataset"
 RELEASE_ID = "release-forecasting-fixture"
+# Issue M50-04: a governed maximum strictly above every history length used
+# by the existing success/offset tests below (DEV_OBSERVATIONS,
+# DEV_OBSERVATIONS + 2), so their admitted-history behavior is unaffected.
+MAXIMUM_OBSERVATION_COUNT = 25
 
 
 def _series_value(index: int) -> float:
@@ -65,6 +69,7 @@ def _runtime_contract() -> dict:
             "source_exogenous_predictors": "forbidden",
             "row_field_policy": "exact_time_index_and_target",
             "minimum_observation_count": 1,
+            "maximum_observation_count": MAXIMUM_OBSERVATION_COUNT,
             "minimum_history_required_through": "19",
             "ordering": "strictly_increasing",
             "uniqueness_required": True,
@@ -344,6 +349,46 @@ def test_public_inference_rejects_insufficient_history(tmp_path, monkeypatch):
     _install_public_dependencies(monkeypatch, releases_root)
 
     payload = {"history": [{"period": i, "value": _series_value(i)} for i in range(10)]}
+    response = api_main.validate_dataset_inference_payload(DATASET_SLUG, payload=payload)
+    assert response.status_code == 422
+
+
+def test_public_inference_admits_history_at_governed_maximum_observation_count(tmp_path, monkeypatch):
+    """Issue M50-04: a payload exactly at the governed maximum remains
+    admissible when every other rule passes."""
+    releases_root = tmp_path / "releases"
+    _write_synthetic_forecasting_release(tmp_path)
+    _install_public_dependencies(monkeypatch, releases_root)
+
+    payload = {"history": [{"period": i, "value": _series_value(i)} for i in range(MAXIMUM_OBSERVATION_COUNT)]}
+    response = api_main.validate_dataset_inference_payload(DATASET_SLUG, payload=payload)
+    assert not hasattr(response, "status_code")
+    assert response["result"]["schema_version"] == "univariate-forecasting-result.v1"
+
+
+def test_public_inference_rejects_history_over_governed_maximum_observation_count_before_model_loader(
+    tmp_path, monkeypatch
+):
+    """Issue M50-04: a history one row over the governed maximum is
+    rejected -- and, critically, rejected before any model-loader call.
+    The loader strategy is replaced with a stub that raises if it is ever
+    invoked, proving the 422 comes from payload validation alone."""
+    releases_root = tmp_path / "releases"
+    _write_synthetic_forecasting_release(tmp_path)
+    _install_public_dependencies(monkeypatch, releases_root)
+
+    def _loader_must_not_be_called(*args, **kwargs):
+        raise AssertionError("model loader must not be called for an over-limit history")
+
+    monkeypatch.setitem(
+        api_main._INFERENCE_LOADER_STRATEGIES,
+        api_main.JOBLIB_SKLEARN_FORECASTING_ADAPTER_STRATEGY,
+        _loader_must_not_be_called,
+    )
+
+    payload = {
+        "history": [{"period": i, "value": _series_value(i)} for i in range(MAXIMUM_OBSERVATION_COUNT + 1)]
+    }
     response = api_main.validate_dataset_inference_payload(DATASET_SLUG, payload=payload)
     assert response.status_code == 422
 

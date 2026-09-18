@@ -2288,7 +2288,11 @@ def _build_execution_contract_v2(
     # review_status/review_notes, and never resolves the concrete
     # development_end anchor value (that remains exclusively
     # pipeline/derive_projections.py's job once the policy has explicitly
-    # selected development_end as its anchor source).
+    # selected development_end as its anchor source). Issue M50-04: the
+    # same independent rebuild also mandates and revalidates
+    # maximum_observation_count (a positive integer not smaller than
+    # minimum_observation_count), fails closed on absence or malformation,
+    # and the v2 materializer below copies its normalized value unmodified.
     history_input_policy_intent = modeling_intent.get(
         "univariate_forecasting_history_input_policy_intent"
     )
@@ -2311,6 +2315,7 @@ def _build_execution_contract_v2(
         rebuilt_history_input_policy = build_univariate_forecasting_history_input_policy_intent(
             review_status=history_input_policy_review_status,
             minimum_observation_count=history_input_policy_intent.get("minimum_observation_count"),
+            maximum_observation_count=history_input_policy_intent.get("maximum_observation_count"),
             required_anchor=history_input_policy_intent.get("required_anchor"),
             forecast_origin_source=history_input_policy_intent.get("forecast_origin_source"),
             review_notes=history_input_policy_intent.get("review_notes"),
@@ -2533,6 +2538,7 @@ def _build_execution_contract_v2(
     history_input_policy = {
         "schema_version": "univariate-forecasting-history-input-policy.v1",
         "minimum_observation_count": rebuilt_history_input_policy["minimum_observation_count"],
+        "maximum_observation_count": rebuilt_history_input_policy["maximum_observation_count"],
         "required_anchor": dict(rebuilt_history_input_policy["required_anchor"]),
         "forecast_origin_source": rebuilt_history_input_policy["forecast_origin_source"],
     }
@@ -2650,6 +2656,9 @@ def _build_execution_contract_v2_materialization_evidence(
         "history_input_policy_schema_version": execution_contract["history_input_policy"]["schema_version"],
         "history_input_policy_minimum_observation_count": execution_contract["history_input_policy"][
             "minimum_observation_count"
+        ],
+        "history_input_policy_maximum_observation_count": execution_contract["history_input_policy"][
+            "maximum_observation_count"
         ],
         "history_input_policy_required_anchor_source": execution_contract["history_input_policy"][
             "required_anchor"

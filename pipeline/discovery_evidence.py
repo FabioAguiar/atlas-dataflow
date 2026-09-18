@@ -1385,12 +1385,13 @@ def _validate_univariate_forecasting_history_input_required_anchor(
 def build_univariate_forecasting_history_input_policy_intent(
     review_status: str,
     minimum_observation_count: int,
+    maximum_observation_count: int,
     required_anchor: dict[str, Any],
     forecast_origin_source: str,
     review_notes: str | None = None,
 ) -> dict[str, Any]:
     """Build a `univariate_forecasting_history_input_policy_intent.v1`
-    reviewed declaration (Project Spec S0265).
+    reviewed declaration (Project Spec S0265; Issue M50-04).
 
     Deliberately owns only the generic history-input generation/validation
     policy -- no dataset slug, target/time-index field name, frequency,
@@ -1406,9 +1407,22 @@ def build_univariate_forecasting_history_input_policy_intent(
     regardless of review_status, since a pending or rejected declaration
     must still be well-formed. Raises ValueError on a structurally malformed
     declaration (unknown review_status, non-positive
-    minimum_observation_count, a required_anchor deviating from v1's one
-    frozen `{"presence": "required", "source": "development_end"}` shape,
-    or a forecast_origin_source other than `"last_validated_history_index"`).
+    minimum_observation_count, a non-positive maximum_observation_count, a
+    maximum_observation_count smaller than minimum_observation_count, a
+    required_anchor deviating from v1's one frozen
+    `{"presence": "required", "source": "development_end"}` shape, or a
+    forecast_origin_source other than `"last_validated_history_index"`).
+
+    Issue M50-04: `maximum_observation_count` is a mandatory, explicit,
+    positive-integer, dataset-specific governed upper bound on supplied
+    history length -- never inferred, never defaulted, and never smaller
+    than `minimum_observation_count`. It is carried unmodified through
+    `contract_derivation._build_execution_contract_v2`'s independent
+    rebuild into `execution_contract.v2.history_input_policy`, then
+    projected by `pipeline/derive_projections.py` into both runtime
+    validation authority and bounded public guidance, and enforced by
+    `api/payload_validator.py` before any per-row history validation or
+    model-loader work.
     """
     if review_status not in UNIVARIATE_FORECASTING_HISTORY_INPUT_POLICY_REVIEW_STATUSES:
         raise ValueError(
@@ -1425,6 +1439,21 @@ def build_univariate_forecasting_history_input_policy_intent(
             "minimum_observation_count must be an explicit positive integer, got "
             f"{minimum_observation_count!r}"
         )
+    if (
+        isinstance(maximum_observation_count, bool)
+        or not isinstance(maximum_observation_count, int)
+        or maximum_observation_count <= 0
+    ):
+        raise ValueError(
+            "maximum_observation_count must be an explicit positive integer, got "
+            f"{maximum_observation_count!r}"
+        )
+    if maximum_observation_count < minimum_observation_count:
+        raise ValueError(
+            "maximum_observation_count must not be smaller than minimum_observation_count, got "
+            f"maximum_observation_count={maximum_observation_count!r}, "
+            f"minimum_observation_count={minimum_observation_count!r}"
+        )
     normalized_required_anchor = _validate_univariate_forecasting_history_input_required_anchor(
         required_anchor
     )
@@ -1439,6 +1468,7 @@ def build_univariate_forecasting_history_input_policy_intent(
         "schema_version": UNIVARIATE_FORECASTING_HISTORY_INPUT_POLICY_INTENT_CONTRACT_VERSION,
         "review_status": review_status,
         "minimum_observation_count": minimum_observation_count,
+        "maximum_observation_count": maximum_observation_count,
         "required_anchor": normalized_required_anchor,
         "forecast_origin_source": forecast_origin_source,
         "review_notes": review_notes,

@@ -425,6 +425,35 @@ def _derive_forecasting_projection(
                     "positive integer"
                 ]
             )
+        # Issue M50-04: maximum_observation_count remains additive within an
+        # already-additive history_input_policy block -- a policy document
+        # materialized before this issue never carries the key, and that
+        # absence is preserved as "no governed upper bound" (maximum_observation_count
+        # stays None) rather than failing projection closed. A policy that
+        # does declare the key, however, must declare it validly -- an
+        # explicitly present but non-positive or sub-minimum value still
+        # fails projection closed, exactly like every other declared-but-
+        # malformed history_input_policy field above.
+        maximum_observation_count = history_input_policy.get("maximum_observation_count")
+        if maximum_observation_count is not None:
+            if (
+                isinstance(maximum_observation_count, bool)
+                or not isinstance(maximum_observation_count, int)
+                or maximum_observation_count <= 0
+            ):
+                raise DerivationFailed(
+                    [
+                        "execution contract history_input_policy.maximum_observation_count must be a "
+                        "positive integer when present"
+                    ]
+                )
+            if maximum_observation_count < minimum_observation_count:
+                raise DerivationFailed(
+                    [
+                        "execution contract history_input_policy.maximum_observation_count must not be "
+                        "smaller than history_input_policy.minimum_observation_count"
+                    ]
+                )
         required_anchor = history_input_policy.get("required_anchor")
         required_anchor = required_anchor if isinstance(required_anchor, dict) else {}
         if required_anchor.get("presence") != "required" or required_anchor.get("source") != "development_end":
@@ -445,6 +474,7 @@ def _derive_forecasting_projection(
             )
     else:
         minimum_observation_count = 1
+        maximum_observation_count = None
         forecast_origin_source = "last_validated_history_index"
 
     time_index_field_name = contract["time_index_column"]
@@ -482,6 +512,15 @@ def _derive_forecasting_projection(
             "future_index_policy": "advance_by_governed_frequency",
         },
     }
+
+    # Issue M50-04: the runtime contract remains validation authority for the
+    # governed upper bound -- carried onto history_series only when the
+    # execution contract's history_input_policy actually declared one
+    # (never a literal, never inferred). A historical/no-policy or pre-
+    # Issue-M50-04-policy projection preserves the exact prior runtime
+    # contract shape with no maximum_observation_count key at all.
+    if maximum_observation_count is not None:
+        runtime_contract["history_series"]["maximum_observation_count"] = maximum_observation_count
 
     runtime_schema = _load_json(runtime_schema_path)
     runtime_validator = jsonschema.Draft7Validator(runtime_schema)
@@ -525,6 +564,14 @@ def _derive_forecasting_projection(
             "required_anchor": {"display_value": development_end},
             "continuity": "consecutive_by_frequency",
         }
+        # Issue M50-04: presentation-only projection of the same governed
+        # upper bound already validated above -- guidance, never validation
+        # authority (the runtime contract's own maximum_observation_count
+        # above remains the sole enforcement point). Omitted whenever the
+        # governed policy itself declares no maximum, matching
+        # minimum_observation_count's own optional-key precedent.
+        if maximum_observation_count is not None:
+            public_history_series["input_guidance"]["maximum_observation_count"] = maximum_observation_count
         public_forecast["origin_behavior"] = "starts_after_last_history_observation"
 
         # Project Spec S0267: derive the optional strict, machine-actionable
@@ -642,6 +689,15 @@ def _derive_forecasting_projection(
         "minimum_observation_count": minimum_observation_count,
         "minimum_observation_count_source": (
             "execution_contract.history_input_policy" if history_input_policy is not None else "default"
+        ),
+        # Issue M50-04: recorded the same way minimum_observation_count's
+        # source already is -- "execution_contract.history_input_policy"
+        # only when the governed policy actually declared a maximum,
+        # "default" (meaning no governed upper bound) otherwise, covering
+        # both the no-policy case and a policy that predates this issue.
+        "maximum_observation_count": maximum_observation_count,
+        "maximum_observation_count_source": (
+            "execution_contract.history_input_policy" if maximum_observation_count is not None else "default"
         ),
         "minimum_history_required_through": development_end,
         "source_exogenous_predictors": "forbidden",

@@ -123,6 +123,11 @@
           "exclusiveMinimum": 0,
           "description": "Positive integer minimum observation count. May be one for the first frozen-model generation if no stronger generic requirement is governed upstream; never confused with the model's training row count."
         },
+        "maximum_observation_count": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "description": "Issue M50-04: governed positive-integer maximum observation count -- runtime validation authority for rejecting an oversized supplied history before per-row parsing or model-loader work. Optional: absent on a runtime contract projected from an execution contract with no governed maximum (either no history_input_policy at all, or one materialized before Issue M50-04)."
+        },
         "minimum_history_required_through": {
           "type": ["string", "integer"],
           "description": "Project Spec S0265: the authenticated development-partition end boundary, sourced from candidate-preparation-recipe.v2.partitions.development.end, never caller-authored. This boundary value must both (1) occur among the supplied history's own time-index values, and (2) be reached by the final supplied history row -- a history whose final index is at or after this boundary but which never actually contains the boundary value itself does not satisfy this requirement."

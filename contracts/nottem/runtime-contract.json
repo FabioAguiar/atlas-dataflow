@@ -17,7 +17,8 @@
     "frequency_contiguous_required": true,
     "missing_time_index_allowed": false,
     "missing_target_allowed": false,
-    "target_value_kind": "continuous_numeric"
+    "target_value_kind": "continuous_numeric",
+    "maximum_observation_count": 240
   },
   "forecast": {
     "forecast_horizon": 12,

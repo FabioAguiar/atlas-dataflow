@@ -453,6 +453,11 @@ def _validate_and_normalize_forecasting_payload(
 
     history = payload[container_key]
     minimum_observation_count = history_series.get("minimum_observation_count")
+    # Issue M50-04: the governed upper bound, enforced at the exact call
+    # site that already enforces the governed minimum -- before the
+    # per-row loop below and before any model-loader work. Absent (no
+    # governed maximum declared) means no upper bound is enforced here.
+    maximum_observation_count = history_series.get("maximum_observation_count")
     if not isinstance(history, list) or len(history) == 0:
         return ValidationReport(
             failures=[_failure(FORECASTING_INVALID_HISTORY_SHAPE, container_key)],
@@ -460,6 +465,12 @@ def _validate_and_normalize_forecasting_payload(
             observations=[],
         )
     if isinstance(minimum_observation_count, int) and len(history) < minimum_observation_count:
+        return ValidationReport(
+            failures=[_failure(FORECASTING_INVALID_HISTORY_SHAPE, container_key)],
+            normalized_payload=dict(payload),
+            observations=[],
+        )
+    if isinstance(maximum_observation_count, int) and len(history) > maximum_observation_count:
         return ValidationReport(
             failures=[_failure(FORECASTING_INVALID_HISTORY_SHAPE, container_key)],
             normalized_payload=dict(payload),

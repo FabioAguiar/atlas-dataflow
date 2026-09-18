@@ -21,7 +21,8 @@
       "required_anchor": {
         "display_value": "1938-12"
       },
-      "continuity": "consecutive_by_frequency"
+      "continuity": "consecutive_by_frequency",
+      "maximum_observation_count": 240
     },
     "temporal_interaction": {
       "control_kind": "month",

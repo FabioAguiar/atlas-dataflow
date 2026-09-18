@@ -380,6 +380,7 @@ def _history_input_policy(**overrides) -> dict:
     policy = {
         "schema_version": "univariate-forecasting-history-input-policy.v1",
         "minimum_observation_count": 1,
+        "maximum_observation_count": DEV_OBSERVATIONS,
         "required_anchor": {"presence": "required", "source": "development_end"},
         "forecast_origin_source": "last_validated_history_index",
     }
@@ -428,6 +429,72 @@ def test_v2_projection_sources_minimum_observation_count_from_history_input_poli
     # The governed development-end boundary resolution is unchanged by the
     # policy's presence.
     assert runtime_contract["history_series"]["minimum_history_required_through"] == "19"
+
+
+# ---------------------------------------------------------------------------
+# Issue M50-04: history_input_policy-governed maximum_observation_count
+# projection
+# ---------------------------------------------------------------------------
+
+
+def test_v2_projection_history_input_policy_without_maximum_observation_count_key_omits_runtime_field(tmp_path):
+    """A history_input_policy document materialized before Issue M50-04
+    never carries maximum_observation_count -- projection must remain
+    additive-compatible and emit no maximum_observation_count key at all,
+    exactly like the no-policy default case above."""
+    policy = _history_input_policy()
+    del policy["maximum_observation_count"]
+    contract = _execution_contract_v2(history_input_policy=policy)
+    contract_path = _write_json(tmp_path / "execution-contract.json", contract)
+    recipe_path = _write_json(tmp_path / "preparation-recipe.json", _preparation_recipe_v2())
+    out_dir = tmp_path / "out"
+
+    derive(contract_path, out_dir, repo_root=REPO_ROOT, preparation_recipe_path=recipe_path)
+
+    runtime_contract = json.loads((out_dir / "runtime-contract.json").read_text())
+    public_contract = json.loads((out_dir / "public-contract.json").read_text())
+    evidence = json.loads((out_dir / "projection-evidence.json").read_text())
+    assert "maximum_observation_count" not in runtime_contract["history_series"]
+    assert "maximum_observation_count" not in public_contract["history_series"]["input_guidance"]
+    assert evidence["maximum_observation_count"] is None
+    assert evidence["maximum_observation_count_source"] == "default"
+
+
+def test_v2_projection_sources_maximum_observation_count_from_history_input_policy(tmp_path):
+    contract = _execution_contract_v2(
+        history_input_policy=_history_input_policy(maximum_observation_count=DEV_OBSERVATIONS)
+    )
+    contract_path = _write_json(tmp_path / "execution-contract.json", contract)
+    recipe_path = _write_json(tmp_path / "preparation-recipe.json", _preparation_recipe_v2())
+    out_dir = tmp_path / "out"
+
+    derive(contract_path, out_dir, repo_root=REPO_ROOT, preparation_recipe_path=recipe_path)
+
+    runtime_contract = json.loads((out_dir / "runtime-contract.json").read_text())
+    evidence = json.loads((out_dir / "projection-evidence.json").read_text())
+    assert runtime_contract["history_series"]["maximum_observation_count"] == DEV_OBSERVATIONS
+    assert evidence["maximum_observation_count"] == DEV_OBSERVATIONS
+    assert evidence["maximum_observation_count_source"] == "execution_contract.history_input_policy"
+
+
+def test_v2_projection_history_input_policy_non_positive_maximum_observation_count_fails_closed(tmp_path):
+    contract = _execution_contract_v2(
+        history_input_policy=_history_input_policy(maximum_observation_count=0)
+    )
+    contract_path = _write_json(tmp_path / "execution-contract.json", contract)
+    recipe_path = _write_json(tmp_path / "preparation-recipe.json", _preparation_recipe_v2())
+    with pytest.raises(DerivationFailed):
+        derive(contract_path, tmp_path / "out", repo_root=REPO_ROOT, preparation_recipe_path=recipe_path)
+
+
+def test_v2_projection_history_input_policy_maximum_smaller_than_minimum_fails_closed(tmp_path):
+    contract = _execution_contract_v2(
+        history_input_policy=_history_input_policy(minimum_observation_count=5, maximum_observation_count=3)
+    )
+    contract_path = _write_json(tmp_path / "execution-contract.json", contract)
+    recipe_path = _write_json(tmp_path / "preparation-recipe.json", _preparation_recipe_v2())
+    with pytest.raises(DerivationFailed):
+        derive(contract_path, tmp_path / "out", repo_root=REPO_ROOT, preparation_recipe_path=recipe_path)
 
 
 def test_v2_projection_history_input_policy_wrong_schema_version_fails_closed(tmp_path):
@@ -646,6 +713,7 @@ def test_v2_projection_with_history_input_policy_emits_public_guidance(tmp_path)
     public_contract = json.loads((out_dir / "public-contract.json").read_text())
     assert public_contract["history_series"]["input_guidance"] == {
         "minimum_observation_count": 3,
+        "maximum_observation_count": DEV_OBSERVATIONS,
         "required_anchor": {"display_value": "19"},
         "continuity": "consecutive_by_frequency",
     }

@@ -100,6 +100,11 @@
           "minimum": 1,
           "description": "Presentation projection of the governed runtime minimum observation count. Never a UI-invented default."
         },
+        "maximum_observation_count": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Issue M50-04: presentation projection of the governed runtime maximum observation count. Guidance only -- the runtime contract remains payload-validation authority. Absent whenever the governed policy declares no maximum."
+        },
         "required_anchor": {
           "type": "object",
           "additionalProperties": false,

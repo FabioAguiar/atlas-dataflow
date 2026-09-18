@@ -442,13 +442,18 @@
         "required_anchor",
         "forecast_origin_source"
       ],
-      "description": "Project Spec S0265: strict, normalized, governed forecasting history-input policy materialized from a reviewed, approved univariate_forecasting_history_input_policy_intent. Never carries review_status/review_notes -- those remain authoring-only fields on the dataset modeling intent, not on the execution contract. v1 supports only a required development-end anchor and a last_validated_history_index forecast origin; a model requiring a not_required anchor, a rolling context window, a different anchor source, model state, refit/update behavior, or another forecast-origin policy requires a future, separately governed policy version instead of being silently coerced into this one.",
+      "description": "Project Spec S0265: strict, normalized, governed forecasting history-input policy materialized from a reviewed, approved univariate_forecasting_history_input_policy_intent. Never carries review_status/review_notes -- those remain authoring-only fields on the dataset modeling intent, not on the execution contract. v1 supports only a required development-end anchor and a last_validated_history_index forecast origin; a model requiring a not_required anchor, a rolling context window, a different anchor source, model state, refit/update behavior, or another forecast-origin policy requires a future, separately governed policy version instead of being silently coerced into this one. Issue M50-04: maximum_observation_count is a bounded additive property, not a member of required[] -- a history_input_policy document materialized before Issue M50-04 remains structurally valid without it. It is nonetheless mandatory at the authoring/materialization layer: pipeline/discovery_evidence.py's builder requires it as an explicit positive-integer argument for every newly authored intent, and pipeline/contract_derivation.py's independent rebuild fails the whole materialization closed when it is absent or malformed, so any execution_contract.v2 newly produced by the governed pipeline always carries it.",
       "properties": {
         "schema_version": { "type": "string", "const": "univariate-forecasting-history-input-policy.v1" },
         "minimum_observation_count": {
           "type": "integer",
           "exclusiveMinimum": 0,
           "description": "Governed minimum supplied-history observation count. Explicit, dataset-specific, and never hardcoded to a literal 1 by projection code."
+        },
+        "maximum_observation_count": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "description": "Issue M50-04: governed maximum supplied-history observation count, explicit and dataset-specific -- never inferred, never smaller than minimum_observation_count. Absent only on a history_input_policy document materialized before Issue M50-04."
         },
         "required_anchor": { "$ref": "#/definitions/univariate_forecasting_history_input_required_anchor" },
         "forecast_origin_source": { "type": "string", "const": "last_validated_history_index" }

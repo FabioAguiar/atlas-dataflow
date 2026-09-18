@@ -445,6 +445,8 @@ Area responsible for defining and validating contracts used by the runtime and b
 
 The architecture differentiates runtime contract and public contract. The runtime contract guides validation and inference. The public contract provides a safe projection for rendering and consumption by the web experience, including categorical/select options when public-safe.
 
+For univariate forecasting, the runtime contract also owns a governed, dataset-specific `maximum_observation_count` upper bound on a caller's supplied history, materialized from a reviewed forecasting history-input-policy intent and enforced by the API's payload validator before per-row history parsing or model-loader work; the public contract exposes the same bound as guidance only, never as validation authority.
+
 ### Inference Runtime
 
 Area responsible for loading published artifacts and executing predictions.

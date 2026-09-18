@@ -2199,6 +2199,7 @@ def _approved_forecasting_history_input_policy_intent(**overrides):
     kwargs = dict(
         review_status="approved",
         minimum_observation_count=1,
+        maximum_observation_count=60,
         required_anchor={"presence": "required", "source": "development_end"},
         forecast_origin_source="last_validated_history_index",
         review_notes="Reviewed forecasting history-input policy.",
@@ -2462,6 +2463,7 @@ def test_execution_contract_v2_materializes_from_approved_fixtures():
     assert contract["history_input_policy"] == {
         "schema_version": "univariate-forecasting-history-input-policy.v1",
         "minimum_observation_count": 1,
+        "maximum_observation_count": 60,
         "required_anchor": {"presence": "required", "source": "development_end"},
         "forecast_origin_source": "last_validated_history_index",
     }
@@ -2923,6 +2925,68 @@ def test_execution_contract_v2_history_input_policy_larger_minimum_observation_c
     assert contract["history_input_policy"]["minimum_observation_count"] == 24
 
 
+# ---------------------------------------------------------------------------
+# execution_contract.v2 -- forecasting history-input-policy governed
+# maximum_observation_count materialization (Issue M50-04)
+# ---------------------------------------------------------------------------
+
+
+def test_execution_contract_v2_history_input_policy_missing_maximum_observation_count_fails_closed():
+    history_input_policy_intent = _approved_forecasting_history_input_policy_intent()
+    del history_input_policy_intent["maximum_observation_count"]
+    modeling_intent = _modeling_intent_for_forecasting(
+        forecasting_history_input_policy_intent=history_input_policy_intent
+    )
+    with pytest.raises(ExecutionContractV2ValidationError):
+        _build_execution_contract(
+            modeling_intent, {}, _valid_preparation_recipe_v2(), semantic_intent=_valid_semantic_intent_v4()
+        )
+
+
+def test_execution_contract_v2_history_input_policy_non_positive_maximum_observation_count_fails_closed():
+    history_input_policy_intent = _approved_forecasting_history_input_policy_intent()
+    history_input_policy_intent["maximum_observation_count"] = 0
+    modeling_intent = _modeling_intent_for_forecasting(
+        forecasting_history_input_policy_intent=history_input_policy_intent
+    )
+    with pytest.raises(ExecutionContractV2ValidationError):
+        _build_execution_contract(
+            modeling_intent, {}, _valid_preparation_recipe_v2(), semantic_intent=_valid_semantic_intent_v4()
+        )
+
+
+def test_execution_contract_v2_history_input_policy_maximum_smaller_than_minimum_fails_closed():
+    # A hand-built (not builder-validated) modeling intent, mirroring
+    # test_execution_contract_v2_history_input_policy_malformed_anchor_fails_closed
+    # above -- the discovery_evidence builder itself already rejects this
+    # combination at construction time, so this test instead mutates an
+    # already-built, individually valid intent to exercise
+    # contract_derivation's own independent re-validation.
+    history_input_policy_intent = _approved_forecasting_history_input_policy_intent(
+        minimum_observation_count=10, maximum_observation_count=20
+    )
+    history_input_policy_intent["maximum_observation_count"] = 5
+    modeling_intent = _modeling_intent_for_forecasting(
+        forecasting_history_input_policy_intent=history_input_policy_intent
+    )
+    with pytest.raises(ExecutionContractV2ValidationError):
+        _build_execution_contract(
+            modeling_intent, {}, _valid_preparation_recipe_v2(), semantic_intent=_valid_semantic_intent_v4()
+        )
+
+
+def test_execution_contract_v2_history_input_policy_maximum_observation_count_materializes_unmodified():
+    modeling_intent = _modeling_intent_for_forecasting(
+        forecasting_history_input_policy_intent=_approved_forecasting_history_input_policy_intent(
+            minimum_observation_count=1, maximum_observation_count=240
+        )
+    )
+    contract = _build_execution_contract(
+        modeling_intent, {}, _valid_preparation_recipe_v2(), semantic_intent=_valid_semantic_intent_v4()
+    )
+    assert contract["history_input_policy"]["maximum_observation_count"] == 240
+
+
 def test_execution_contract_v2_history_input_policy_review_notes_do_not_leak_into_contract():
     modeling_intent = _modeling_intent_for_forecasting(
         forecasting_history_input_policy_intent=_approved_forecasting_history_input_policy_intent(
@@ -2937,6 +3001,7 @@ def test_execution_contract_v2_history_input_policy_review_notes_do_not_leak_int
     assert set(contract["history_input_policy"].keys()) == {
         "schema_version",
         "minimum_observation_count",
+        "maximum_observation_count",
         "required_anchor",
         "forecast_origin_source",
     }
@@ -2981,6 +3046,7 @@ def test_execution_contract_v2_history_input_policy_projection_evidence_reduced_
     )
     assert evidence["history_input_policy_schema_version"] == "univariate-forecasting-history-input-policy.v1"
     assert evidence["history_input_policy_minimum_observation_count"] == 1
+    assert evidence["history_input_policy_maximum_observation_count"] == 60
     assert evidence["history_input_policy_required_anchor_source"] == "development_end"
 
 

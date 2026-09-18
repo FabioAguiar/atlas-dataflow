@@ -71,6 +71,7 @@
   "history_input_policy": {
     "schema_version": "univariate-forecasting-history-input-policy.v1",
     "minimum_observation_count": 1,
+    "maximum_observation_count": 240,
     "required_anchor": {
       "presence": "required",
       "source": "development_end"

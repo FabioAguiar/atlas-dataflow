@@ -46,9 +46,11 @@ from runtime.inference import (  # noqa: E402
     JOBLIB_SKLEARN_PREDICT_STRATEGY,
     RUNTIME_DIAGNOSTIC_CODES,
     execute_prediction,
+    get_cached_runtime_bundle_adapter,
     load_inference_bundle,
     load_joblib_sklearn_model,
     project_result_contract,
+    reconcile_runtime_model_cache,
 )
 from inference_result_dispatch import validate_inference_result  # noqa: E402
 from public_contract_loader import (  # noqa: E402
@@ -313,6 +315,16 @@ from registry.update import (  # noqa: E402
     remove_dataset_entry,
     rename_dataset_slug,
 )
+
+
+def _reconcile_runtime_cache_from_registry() -> None:
+    """Best-effort non-HTTP pruning driven by the registry-owning API layer."""
+
+    try:
+        datasets = list_admin_datasets()
+    except RegistryInvalidError:
+        return
+    reconcile_runtime_model_cache(dataset.dataset_slug for dataset in datasets)
 
 
 def _resolve_public_dataset_detail_access(dataset_slug: str):
@@ -608,6 +620,7 @@ def list_datasets_endpoint():
         datasets = list_datasets()
     except RegistryInvalidError:
         return public_error_response(REGISTRY_UNAVAILABLE)
+    reconcile_runtime_model_cache(dataset.dataset_slug for dataset in datasets)
     visible_datasets = [d for d in datasets if _dataset_publicly_ready(d.dataset_slug)]
     return {
         "datasets": [
@@ -877,12 +890,17 @@ def _execute_governed_inference(
     release_dir, manifest = resolved_manifest
 
     try:
-        loaded_bundle = load_inference_bundle(
+        _reconcile_runtime_cache_from_registry()
+        runtime_adapter = get_cached_runtime_bundle_adapter(
+            dataset_slug,
+            active_release,
             {"path": str(release_dir), "artifacts": manifest.get("artifacts", [])},
             manifest=manifest,
             bundle_loader=_load_bundle,
+            loader_strategies=_INFERENCE_LOADER_STRATEGIES,
+            supported_serialization_formats=_INFERENCE_SUPPORTED_SERIALIZATION_FORMATS,
         )
-        declaration = loaded_bundle.bundle if isinstance(loaded_bundle.bundle, dict) else manifest
+        declaration = runtime_adapter.declaration
         projected_result_contract = project_result_contract(declaration)
         expected_result_contract = projected_result_contract.get("semantics")
         if (
@@ -918,6 +936,7 @@ def _execute_governed_inference(
             supported_serialization_formats=_INFERENCE_SUPPORTED_SERIALIZATION_FORMATS,
             runtime_feature_metadata=_runtime_feature_metadata(runtime_contract),
             runtime_contract=runtime_contract,
+            runtime_adapter=runtime_adapter,
         )
     except InferenceRuntimeError as exc:
         return _inference_failure_response(
@@ -1266,6 +1285,7 @@ def list_admin_datasets_route(request: Request):
         datasets = list_admin_datasets()
     except RegistryInvalidError:
         return public_error_response(REGISTRY_UNAVAILABLE)
+    reconcile_runtime_model_cache(dataset.dataset_slug for dataset in datasets)
 
     # Project Specs S0089/S0091: the mutable registry timestamp is the
     # canonical operational source. Historical runs remain only a legacy
@@ -1350,6 +1370,7 @@ def delete_admin_dataset_detail(dataset_slug: str, request: Request):
         "artifacts_removed": profile_cleanup["artifacts_removed"],
         "media_removed": profile_cleanup["media_removed"],
     }
+    _reconcile_runtime_cache_from_registry()
     return result
 
 
@@ -1372,6 +1393,7 @@ def put_admin_dataset_detail_slug(
     if not result["renamed"]:
         return ADMIN_DATASET_DETAIL_SLUG_RENAME_FAILED.response(errors=result["errors"])
 
+    _reconcile_runtime_cache_from_registry()
     return result
 
 

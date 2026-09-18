@@ -11,9 +11,11 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+from concurrent.futures import Future
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Mapping, Sequence
+from threading import RLock
+from typing import Any, Callable, Iterable, Mapping, Sequence
 
 import jsonschema
 
@@ -364,6 +366,191 @@ class RuntimeBundleAdapter:
         return self.prediction_callable(validated_payload)
 
 
+@dataclass(frozen=True)
+class _RuntimeModelCacheEntry:
+    """One fully verified, immutable-release runtime entry for a dataset."""
+
+    active_release: str
+    declared_model_sha256: str
+    adapter: RuntimeBundleAdapter
+
+
+@dataclass(frozen=True)
+class _RuntimeModelLoadAttempt:
+    """The single coordinated load currently permitted for a dataset."""
+
+    active_release: str
+    future: Future[RuntimeBundleAdapter]
+
+
+# M50-02: cache state is deliberately process-local. The global lock protects
+# only entry/in-flight lookup and atomic publication; bundle I/O,
+# deserialization, and prediction all happen after it has been released.
+_RUNTIME_MODEL_CACHE_LOCK = RLock()
+_RUNTIME_MODEL_CACHE: dict[str, _RuntimeModelCacheEntry] = {}
+_RUNTIME_MODEL_LOADS: dict[str, _RuntimeModelLoadAttempt] = {}
+
+
+def get_cached_runtime_bundle_adapter(
+    dataset_slug: str,
+    active_release_id: str,
+    active_release: Mapping[str, Any],
+    *,
+    manifest: Mapping[str, Any] | None = None,
+    bundle_loader: BundleLoader,
+    loader_strategies: Mapping[str, LoaderStrategy] | None = None,
+    supported_serialization_formats: Sequence[str] | None = None,
+    prediction_executor: PredictionExecutor | None = None,
+    compatibility_status: Mapping[str, Any] | None = None,
+) -> RuntimeBundleAdapter:
+    """Return the verified adapter for one registry-resolved dataset release.
+
+    A warm hit trusts the declared digest stored with the fully verified entry
+    only while the registry-resolved release id is unchanged. Cold and changed
+    releases share one load attempt per dataset. A replacement is published
+    atomically after validation, hashing, and deserialization have all
+    succeeded; failures leave an older entry internally intact but never make
+    it eligible for the newly requested release.
+    """
+
+    if not isinstance(dataset_slug, str) or not dataset_slug.strip():
+        raise BundleReferenceError("Runtime cache dataset identity is not defined.")
+    if not isinstance(active_release_id, str) or not active_release_id.strip():
+        raise BundleReferenceError("Runtime cache release identity is not defined.")
+
+    while True:
+        owns_load = False
+        waits_for_requested_release = False
+        with _RUNTIME_MODEL_CACHE_LOCK:
+            entry = _RUNTIME_MODEL_CACHE.get(dataset_slug)
+            if entry is not None and entry.active_release == active_release_id:
+                return entry.adapter
+
+            attempt = _RUNTIME_MODEL_LOADS.get(dataset_slug)
+            if attempt is None:
+                attempt = _RuntimeModelLoadAttempt(
+                    active_release=active_release_id,
+                    future=Future(),
+                )
+                _RUNTIME_MODEL_LOADS[dataset_slug] = attempt
+                owns_load = True
+            else:
+                waits_for_requested_release = attempt.active_release == active_release_id
+
+        if owns_load:
+            break
+
+        try:
+            adapter = attempt.future.result()
+        except Exception:
+            if waits_for_requested_release:
+                raise
+            # A different release attempt completed unsuccessfully. The
+            # current request now gets its own coordinated attempt.
+            continue
+        if waits_for_requested_release:
+            return adapter
+        # A different release was published while this request waited. Loop
+        # and start/join the attempt for the registry identity requested here.
+
+    try:
+        adapter = load_runtime_bundle_adapter(
+            active_release,
+            manifest=manifest,
+            bundle_loader=bundle_loader,
+            loader_strategies=loader_strategies,
+            supported_serialization_formats=supported_serialization_formats,
+            prediction_executor=prediction_executor,
+            compatibility_status=compatibility_status,
+        )
+        declared_model_sha256 = _model_artifact_sha256(adapter.declaration)
+        if declared_model_sha256 is None:
+            # Defensive cache boundary: governed adapter loading rejects this
+            # before deserialization, but publication independently requires
+            # the exact digest that forms the cache identity.
+            raise BundleValidationError(
+                "invalid_model_artifact_sha256",
+                "Inference model artifact hash is not valid.",
+                field=_model_artifact_sha256_field(adapter.declaration),
+                diagnostic_code=DIAGNOSTIC_INFERENCE_BUNDLE_UNAVAILABLE,
+            )
+        new_entry = _RuntimeModelCacheEntry(
+            active_release=active_release_id,
+            declared_model_sha256=declared_model_sha256,
+            adapter=adapter,
+        )
+    except Exception as exc:
+        with _RUNTIME_MODEL_CACHE_LOCK:
+            if _RUNTIME_MODEL_LOADS.get(dataset_slug) is attempt:
+                del _RUNTIME_MODEL_LOADS[dataset_slug]
+        attempt.future.set_exception(exc)
+        raise
+
+    with _RUNTIME_MODEL_CACHE_LOCK:
+        if _RUNTIME_MODEL_LOADS.get(dataset_slug) is attempt:
+            _RUNTIME_MODEL_CACHE[dataset_slug] = new_entry
+            del _RUNTIME_MODEL_LOADS[dataset_slug]
+    attempt.future.set_result(adapter)
+    return adapter
+
+
+def reconcile_runtime_model_cache(active_dataset_slugs: Iterable[str]) -> dict[str, int]:
+    """Prune entries and in-flight publication for registry-absent datasets.
+
+    The registry-owning caller supplies the authoritative current slug set;
+    this runtime boundary neither reads nor mutates registry state. Callers
+    already waiting on a removed in-flight attempt may finish, but the removed
+    attempt can no longer publish reusable state.
+    """
+
+    active_slugs = frozenset(
+        slug for slug in active_dataset_slugs if isinstance(slug, str) and slug.strip()
+    )
+    with _RUNTIME_MODEL_CACHE_LOCK:
+        removed_entries = [slug for slug in _RUNTIME_MODEL_CACHE if slug not in active_slugs]
+        removed_loads = [slug for slug in _RUNTIME_MODEL_LOADS if slug not in active_slugs]
+        for slug in removed_entries:
+            del _RUNTIME_MODEL_CACHE[slug]
+        for slug in removed_loads:
+            del _RUNTIME_MODEL_LOADS[slug]
+    return {
+        "removed_entries": len(removed_entries),
+        "removed_in_flight": len(removed_loads),
+    }
+
+
+def reset_runtime_model_cache() -> None:
+    """Clear process-local runtime state for lifecycle management and tests."""
+
+    with _RUNTIME_MODEL_CACHE_LOCK:
+        _RUNTIME_MODEL_CACHE.clear()
+        # Removing an attempt prevents its eventual result from publication;
+        # its existing callers retain their own Future reference and complete.
+        _RUNTIME_MODEL_LOADS.clear()
+
+
+def inspect_runtime_model_cache() -> dict[str, tuple[dict[str, str], ...]]:
+    """Return reduced identity-only state without models or declarations."""
+
+    with _RUNTIME_MODEL_CACHE_LOCK:
+        entries = tuple(
+            {
+                "dataset_slug": dataset_slug,
+                "active_release": entry.active_release,
+                "declared_model_sha256": entry.declared_model_sha256,
+            }
+            for dataset_slug, entry in sorted(_RUNTIME_MODEL_CACHE.items())
+        )
+        in_flight = tuple(
+            {
+                "dataset_slug": dataset_slug,
+                "active_release": attempt.active_release,
+            }
+            for dataset_slug, attempt in sorted(_RUNTIME_MODEL_LOADS.items())
+        )
+    return {"entries": entries, "in_flight": in_flight}
+
+
 def load_inference_bundle(
     active_release: Mapping[str, Any],
     *,
@@ -494,6 +681,7 @@ def execute_prediction(
     prediction_executor: PredictionExecutor | None = None,
     runtime_feature_metadata: Mapping[str, Mapping[str, Any]] | None = None,
     runtime_contract: Mapping[str, Any] | None = None,
+    runtime_adapter: RuntimeBundleAdapter | None = None,
 ) -> dict[str, Any]:
     """Load the active release bundle and execute prediction.
 
@@ -532,15 +720,17 @@ def execute_prediction(
     prediction. Every other variant ignores it, unchanged.
     """
 
-    adapter = load_runtime_bundle_adapter(
-        active_release,
-        manifest=manifest,
-        bundle_loader=bundle_loader,
-        loader_strategies=loader_strategies,
-        supported_serialization_formats=supported_serialization_formats,
-        prediction_executor=prediction_executor,
-        compatibility_status=compatibility_status,
-    )
+    adapter = runtime_adapter
+    if adapter is None:
+        adapter = load_runtime_bundle_adapter(
+            active_release,
+            manifest=manifest,
+            bundle_loader=bundle_loader,
+            loader_strategies=loader_strategies,
+            supported_serialization_formats=supported_serialization_formats,
+            prediction_executor=prediction_executor,
+            compatibility_status=compatibility_status,
+        )
 
     if loader_strategies is not None and prediction_executor is None:
         return {
@@ -1321,13 +1511,18 @@ def _model_artifact_reference(declaration: Mapping[str, Any]) -> str | None:
 def _verify_model_artifact_hash(model_artifact_path: Path, declaration: Mapping[str, Any]) -> None:
     expected_hash = _model_artifact_sha256(declaration)
     if expected_hash is None:
-        return
+        raise BundleValidationError(
+            "invalid_model_artifact_sha256",
+            "Inference model artifact hash is not valid.",
+            field=_model_artifact_sha256_field(declaration),
+            diagnostic_code=DIAGNOSTIC_INFERENCE_BUNDLE_UNAVAILABLE,
+        )
     actual_hash = _sha256_file(model_artifact_path)
     if actual_hash != expected_hash:
         raise BundleValidationError(
             "model_artifact_hash_mismatch",
             "Inference model artifact hash does not match the bundle declaration.",
-            field="model_artifact.sha256",
+            field=_model_artifact_sha256_field(declaration),
             diagnostic_code=DIAGNOSTIC_MODEL_ARTIFACT_HASH_MISMATCH,
         )
 
@@ -1343,6 +1538,12 @@ def _model_artifact_sha256(declaration: Mapping[str, Any]) -> str | None:
     if isinstance(value, str) and len(value) == 64 and all(char in "0123456789abcdef" for char in value):
         return value
     return None
+
+
+def _model_artifact_sha256_field(declaration: Mapping[str, Any]) -> str:
+    if declaration.get("contract_version") == "inference_bundle.v2":
+        return "frozen_model.model_artifact.sha256"
+    return "model_artifact.sha256"
 
 
 def _sha256_file(path: Path) -> str:

@@ -1,6 +1,9 @@
+import hashlib
 import json
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Event, Lock
 from typing import Any, Mapping
 
 
@@ -12,6 +15,7 @@ from runtime import (  # noqa: E402
     load_inference_bundle,
     load_runtime_bundle_adapter,
 )
+import runtime.inference as inference_module  # noqa: E402
 from runtime.inference import (  # noqa: E402
     BundleValidationError,
     DIAGNOSTIC_INFERENCE_BUNDLE_UNAVAILABLE,
@@ -23,7 +27,11 @@ from runtime.inference import (  # noqa: E402
     DIAGNOSTIC_RUNTIME_INPUT_CONTRACT_INCONSISTENT,
     JOBLIB_SKLEARN_PREDICT_STRATEGY,
     _build_ordered_row,
+    get_cached_runtime_bundle_adapter,
+    inspect_runtime_model_cache,
     load_joblib_sklearn_model,
+    reconcile_runtime_model_cache,
+    reset_runtime_model_cache,
     validate_binary_classification_result,
 )
 
@@ -66,8 +74,11 @@ def test_runtime_bundle_adapter_uses_bundle_metadata_and_release_relative_model(
 ) -> None:
     release_root = tmp_path / "release"
     declaration = _bundle_declaration()
-    _write_json(release_root / "predictions" / "bundle.json", declaration)
     _write_json(release_root / "models" / "model.json", {"threshold": 40})
+    declaration["model_artifact"]["sha256"] = hashlib.sha256(
+        (release_root / "models" / "model.json").read_bytes()
+    ).hexdigest()
+    _write_json(release_root / "predictions" / "bundle.json", declaration)
 
     loaded_model_paths: list[Path] = []
 
@@ -461,7 +472,12 @@ def test_runtime_bundle_adapter_loads_via_joblib_sklearn_predict_allowlist(tmp_p
             "loader_strategy": JOBLIB_SKLEARN_PREDICT_STRATEGY,
             "serialization_format": "joblib",
         },
-        "model_artifact": {"path": "models/model.pkl"},
+        "model_artifact": {
+            "path": "models/model.pkl",
+            "sha256": hashlib.sha256(
+                (release_root / "models" / "model.pkl").read_bytes()
+            ).hexdigest(),
+        },
         "output_schema": {"class_labels": ["No", "Yes"]},
     }
     _write_json(release_root / "predictions" / "bundle.json", declaration)
@@ -481,6 +497,319 @@ def test_runtime_bundle_adapter_loads_via_joblib_sklearn_predict_allowlist(tmp_p
 
     assert adapter.bundle == {"marker": "real-model"}
     assert adapter.model_artifact_path == release_root / "models" / "model.pkl"
+
+
+def _cache_release(
+    root: Path,
+    release_id: str,
+    *,
+    threshold: int,
+    declared_sha256: str | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    release_root = root / release_id
+    model = {"threshold": threshold}
+    _write_json(release_root / "models" / "model.json", model)
+    actual_sha256 = hashlib.sha256((release_root / "models" / "model.json").read_bytes()).hexdigest()
+    declaration = _bundle_declaration()
+    declaration["model_artifact"]["sha256"] = declared_sha256 or actual_sha256
+    _write_json(release_root / "predictions" / "bundle.json", declaration)
+    active_release = {
+        "release_root": str(release_root),
+        "artifacts": {"inference_bundle": {"path": "predictions/bundle.json"}},
+    }
+    return active_release, declaration
+
+
+def _cached_adapter(
+    dataset_slug: str,
+    release_id: str,
+    active_release: Mapping[str, Any],
+    counters: dict[str, int],
+    *,
+    load_started: Event | None = None,
+    allow_load: Event | None = None,
+):
+    def load_declaration(path: Path) -> dict[str, Any]:
+        with counters["lock"]:
+            counters["declarations"] += 1
+        if load_started is not None:
+            load_started.set()
+        if allow_load is not None:
+            assert allow_load.wait(timeout=5)
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    def load_model(path: Path, _declaration: Mapping[str, Any]) -> Mapping[str, Any]:
+        with counters["lock"]:
+            counters["models"] += 1
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    return get_cached_runtime_bundle_adapter(
+        dataset_slug,
+        release_id,
+        active_release,
+        bundle_loader=load_declaration,
+        loader_strategies={"json_threshold_classifier": load_model},
+        supported_serialization_formats=["json"],
+        prediction_executor=lambda model, payload: payload["age"] >= model["threshold"],
+        compatibility_status={"status": "compatible"},
+    )
+
+
+def _cache_counters() -> dict[str, Any]:
+    return {"declarations": 0, "models": 0, "lock": Lock()}
+
+
+def test_runtime_model_cache_reuses_one_verified_adapter_for_unchanged_release(
+    tmp_path: Path, monkeypatch
+) -> None:
+    reset_runtime_model_cache()
+    active_release, declaration = _cache_release(tmp_path, "release-a", threshold=40)
+    counters = _cache_counters()
+    original_sha256_file = inference_module._sha256_file
+
+    def count_hash(path: Path) -> str:
+        with counters["lock"]:
+            counters["hashes"] = counters.get("hashes", 0) + 1
+        return original_sha256_file(path)
+
+    monkeypatch.setattr(inference_module, "_sha256_file", count_hash)
+
+    first = _cached_adapter("dataset-a", "release-a", active_release, counters)
+    second = _cached_adapter("dataset-a", "release-a", active_release, counters)
+
+    assert second is first
+    assert counters["declarations"] == 1
+    assert counters["hashes"] == 1
+    assert counters["models"] == 1
+    assert inspect_runtime_model_cache() == {
+        "entries": (
+            {
+                "dataset_slug": "dataset-a",
+                "active_release": "release-a",
+                "declared_model_sha256": declaration["model_artifact"]["sha256"],
+            },
+        ),
+        "in_flight": (),
+    }
+
+
+def test_runtime_model_cache_coordinates_concurrent_first_access(tmp_path: Path) -> None:
+    reset_runtime_model_cache()
+    active_release, _ = _cache_release(tmp_path, "release-a", threshold=40)
+    counters = _cache_counters()
+    load_started = Event()
+    allow_load = Event()
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        first = executor.submit(
+            _cached_adapter,
+            "dataset-a",
+            "release-a",
+            active_release,
+            counters,
+            load_started=load_started,
+            allow_load=allow_load,
+        )
+        assert load_started.wait(timeout=5)
+        waiters = [
+            executor.submit(
+                _cached_adapter,
+                "dataset-a",
+                "release-a",
+                active_release,
+                counters,
+            )
+            for _ in range(7)
+        ]
+        allow_load.set()
+        adapters = [first.result(timeout=5), *(future.result(timeout=5) for future in waiters)]
+
+    assert len({id(adapter) for adapter in adapters}) == 1
+    assert counters["declarations"] == 1
+    assert counters["models"] == 1
+
+
+def test_runtime_model_cache_does_not_serialize_different_datasets(tmp_path: Path) -> None:
+    reset_runtime_model_cache()
+    release_a, _ = _cache_release(tmp_path, "release-a", threshold=40)
+    release_b, _ = _cache_release(tmp_path, "release-b", threshold=50)
+    counters_a = _cache_counters()
+    counters_b = _cache_counters()
+    started_a = Event()
+    started_b = Event()
+    allow_loads = Event()
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        future_a = executor.submit(
+            _cached_adapter,
+            "dataset-a",
+            "release-a",
+            release_a,
+            counters_a,
+            load_started=started_a,
+            allow_load=allow_loads,
+        )
+        future_b = executor.submit(
+            _cached_adapter,
+            "dataset-b",
+            "release-b",
+            release_b,
+            counters_b,
+            load_started=started_b,
+            allow_load=allow_loads,
+        )
+        assert started_a.wait(timeout=5)
+        assert started_b.wait(timeout=5)
+        allow_loads.set()
+        assert future_a.result(timeout=5) is not future_b.result(timeout=5)
+
+
+def test_runtime_model_cache_shares_failed_attempt_then_allows_later_retry(
+    tmp_path: Path, monkeypatch
+) -> None:
+    reset_runtime_model_cache()
+    active_release, _ = _cache_release(tmp_path, "release-a", threshold=40)
+    started = Event()
+    waiters_joined = Event()
+    load_count = 0
+    waiter_count = 0
+    count_lock = Lock()
+
+    class ObservedFuture(inference_module.Future):
+        def result(self, timeout=None):
+            nonlocal waiter_count
+            with count_lock:
+                waiter_count += 1
+                if waiter_count == 3:
+                    waiters_joined.set()
+            return super().result(timeout=timeout)
+
+    monkeypatch.setattr(inference_module, "Future", ObservedFuture)
+
+    def fail_declaration_load(_path: Path):
+        nonlocal load_count
+        with count_lock:
+            load_count += 1
+        started.set()
+        assert waiters_joined.wait(timeout=5)
+        raise ValueError("raw loader detail must remain wrapped")
+
+    def attempt():
+        return get_cached_runtime_bundle_adapter(
+            "dataset-a",
+            "release-a",
+            active_release,
+            bundle_loader=fail_declaration_load,
+            loader_strategies={"json_threshold_classifier": lambda *_args: None},
+            supported_serialization_formats=["json"],
+        )
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        owner = executor.submit(attempt)
+        assert started.wait(timeout=5)
+        waiters = [executor.submit(attempt) for _ in range(3)]
+        failures = [owner.exception(timeout=5), *(waiter.exception(timeout=5) for waiter in waiters)]
+
+    assert load_count == 1
+    assert all(isinstance(failure, BundleUnavailableError) for failure in failures)
+    assert all(failure.diagnostic_code == DIAGNOSTIC_INFERENCE_BUNDLE_UNAVAILABLE for failure in failures)
+    assert inspect_runtime_model_cache() == {"entries": (), "in_flight": ()}
+
+    counters = _cache_counters()
+    adapter = _cached_adapter("dataset-a", "release-a", active_release, counters)
+    assert adapter.predict({"age": 41}) is True
+    assert counters["declarations"] == 1
+
+
+def test_runtime_model_cache_replaces_only_after_verified_release_load(tmp_path: Path) -> None:
+    reset_runtime_model_cache()
+    release_a, _ = _cache_release(tmp_path, "release-a", threshold=40)
+    release_b, declaration_b = _cache_release(tmp_path, "release-b", threshold=50)
+    counters = _cache_counters()
+
+    first = _cached_adapter("dataset-a", "release-a", release_a, counters)
+    replacement = _cached_adapter("dataset-a", "release-b", release_b, counters)
+
+    assert replacement is not first
+    assert replacement.predict({"age": 45}) is False
+    assert counters["declarations"] == 2
+    assert counters["models"] == 2
+    assert inspect_runtime_model_cache()["entries"] == (
+        {
+            "dataset_slug": "dataset-a",
+            "active_release": "release-b",
+            "declared_model_sha256": declaration_b["model_artifact"]["sha256"],
+        },
+    )
+
+
+def test_runtime_model_cache_failed_replacement_never_serves_previous_release(
+    tmp_path: Path,
+) -> None:
+    reset_runtime_model_cache()
+    release_a, declaration_a = _cache_release(tmp_path, "release-a", threshold=40)
+    release_b, _ = _cache_release(
+        tmp_path,
+        "release-b",
+        threshold=50,
+        declared_sha256="0" * 64,
+    )
+    counters = _cache_counters()
+    previous = _cached_adapter("dataset-a", "release-a", release_a, counters)
+
+    try:
+        _cached_adapter("dataset-a", "release-b", release_b, counters)
+    except BundleValidationError as exc:
+        assert exc.diagnostic_code == DIAGNOSTIC_MODEL_ARTIFACT_HASH_MISMATCH
+    else:
+        raise AssertionError("invalid replacement was published or served through stale fallback")
+
+    assert inspect_runtime_model_cache()["entries"] == (
+        {
+            "dataset_slug": "dataset-a",
+            "active_release": "release-a",
+            "declared_model_sha256": declaration_a["model_artifact"]["sha256"],
+        },
+    )
+    assert _cached_adapter("dataset-a", "release-a", release_a, counters) is previous
+
+
+def test_runtime_model_cache_rejects_missing_hash_before_deserialization(tmp_path: Path) -> None:
+    reset_runtime_model_cache()
+    active_release, declaration = _cache_release(tmp_path, "release-a", threshold=40)
+    del declaration["model_artifact"]["sha256"]
+    release_root = Path(active_release["release_root"])
+    _write_json(release_root / "predictions" / "bundle.json", declaration)
+    counters = _cache_counters()
+
+    try:
+        _cached_adapter("dataset-a", "release-a", active_release, counters)
+    except BundleValidationError as exc:
+        assert exc.code == "invalid_model_artifact_sha256"
+        assert exc.diagnostic_code == DIAGNOSTIC_INFERENCE_BUNDLE_UNAVAILABLE
+    else:
+        raise AssertionError("cache accepted a model without a declared SHA-256")
+
+    assert counters["models"] == 0
+    assert inspect_runtime_model_cache() == {"entries": (), "in_flight": ()}
+
+
+def test_runtime_model_cache_reconciliation_and_reset_bound_state(tmp_path: Path) -> None:
+    reset_runtime_model_cache()
+    release_a, _ = _cache_release(tmp_path, "release-a", threshold=40)
+    release_b, _ = _cache_release(tmp_path, "release-b", threshold=50)
+    counters = _cache_counters()
+    _cached_adapter("dataset-a", "release-a", release_a, counters)
+    _cached_adapter("dataset-b", "release-b", release_b, counters)
+
+    outcome = reconcile_runtime_model_cache({"dataset-b"})
+
+    assert outcome == {"removed_entries": 1, "removed_in_flight": 0}
+    assert [item["dataset_slug"] for item in inspect_runtime_model_cache()["entries"]] == [
+        "dataset-b"
+    ]
+    reset_runtime_model_cache()
+    assert inspect_runtime_model_cache() == {"entries": (), "in_flight": ()}
 
 
 def test_runtime_bundle_adapter_rejects_arbitrary_loader_strategy_name(tmp_path: Path) -> None:

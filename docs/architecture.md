@@ -327,6 +327,28 @@ those artifacts beneath the releases root. The legacy `external-models/`
 lifecycle, which duplicated model delivery outside a release, has been retired
 and is no longer an operational or compatibility mechanism.
 
+Within the single Atlas API process, `runtime/inference.py` owns one reusable
+runtime-model entry per dataset. An entry records the registry-resolved active
+release, the bundle-declared model SHA-256, and the fully initialized
+`RuntimeBundleAdapter`; it is published only after release-relative bundle
+validation, artifact hashing, digest comparison, and allowlisted model
+deserialization succeed. Because promoted releases are immutable, a request
+for the same dataset and active release reuses that stored verified identity
+without rereading the bundle or rehashing and deserializing the model.
+
+Cold loads and release changes are coordinated per dataset, so unrelated
+datasets can load independently and cache coordination never spans prediction
+execution. A successful release change atomically replaces the dataset's sole
+entry. A failed replacement leaves the previous entry internally intact but
+never serves it to the request resolved to the newer release. The API's shared
+public/Admin inference boundary uses the returned adapter declaration for
+result projection, dispatch validation, prediction, and result validation.
+Registry-owned integration supplies the current dataset-slug set to prune
+removed or renamed entries; non-HTTP reset and identity-only inspection seams
+exist for process lifecycle and deterministic tests. This cache is strictly
+process-local: it provides no Redis-backed, cross-process, or multi-worker
+coherence and does not implement prediction-capacity control.
+
 Historically (Project Specs S0158-S0178) Atlas also carried an isolated
 `external-inference/` service as a runtime/dependency boundary for governed
 bundles that selected isolated-service dispatch. Project Spec S0285 retired

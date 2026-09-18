@@ -11,6 +11,7 @@ RUN python -c "import subprocess, sys, tomllib; deps = tomllib.load(open('/app/a
 COPY api/*.py ./api/
 COPY registry/ ./registry/
 COPY runtime/ ./runtime/
+COPY contracts/ ./contracts/
 COPY releases/ ./releases/
 COPY publisher/*.py ./publisher/
 COPY publisher/release-candidate.operational-note.json ./publisher/release-candidate.operational-note.json

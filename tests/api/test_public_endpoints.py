@@ -3251,6 +3251,7 @@ def test_real_route_select_projected_categorical_value_domain_validation():
     original_resolve_dataset = api_main.resolve_dataset
     original_load_contract = api_main.load_contract
     original_execute_prediction = api_main.execute_prediction
+    original_get_cached_runtime_bundle_adapter = api_main.get_cached_runtime_bundle_adapter
     original_project_result_contract = api_main.project_result_contract
     original_releases_root = api_main._inference_releases_root
     original_snapshot_readiness = _install_snapshot_ready_stub()
@@ -3263,6 +3264,7 @@ def test_real_route_select_projected_categorical_value_domain_validation():
         api_main.project_result_contract = lambda _declaration: {
             "status": "available", "semantics": _S0109_RESULT_SEMANTICS
         }
+        api_main.get_cached_runtime_bundle_adapter = _runtime_adapter_stub
 
         with tempfile.TemporaryDirectory() as releases_root:
             release_dir = Path(releases_root) / "release-m32-03-select-path-fixture"
@@ -3302,6 +3304,7 @@ def test_real_route_select_projected_categorical_value_domain_validation():
         api_main.resolve_dataset = original_resolve_dataset
         api_main.load_contract = original_load_contract
         api_main.execute_prediction = original_execute_prediction
+        api_main.get_cached_runtime_bundle_adapter = original_get_cached_runtime_bundle_adapter
         api_main.project_result_contract = original_project_result_contract
         api_main._inference_releases_root = original_releases_root
         _restore_snapshot_ready_stub(original_snapshot_readiness)
@@ -3358,6 +3361,7 @@ def test_real_route_passes_contract_derived_runtime_feature_metadata_and_omits_o
     original_resolve_dataset = api_main.resolve_dataset
     original_load_contract = api_main.load_contract
     original_execute_prediction = api_main.execute_prediction
+    original_get_cached_runtime_bundle_adapter = api_main.get_cached_runtime_bundle_adapter
     original_project_result_contract = api_main.project_result_contract
     original_releases_root = api_main._inference_releases_root
     original_snapshot_readiness = _install_snapshot_ready_stub()
@@ -3371,6 +3375,7 @@ def test_real_route_passes_contract_derived_runtime_feature_metadata_and_omits_o
         api_main.project_result_contract = lambda _declaration: {
             "status": "available", "semantics": _S0109_RESULT_SEMANTICS
         }
+        api_main.get_cached_runtime_bundle_adapter = _runtime_adapter_stub
 
         with tempfile.TemporaryDirectory() as releases_root:
             release_dir = Path(releases_root) / "release-s0152-optional-feature-fixture"
@@ -3409,6 +3414,7 @@ def test_real_route_passes_contract_derived_runtime_feature_metadata_and_omits_o
         api_main.resolve_dataset = original_resolve_dataset
         api_main.load_contract = original_load_contract
         api_main.execute_prediction = original_execute_prediction
+        api_main.get_cached_runtime_bundle_adapter = original_get_cached_runtime_bundle_adapter
         api_main.project_result_contract = original_project_result_contract
         api_main._inference_releases_root = original_releases_root
         _restore_snapshot_ready_stub(original_snapshot_readiness)
@@ -3514,6 +3520,66 @@ def _s0212_binary_fixture_manifest() -> dict:
     }
 
 
+def _runtime_adapter_stub(*_args, **_kwargs):
+    """Keep route-wiring tests focused when model execution is already mocked."""
+
+    return SimpleNamespace(declaration=_s0212_binary_fixture_manifest())
+
+
+def test_governed_inference_threads_registry_identity_and_one_adapter_through_shared_path():
+    release_id = "release-m50-cache-fixture"
+    adapter = _runtime_adapter_stub()
+    cache_calls = []
+    execution_adapters = []
+    original_load_contract = api_main.load_contract
+    original_get_cached_runtime_bundle_adapter = api_main.get_cached_runtime_bundle_adapter
+    original_execute_prediction = api_main.execute_prediction
+    original_releases_root = api_main._inference_releases_root
+    try:
+        api_main.load_contract = lambda _active_release: _M32_SELECT_PATH_RUNTIME_CONTRACT
+
+        def _capture_cached_adapter(dataset_slug, active_release_id, *_args, **_kwargs):
+            cache_calls.append((dataset_slug, active_release_id))
+            return adapter
+
+        def _capture_execution(*_args, **kwargs):
+            execution_adapters.append(kwargs["runtime_adapter"])
+            return {"result": _S0109_VALID_BINARY_RESULT}
+
+        api_main.get_cached_runtime_bundle_adapter = _capture_cached_adapter
+        api_main.execute_prediction = _capture_execution
+
+        with tempfile.TemporaryDirectory() as releases_root:
+            release_dir = Path(releases_root) / release_id
+            _s0109_write_release_with_bundle(release_dir, _s0212_binary_fixture_manifest())
+            api_main._inference_releases_root = lambda: Path(releases_root)
+
+            public_result = api_main._execute_governed_inference(
+                "fixture-dataset",
+                release_id,
+                {"customer_segment": "premium"},
+            )
+            admin_result = api_main._execute_governed_inference(
+                "fixture-dataset",
+                release_id,
+                {"customer_segment": "premium"},
+                include_runtime_diagnostic=True,
+            )
+
+        assert public_result["result"] == _S0109_VALID_BINARY_RESULT
+        assert admin_result["result"] == _S0109_VALID_BINARY_RESULT
+        assert cache_calls == [
+            ("fixture-dataset", release_id),
+            ("fixture-dataset", release_id),
+        ]
+        assert execution_adapters == [adapter, adapter]
+    finally:
+        api_main.load_contract = original_load_contract
+        api_main.get_cached_runtime_bundle_adapter = original_get_cached_runtime_bundle_adapter
+        api_main.execute_prediction = original_execute_prediction
+        api_main._inference_releases_root = original_releases_root
+
+
 def test_real_route_conditional_blank_field_materializes_declared_constant_before_execution():
     """
     A blank total_amount submitted while its condition (tenure_months == 0)
@@ -3524,6 +3590,7 @@ def test_real_route_conditional_blank_field_materializes_declared_constant_befor
     original_resolve_dataset = api_main.resolve_dataset
     original_load_contract = api_main.load_contract
     original_execute_prediction = api_main.execute_prediction
+    original_get_cached_runtime_bundle_adapter = api_main.get_cached_runtime_bundle_adapter
     original_project_result_contract = api_main.project_result_contract
     original_releases_root = api_main._inference_releases_root
     original_snapshot_readiness = _install_snapshot_ready_stub()
@@ -3537,6 +3604,7 @@ def test_real_route_conditional_blank_field_materializes_declared_constant_befor
         api_main.project_result_contract = lambda _declaration: {
             "status": "available", "semantics": _S0109_RESULT_SEMANTICS
         }
+        api_main.get_cached_runtime_bundle_adapter = _runtime_adapter_stub
 
         with tempfile.TemporaryDirectory() as releases_root:
             _s0156_fixture_release(releases_root, "release-s0156-conditional-fixture")
@@ -3564,6 +3632,7 @@ def test_real_route_conditional_blank_field_materializes_declared_constant_befor
         api_main.resolve_dataset = original_resolve_dataset
         api_main.load_contract = original_load_contract
         api_main.execute_prediction = original_execute_prediction
+        api_main.get_cached_runtime_bundle_adapter = original_get_cached_runtime_bundle_adapter
         api_main.project_result_contract = original_project_result_contract
         api_main._inference_releases_root = original_releases_root
         _restore_snapshot_ready_stub(original_snapshot_readiness)
@@ -3620,6 +3689,7 @@ def test_real_route_unknown_open_categorical_value_is_accepted_and_preserved_unc
     original_resolve_dataset = api_main.resolve_dataset
     original_load_contract = api_main.load_contract
     original_execute_prediction = api_main.execute_prediction
+    original_get_cached_runtime_bundle_adapter = api_main.get_cached_runtime_bundle_adapter
     original_project_result_contract = api_main.project_result_contract
     original_releases_root = api_main._inference_releases_root
     original_snapshot_readiness = _install_snapshot_ready_stub()
@@ -3633,6 +3703,7 @@ def test_real_route_unknown_open_categorical_value_is_accepted_and_preserved_unc
         api_main.project_result_contract = lambda _declaration: {
             "status": "available", "semantics": _S0109_RESULT_SEMANTICS
         }
+        api_main.get_cached_runtime_bundle_adapter = _runtime_adapter_stub
 
         with tempfile.TemporaryDirectory() as releases_root:
             _s0156_fixture_release(releases_root, "release-s0156-open-categorical-fixture")
@@ -3660,6 +3731,7 @@ def test_real_route_unknown_open_categorical_value_is_accepted_and_preserved_unc
         api_main.resolve_dataset = original_resolve_dataset
         api_main.load_contract = original_load_contract
         api_main.execute_prediction = original_execute_prediction
+        api_main.get_cached_runtime_bundle_adapter = original_get_cached_runtime_bundle_adapter
         api_main.project_result_contract = original_project_result_contract
         api_main._inference_releases_root = original_releases_root
         _restore_snapshot_ready_stub(original_snapshot_readiness)
@@ -3679,6 +3751,7 @@ def test_public_route_never_surfaces_runtime_input_contract_inconsistent_diagnos
     original_resolve_dataset = api_main.resolve_dataset
     original_load_contract = api_main.load_contract
     original_execute_prediction = api_main.execute_prediction
+    original_get_cached_runtime_bundle_adapter = api_main.get_cached_runtime_bundle_adapter
     original_releases_root = api_main._inference_releases_root
     original_snapshot_readiness = _install_snapshot_ready_stub()
     try:
@@ -3687,6 +3760,7 @@ def test_public_route_never_surfaces_runtime_input_contract_inconsistent_diagnos
             active_release="release-s0152-inconsistent-fixture",
         )
         api_main.load_contract = lambda _active_release: _S0152_RUNTIME_CONTRACT
+        api_main.get_cached_runtime_bundle_adapter = _runtime_adapter_stub
 
         with tempfile.TemporaryDirectory() as releases_root:
             release_dir = Path(releases_root) / "release-s0152-inconsistent-fixture"
@@ -3720,6 +3794,7 @@ def test_public_route_never_surfaces_runtime_input_contract_inconsistent_diagnos
         api_main.resolve_dataset = original_resolve_dataset
         api_main.load_contract = original_load_contract
         api_main.execute_prediction = original_execute_prediction
+        api_main.get_cached_runtime_bundle_adapter = original_get_cached_runtime_bundle_adapter
         api_main._inference_releases_root = original_releases_root
         _restore_snapshot_ready_stub(original_snapshot_readiness)
 

@@ -8,6 +8,8 @@
 !registry/**
 !runtime/
 !runtime/**
+!contracts/
+!contracts/**
 !releases/
 !releases/**
 !publisher/

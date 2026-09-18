@@ -18,6 +18,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 PRIVATE_COMPOSE_PATH = REPO_ROOT / "docker-compose.yml"
 PROD_COMPOSE_PATH = REPO_ROOT / "docker-compose.prod.yml"
 DOCKERIGNORE_PATH = REPO_ROOT / ".dockerignore"
+API_DOCKERFILE_PATH = REPO_ROOT / "api" / "Dockerfile"
 
 _COMPOSE_PATHS = (PRIVATE_COMPOSE_PATH, PROD_COMPOSE_PATH)
 
@@ -89,3 +90,14 @@ def test_dockerignore_still_admits_the_api_and_release_build_context():
         "!publisher/",
     ):
         assert expected_allow_entry in text, expected_allow_entry
+
+
+def test_dockerignore_admits_the_governed_contracts_build_context():
+    entries = DOCKERIGNORE_PATH.read_text(encoding="utf-8").splitlines()
+    assert "!contracts/" in entries
+    assert "!contracts/**" in entries
+
+
+def test_api_image_packages_governed_contracts_at_runtime_path():
+    instructions = API_DOCKERFILE_PATH.read_text(encoding="utf-8").splitlines()
+    assert "COPY contracts/ ./contracts/" in instructions

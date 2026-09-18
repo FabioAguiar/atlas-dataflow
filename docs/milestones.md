@@ -6643,3 +6643,434 @@ The milestone will be ready to derive issues when:
 ### Continuity Notes
 
 M49 is a readiness gate. It should not guarantee completion before validation. Its value is to prevent another premature "done" state by requiring evidence before the first version is treated as complete.
+
+## M50 — Public Runtime Containment and Delivery Correctness
+
+### Objective
+
+Make the public inference endpoint (`POST /datasets/{dataset_slug}/inference`) resistant to resource-exhaustion abuse using only local Atlas/Docker mechanisms, and fix the confirmed defect that makes every public production prediction fail. This is the containment layer beneath any future identity or gateway layer; it is deliberately Supabase-free.
+
+### Problem or Gap
+
+Direct audit of the current working tree confirms:
+
+- `api/Dockerfile` has no `COPY contracts/` instruction and `docker-compose.prod.yml`'s `api` service has no volume mount for `contracts/` (unlike `docker-compose.yml`, which mounts `./contracts:/app/contracts:ro`). `runtime/inference.py` resolves the binary/multiclass/regression/forecasting result schemas from `<repo_root>/contracts/`, so every public prediction in production fails with HTTP 503 (`INFERENCE_FAILURE`) after payload validation and model execution have already run. This is exactly the `M49-PUBLIC-SMOKE` blocker recorded in `evidence/M49/readiness/public-smoke.json` and `evidence/M49/readiness/first-version-readiness-result.json`, and it was reconfirmed against the current `HEAD` (`04226e9`, which matches that evidence's own `source_revision`) during this audit — not stale information.
+- `_execute_governed_inference` (`api/main.py`) and `load_runtime_bundle_adapter`/`execute_prediction` (`runtime/inference.py`) contain no cache of any kind. Every single inference request re-reads the manifest, re-loads the bundle file, recomputes the model artifact's SHA-256 (`_verify_model_artifact_hash`), and calls `joblib.load()` again — confirmed by tracing the exact call chain in the current code, not inferred.
+- There is no semaphore, capacity limiter, or any concurrency control anywhere in `api/main.py` or `runtime/inference.py`; nothing bounds how many inference requests execute in parallel.
+- `api/payload_validator.py`'s forecasting path enforces `minimum_observation_count` but no `maximum_observation_count` or equivalent upper bound exists in the payload validator or in any forecasting-related contract schema under `contracts/`.
+- `PayloadSizeLimitMiddleware` (`api/main.py`) only inspects the `Content-Length` header; a request without `Content-Length` (chunked/streaming) or with a false header bypasses the 1 MB cap entirely before FastAPI ever reads the body.
+- `docker-compose.yml` and `docker-compose.prod.yml` declare no CPU/memory/PID limits, `read_only`, `no-new-privileges`, or `cap_drop` for the `api` or `web` services; `api/Dockerfile` never sets a non-root `USER`, so the API container runs as root by default; neither `api/Dockerfile`'s `CMD` nor `api/main.py`'s `__main__` block configure `uvicorn` worker count, timeouts, or connection limits.
+
+None of this is a regression from M46–M49; these are first-version-era gaps that were acceptable before public exposure was hardened, and they are now the concrete precondition for everything else in this phase.
+
+### Context
+
+This milestone is the foundation of the layered model this phase establishes: Supabase identity/quota (M51–M52) sits above governed inference execution (this milestone), which sits above Docker/host containment (also this milestone). No layer here depends on Supabase existing yet, and none of it is removed once Supabase is introduced — a saturated or bypassed gateway must never be the only thing standing between a request and unbounded model execution.
+
+### Core Scope
+
+- Provision `contracts/` inside the public/production API image: either a `COPY contracts/ ./contracts/` step in `api/Dockerfile` plus a matching `.dockerignore` allowlist entry, or a `docker-compose.prod.yml` volume mount analogous to `docker-compose.yml`'s existing mount. Re-run the equivalent of `M49-PUBLIC-SMOKE-PREDICTION` against the rebuilt public image for a real `ready` outcome.
+- Introduce a governed in-memory model/runtime cache keyed by release identity and artifact hash: load and hash-verify a bundle once per active release, reuse the deserialized model across requests, invalidate the cache entry when the active release changes, and never serve a cached model whose hash was not itself verified at load time. Thread/process safety must hold under concurrent requests.
+- Introduce a simple local concurrency/capacity limit (a semaphore or equivalent) around governed inference execution, with a deterministic, bounded rejection response when capacity is exceeded instead of unbounded queuing.
+- Add a contract-governed `maximum_observation_count` (or equivalent upper bound) for univariate forecasting history payloads, enforced in `api/payload_validator.py` before runtime/model work, alongside a review of existing semantic limits for the other three problem types.
+- Replace or supplement the `Content-Length`-only body-size middleware with an enforcement path that also bounds bodies without `Content-Length` (chunked/streaming), rejecting oversized bodies before the full body is buffered.
+- Add explicit request timeouts around the inference execution path.
+- Add Docker-level containment to both compose files: CPU/memory/PID limits for the `api` service, `no-new-privileges`, a non-root `USER` in `api/Dockerfile`, and a read-only root filesystem where the current write paths (registry/releases/media mounts) allow it.
+- Keep the existing SHA-256 model-integrity check as the non-negotiable gate the new cache must never bypass.
+
+### Out of Scope
+
+- Supabase, JWT, anonymous auth, the inference gateway, and any quota/usage persistence — those belong to M51/M52.
+- Rewriting the payload validator's overall structure beyond adding the missing upper bound(s).
+- Distributed caching (Redis) or a queueing system — the cache and the capacity limiter are both single-process, in-memory mechanisms proportional to a single-VPS deployment.
+- Changing CORS, admin authorization, or the public/private route boundary (M46/M47 behavior is preserved, not touched).
+
+### Expected Deliverables
+
+- Fixed `contracts/` provisioning in the public/production Docker image, verified by a real `POST /datasets/{slug}/inference` returning a real result (not 503) against a freshly built `docker-compose.prod.yml` image.
+- A governed, hash-checked model/runtime cache with tests covering cache hit, cache miss, and active-release change invalidation.
+- A concurrency limiter with tests covering normal load and saturation (deterministic rejection, not crash or unbounded queueing).
+- A `maximum_observation_count` (or equivalent) contract field enforced pre-execution, with tests for boundary and over-limit forecasting payloads.
+- A body-size enforcement path that also covers chunked/no-`Content-Length` requests.
+- Docker resource containment (CPU/memory/PIDs, non-root user, `no-new-privileges`) applied to both compose files, verified to not break legitimate inference/build/admin flows.
+
+### Implementation Documentation
+
+- Applicable strategy: `milestones-only`, plus the minimal operator-facing note needed to explain any new resource-limit values or cache-invalidation behavior.
+- Criterion to update: `docs/architecture.md`'s Inference Runtime and Deployment and Operations responsibilities, once caching/concurrency control changes what those components actually do.
+- Criterion not to update: do not produce a general Docker-hardening manual; record only what an operator needs to reproduce or tune the limits.
+
+### Dependencies
+
+- M46 (public/private compose separation) and M49 (evidence gate) as the existing baseline these changes build on top of, without weakening either.
+- Inherits `M49-PUBLIC-SMOKE` as an exact, reconfirmed blocker from `evidence/M49/readiness/first-version-readiness-result.json` and `evidence/M49/readiness/public-smoke.json` — this milestone is where that defect is finally fixed, not M49 itself.
+- No dependency on Supabase or any M51/M52 work; this milestone must be implementable and verifiable stand-alone.
+
+### Components or Areas Affected
+
+- `api/Dockerfile`, `docker-compose.yml`, `docker-compose.prod.yml`.
+- `api/main.py` (`PayloadSizeLimitMiddleware`, the inference route, concurrency wiring).
+- `runtime/inference.py` (model/bundle loading and caching).
+- `api/payload_validator.py` and the forecasting-related contract schema(s) under `contracts/`.
+- Tests under `tests/api/` and `tests/pipeline/` covering the above.
+
+### Expected Issues or Derivation Criteria
+
+- Criterion: production image still 503s on prediction.
+  - Possible issue type: deployment defect fix.
+  - Note: this is the highest-priority item; nothing else in this milestone matters if prediction still fails in production.
+- Criterion: model reloaded/rehashed per request.
+  - Possible issue type: runtime performance/governance change.
+  - Note: cache invalidation on release change must be tested, not assumed.
+- Criterion: no concurrency bound.
+  - Possible issue type: saturation control.
+  - Note: rejection behavior must be deterministic and covered by a test that actually saturates the limiter.
+- Criterion: forecasting payload has no upper bound.
+  - Possible issue type: payload hardening.
+  - Note: the limit must be contract-governed, not hardcoded only in Python.
+- Criterion: body-size middleware trusts `Content-Length` only.
+  - Possible issue type: request boundary hardening.
+- Criterion: containers run unconstrained/as root.
+  - Possible issue type: Docker hardening.
+  - Note: verify legitimate flows (admin writes to registry/releases/media, build steps) still work under the new limits.
+
+### Definition of Done
+
+- A representative public prediction request against a freshly rebuilt `docker-compose.prod.yml` image returns a real result, not 503.
+- The model is not reloaded and re-hashed from disk on every request; a documented cache-invalidation path exists for active-release changes.
+- Concurrent inference requests beyond a defined capacity are rejected deterministically instead of executing unbounded.
+- Forecasting requests exceeding a contract-declared maximum observation count are rejected before model execution.
+- Oversized request bodies are rejected regardless of whether `Content-Length` is present.
+- Both compose files declare CPU/memory/PID limits and the API container does not run as root; legitimate inference, admin, and build flows still pass.
+
+### Minimum Evidence
+
+- A re-run of the representative public prediction smoke check against the rebuilt public image, showing a real (non-503) result.
+- Test evidence for cache hit/miss/invalidation.
+- Test evidence for concurrency saturation and deterministic rejection.
+- Test evidence for forecasting payloads at and beyond the new maximum.
+- Test evidence for oversized bodies with and without `Content-Length`.
+- Evidence that Docker resource limits do not break `docker compose build`/`up` for either stack, or the private admin write flows.
+
+### Risks and Gaps
+
+- Risk of setting CPU/memory limits low enough to break legitimate model loading or forecasting computation — must be tuned against real dataset/model sizes, not guessed.
+- Risk of a cache that outlives a release change and silently serves a stale or unverified model — invalidation must be tested, not assumed correct by construction.
+- Risk of the concurrency limiter creating a new denial-of-service vector against legitimate traffic if the capacity is set too low.
+- Gap: volumetric/distributed flooding is explicitly out of scope here — this milestone addresses application-level resource exhaustion and logical abuse only, not network-layer DDoS.
+
+### Derivability Criteria
+
+The milestone will be ready to derive issues when:
+
+- the exact `contracts/` provisioning fix (Dockerfile COPY vs. compose volume mount) is chosen;
+- a concrete cache invalidation trigger (active-release identity) is agreed;
+- a concrete concurrency capacity number is chosen based on the current VPS's expected sizing;
+- a concrete `maximum_observation_count` value (or contract mechanism) is agreed per forecasting dataset.
+
+### Continuity Notes
+
+M50 must land before M51/M52 introduce any identity or gateway layer: a gateway sitting in front of an origin that still fails on real traffic, has no capacity bound, and reloads the model on every request would be defense theater. M51 and M52 assume this containment already exists and do not re-implement it.
+
+## M51 — Supabase Identity and Private Admin Security
+
+### Objective
+
+Give the private Admin a real operator identity and authorization, layered on top of — never replacing — the existing `ATLAS_ADMIN_ENABLED` private-runtime gate, using Supabase Auth as the identity/authorization plane.
+
+### Problem or Gap
+
+`_admin_request_authorized()` in `api/main.py` is confirmed, by direct reading, to be exactly `_admin_runtime_enabled()`, which only checks whether the `ATLAS_ADMIN_ENABLED` environment variable is a truthy string. There is no token, session, credential, or per-operator identity check anywhere in the admin route set (`/admin/*`) — every admin route in `api/main.py` gates on this single function. This is the correct, intentional first-version design from M46/M47 (private-runtime boundary plus tokenless UX), not a defect; but it means a single misconfigured environment variable is the only thing standing between "Admin is private" and "Admin is public." This milestone adds a second, independent layer of defense without reopening M47's tokenless UX decision.
+
+### Context
+
+M46 already separates a public compose (`ATLAS_ADMIN_ENABLED=false` by default, `web/nginx.conf` returning 404 for `/admin` and `/api/admin/*` at the proxy layer too) from a private compose (`ATLAS_ADMIN_ENABLED=true`, contracts and full admin routes mounted). M47 removed the operator-token UI. This milestone adds Supabase Auth as a further, independent gate inside the already-private runtime — it does not change what makes the runtime private, and it does not make Admin reachable from the public compose.
+
+### Core Scope
+
+- Introduce Supabase Auth for the single administrative operator (email/password or magic link — whichever is proportional to a one-operator system).
+- Add backend JWT verification for `/admin/*` routes: a valid, unexpired Supabase JWT with an admin role/claim is required in addition to `_admin_runtime_enabled()` being true. Both conditions must hold; neither alone is sufficient.
+- Preserve the existing fail-closed behavior: an unauthorized admin request (missing runtime flag, missing/invalid/expired JWT, or missing admin claim) must continue to return the exact same body as `_admin_route_not_found_response()` (`{"detail": "Not Found"}`, HTTP 404) so an attacker cannot distinguish "route exists but auth failed" from "route does not exist" — this is an existing, deliberate M47-era property that must not regress.
+- Add a minimal login screen inside the admin-enabled frontend build only (gated the same way `/admin/*` routes already are via `VITE_ENABLE_ADMIN`).
+- Handle session expiration and basic revocation (sign-out) proportionally to a single operator; evaluate MFA only if the operational cost is clearly justified, not by default.
+- Secrets handling: Supabase URL/anon key may be public/publishable; any service-role or admin-verification secret used by FastAPI must never reach the frontend build (`VITE_*`) and must fail closed if absent.
+
+### Out of Scope
+
+- Anonymous visitor identity (M52).
+- The inference gateway (M52).
+- Multi-user IAM, role hierarchies, or a general permissions system — there is one operator.
+- MFA as a hard requirement.
+- Any weakening of `ATLAS_ADMIN_ENABLED` as a runtime gate — it remains a required, independent condition.
+
+### Expected Deliverables
+
+- Supabase Auth wired for the one admin operator.
+- Backend JWT verification enforced on every `/admin/*` route, additive to the existing runtime gate.
+- Fail-closed behavior preserved and tested (missing/invalid/expired JWT ⇒ identical 404 body to a non-existent route).
+- Minimal admin login UI inside the private/admin-enabled build only.
+- Documented secret separation: publishable Supabase config vs. any backend-only verification secret.
+
+### Implementation Documentation
+
+- Applicable strategy: `milestones-only` plus a short operator note on how to provision the admin identity and rotate the relevant secret(s).
+- Criterion to update: `docs/architecture.md`'s Private Admin API/Internal Operations Layer responsibilities, once the authorization model actually changes.
+- Criterion not to update: do not write a general Supabase operations manual; document only what this operator needs to run and rotate.
+
+### Dependencies
+
+- M50 completed (containment must exist beneath any newly identity-gated surface).
+- M46/M47's private-runtime boundary and tokenless UX, preserved and extended, not replaced.
+- A provisioned Supabase project and its secret material, available before this milestone's issues are derived — fail closed if this configuration is missing, rather than falling back to the old runtime-only gate silently.
+
+### Components or Areas Affected
+
+- `api/main.py` (`_admin_request_authorized`, all `/admin/*` routes).
+- Frontend admin shell/login (`web/src`, gated by `VITE_ENABLE_ADMIN`).
+- Environment configuration (`.env.example`, `api/.env.example`) for the new Supabase variables.
+- Tests under `tests/api/` for the admin routes and any new access-boundary test.
+
+### Expected Issues or Derivation Criteria
+
+- Criterion: admin routes accept the runtime flag alone.
+  - Possible issue type: authorization hardening.
+  - Note: both conditions (runtime flag + JWT/claim) must be required together.
+- Criterion: unauthorized admin response differs from a real 404.
+  - Possible issue type: fail-closed regression test.
+  - Note: this must be byte-for-byte identical, matching the existing M47-era guarantee.
+- Criterion: a Supabase secret is missing at boot.
+  - Possible issue type: fail-closed configuration check.
+  - Note: must not silently fall back to runtime-flag-only authorization.
+
+### Definition of Done
+
+- No `/admin/*` route is reachable with a valid runtime flag and no valid admin JWT, or with a valid JWT and the runtime flag disabled.
+- The unauthorized-admin response is unchanged from the existing 404 body.
+- The public compose continues to have no path to any admin route or Supabase admin session (unchanged from M46).
+- Admin login works end-to-end in the private compose.
+
+### Minimum Evidence
+
+- Tests for: valid JWT with runtime enabled (allowed); invalid JWT; expired JWT; missing JWT; runtime disabled with a valid JWT (denied); valid JWT with runtime enabled but a non-admin role (denied).
+- A private-mode smoke check showing admin login and at least one authenticated admin action succeeding.
+- A public-mode smoke check showing `/admin/*` still fails closed identically to before this milestone.
+- Confirmation that no Supabase service/verification secret appears in any `VITE_*` build output.
+
+### Risks and Gaps
+
+- Risk of the JWT verification path becoming the only gate in practice if a future change removes the runtime-flag check "for simplicity" — both conditions must remain independently enforced and tested together.
+- Risk of session/secret misconfiguration silently degrading to "any authenticated Supabase user is admin" — the admin role/claim check must be explicit and tested against a non-admin authenticated subject.
+- Gap: MFA and recovery flows are deliberately minimal for a single-operator system; revisit only if the threat model changes.
+
+### Derivability Criteria
+
+The milestone will be ready to derive issues when:
+
+- a Supabase project exists and its configuration/secret split is decided;
+- the exact admin role/claim shape is defined;
+- the login UI's minimal scope is agreed.
+
+### Continuity Notes
+
+M51 establishes the identity/secret-handling pattern (publishable config vs. backend-only secret, fail-closed on missing configuration) that M52 reuses for anonymous visitor identity and the inference gateway's service-to-service boundary.
+
+## M52 — Governed Public Inference Gateway and Usage Control
+
+### Objective
+
+Give the public inference flow a lightweight identity and quota layer so that logical abuse of `POST /datasets/{dataset_slug}/inference` can be detected and rejected before it reaches Atlas's governed, but still finite, compute capacity from M50 — without moving model execution out of Atlas.
+
+### Problem or Gap
+
+Confirmed by this audit: the public inference route has no per-visitor identity, no rate limiting, no quota, and nothing preventing an unlimited number of anonymous, unauthenticated, computationally expensive requests other than the containment introduced in M50 (cache, concurrency limiter, payload limits, Docker resource caps). M50's containment bounds the damage a single burst can do to the VPS; it does not distinguish one visitor from another or stop sustained abuse over time. This is "logical API abuse," distinct from volumetric DDoS (out of scope for this phase) and from raw resource exhaustion (M50's job).
+
+### Context
+
+The desired flow is: browser → Supabase Anonymous Auth → JWT → minimal inference gateway (quota/abuse check) → authenticated backend request → Atlas FastAPI → Atlas ML runtime (M50's governed, cached, capacity-limited execution). The gateway's only job is identity, quota, and burst control; it never executes or approximates model logic itself.
+
+### Core Scope
+
+- Supabase Anonymous Auth issuing a per-visitor subject/JWT, transparently (no visible sign-up/login for a visitor testing a prediction).
+- A minimal inference gateway (a Supabase Edge Function, or an equally simple mechanism if implementation-time evaluation shows it is genuinely simpler) that: validates the visitor JWT, applies a per-subject quota/window, optionally folds in an IP-derived signal only from a proxy header whose origin is actually trusted (never a client-supplied header taken at face value), and returns `429` on quota exceed before any request reaches Atlas.
+- A minimal Postgres table (`inference_usage`: subject_id, dataset_slug, window, request_count) with atomic increment semantics, minimal indexes, and RLS; no full request/response persistence.
+- A backend-to-backend boundary so that knowing the Atlas origin URL is not sufficient to bypass the gateway and execute inference directly — the simplest mechanism that satisfies this (a shared service credential or a signed/HMAC header validated by FastAPI) is preferred over a complex one; `_resolve_runtime_dispatch`'s existing fail-closed pattern in `api/main.py` is the model to follow for "reject deterministically when the expected credential is absent or invalid."
+- Minimal observability: counts of requests accepted/rejected/`429`'d, by dataset, without logging payload contents, JWTs, or prediction results.
+- Reuse the secret-separation and fail-closed conventions established in M51 (publishable Supabase client config vs. backend-only service credential).
+
+### Out of Scope
+
+- `inference_audit` (timestamp/status/duration/category) persistence, unless this milestone's own implementation shows quota alone is insufficient for the threat model.
+- CAPTCHA/Turnstile, unless anonymous-user creation abuse is demonstrated as a concrete problem during implementation — not assumed necessary up front.
+- Any persistence of prediction inputs, outputs, probabilities, or forecasting history.
+- Moving model execution, or any part of it, into the Edge Function/gateway.
+- Redis, message queues, or any infrastructure beyond one Edge Function (or equivalent) and one small Postgres table.
+
+### Expected Deliverables
+
+- Anonymous visitor identity issued transparently on first public interaction.
+- A working gateway enforcing per-subject quota with atomic, race-safe counting.
+- A tested backend-to-backend boundary rejecting direct-origin requests that bypass the gateway.
+- `inference_usage` table with RLS and a minimal retention policy.
+- Minimal abuse/quota observability (counts only, no sensitive payloads).
+
+### Implementation Documentation
+
+- Applicable strategy: `milestones-only` plus a short operator note describing the quota window/limits and how to rotate the service credential.
+- Criterion to update: `docs/architecture.md`'s Public Runtime API responsibilities, once the gateway becomes part of the real request path.
+- Criterion not to update: no general Supabase/Edge Function platform documentation beyond what operating this specific gateway requires.
+
+### Dependencies
+
+- M50 completed (the gateway sits in front of already-governed, already-capacity-bounded execution — never the sole protection).
+- M51 completed (Supabase project, secret-handling conventions, and fail-closed patterns already established for admin identity are reused here for visitor identity and the service boundary).
+
+### Components or Areas Affected
+
+- New Supabase Edge Function (or equivalent) and Postgres table.
+- `api/main.py` (public inference route: service-credential/signed-request validation before `_execute_governed_inference`).
+- Environment configuration for the new backend-to-backend credential.
+- Frontend inference call path (`web/src/components/InferenceForm`) to carry the visitor JWT.
+
+### Expected Issues or Derivation Criteria
+
+- Criterion: no visitor identity exists.
+  - Possible issue type: anonymous auth integration.
+- Criterion: no quota enforcement exists.
+  - Possible issue type: gateway/quota implementation.
+  - Note: quota increment must be atomic under concurrent requests from the same subject.
+- Criterion: Atlas origin is reachable directly, bypassing the gateway.
+  - Possible issue type: backend-to-backend authentication.
+  - Note: this must fail closed, matching the existing `_resolve_runtime_dispatch` pattern.
+- Criterion: IP-based signal trusts an untrusted header.
+  - Possible issue type: proxy-trust hardening.
+  - Note: only use a forwarded-IP header whose origin (the actual reverse proxy) is verified.
+
+### Definition of Done
+
+- A visitor can complete a prediction without registering, with a distinct subject per visitor.
+- Requests beyond the configured quota return `429` before reaching Atlas's model execution path.
+- A request sent directly to the Atlas origin, without a valid service credential, is rejected the same way regardless of payload validity.
+- Quota counting is race-safe under concurrent requests from the same subject.
+- No prediction payload, output, or JWT is persisted by the usage/audit layer.
+
+### Minimum Evidence
+
+- Tests for: request permitted under quota; quota exceeded returning `429`; burst behavior; atomic quota increment under concurrency; gateway/backend failure handling; a rejected direct-origin bypass attempt.
+- A regression check that Home, Dataset Detail, and normal public prediction still work end-to-end through the gateway.
+- Confirmation that no service credential or JWT appears in logs or persisted usage records.
+
+### Risks and Gaps
+
+- Risk of a quota race condition under concurrent bursts from the same subject if the increment is not atomic — must be tested directly, not assumed from the database engine's general guarantees.
+- Risk of anonymous-identity churn (a script minting new anonymous subjects to evade quota) — evaluate Supabase's own Auth rate limits and, only if that proves insufficient in practice, a CAPTCHA/Turnstile step.
+- Risk of treating gateway/quota enforcement as sufficient on its own — M50's containment must remain in place beneath it.
+- Gap: volumetric/distributed flooding at the network layer remains explicitly out of scope; a provider-level firewall/CDN decision is deferred to actual deployment needs, not designed here speculatively.
+
+### Derivability Criteria
+
+The milestone will be ready to derive issues when:
+
+- a concrete quota window/limit is chosen;
+- the exact gateway mechanism (Edge Function vs. alternative) is confirmed as genuinely simplest;
+- the service-credential mechanism is chosen.
+
+### Continuity Notes
+
+M52 is the last milestone that changes the public request path itself. M53 validates the complete resulting system rather than adding new surface.
+
+## M53 — Security Validation and Public Readiness
+
+### Objective
+
+Validate the complete post-M50/M51/M52 security model end-to-end — auth, gateway/quota, runtime containment, payload hardening, infrastructure, and regression — and produce an honest readiness result for public exposure, in the same evidentiary spirit as M49 but scoped to this phase's own changes.
+
+### Problem or Gap
+
+M49 closed with an aggregate `blocked` outcome and named `M49-API-TEST` (30 heterogeneous failing tests across at least 10 files) as an unresolved, un-triaged blocker (`evidence/M49/readiness/backend-api-tests.json`, `evidence/M49/readiness/first-version-readiness-result.json`). Several of those failures sit directly on the surface this phase hardens: public contract shape (`tests/api/test_public_endpoints.py`), public browser inference-result shape (`tests/api/test_public_browser_flow.py`), public profile publication lifecycle (`tests/api/test_public_profile_publication_lifecycle.py`), and admin profile-publish mutation routes (`tests/api/test_admin_profile_publish.py`, 10 failures). It would not be honest to certify "the public inference and admin surfaces are now secure" while a same-surface contract/publication regression set remains unexplained. The remaining failures (pipeline model-family enum tests, static-notebook assertions, execution-contract projection tests) are not on the public-security surface this phase touches and do not block this milestone's certification, but must not be silently dropped either.
+
+### Context
+
+This milestone adds no new product capability. It exists to check, the way M49 did, whether the architecture built in M50–M52 actually holds up — under abuse, under regression, and under the specific baseline gap M49 left open.
+
+### Core Scope
+
+- Triage every `M49-API-TEST` failing node id that touches the public contract/inference/publication surface this phase hardened (the four files named above); fix or explicitly, narrowly reserve each one, with a documented reason — this is a required deliverable of this milestone, not optional cleanup.
+- Record, without necessarily fixing, the remaining `M49-API-TEST` failures that are unrelated to public security (pipeline enums, static-notebook assertions, execution-contract projection) as a lower-priority regression-health item, carried forward rather than hidden.
+- Run and record the full auth test suite (valid/invalid/expired/missing JWT, unauthorized role, authorized admin, anonymous subject).
+- Run and record the full gateway/quota test suite (permitted request, quota exceeded, `429`, bursts, atomic quota behavior, backend failure, direct-origin bypass attempt).
+- Run and record the full runtime test suite (normal prediction, concurrency saturation, timeout, cache hit/miss, release/model change, invalid hash, model-load failure).
+- Run and record the full payload test suite (oversized body with/without `Content-Length`, malformed body, excessive forecasting history, semantic boundary violations).
+- Run and record infrastructure evidence (public Admin denial with the new JWT layer in place, CPU/memory/PID containment, health/restart behavior).
+- Run and record the full regression suite (Home, Dataset Detail, normal prediction, private Admin, public Admin still unavailable, no secret reaches the frontend, model/release integrity preserved).
+- Produce a readiness result (ready / ready with documented reservations / blocked with exact blockers) for this phase, following the same discipline `docs/operations/first-version-readiness.md` established for M49.
+
+### Out of Scope
+
+- Fixing the `M49-API-TEST` failures unrelated to the public security surface (may be reserved/deferred explicitly, per the above).
+- Any new product capability.
+- Declaring the whole of Atlas "secure" in an absolute sense — this is a proportional readiness statement for a portfolio-scale public deployment, not a claim of exhaustive security certification.
+
+### Expected Deliverables
+
+- A triage result for every public-surface-relevant `M49-API-TEST` failure (fixed or explicitly reserved with a documented reason).
+- Full test evidence across auth, gateway/quota, runtime, payload, infrastructure, and regression categories.
+- A phase-scoped readiness result artifact, analogous to `evidence/M49/readiness/first-version-readiness-result.json`.
+- An explicit, non-hidden list of anything still deferred or reserved after this milestone.
+
+### Implementation Documentation
+
+- Applicable strategy: `milestones-only` with the minimum readiness evidence needed to repeat validation, mirroring M49's approach.
+- Criterion to update: `docs/architecture.md` and `docs/current-architecture-overview.md` to reflect the now-real Supabase identity/gateway layer, if not already updated by M51/M52's own issues.
+- Criterion not to update: do not produce a new documentation framework beyond what M49 already established for readiness evidence.
+
+### Dependencies
+
+- M50, M51, M52 completed or explicitly blocked.
+- `evidence/M49/readiness/first-version-readiness-result.json`, `evidence/M49/readiness/public-smoke.json`, and `evidence/M49/readiness/backend-api-tests.json` as the factual baseline this milestone's triage must reconcile against.
+
+### Components or Areas Affected
+
+- `tests/api/test_public_endpoints.py`, `tests/api/test_public_browser_flow.py`, `tests/api/test_public_profile_publication_lifecycle.py`, `tests/api/test_admin_profile_publish.py`.
+- All components touched by M50–M52.
+- `docs/project-status/milestone-state.json` (update only if this milestone's own evidence supports a transition — never edited speculatively here).
+
+### Expected Issues or Derivation Criteria
+
+- Criterion: a public-surface `M49-API-TEST` failure remains unexplained.
+  - Possible issue type: contract/publication regression triage.
+  - Note: required before this milestone can certify readiness.
+- Criterion: any auth/gateway/runtime/payload/infra test category is missing or thin.
+  - Possible issue type: security validation coverage.
+- Criterion: regression suite shows a break in Home/Dataset Detail/prediction/Admin.
+  - Possible issue type: regression blocker.
+
+### Definition of Done
+
+- Every public-surface-relevant `M49-API-TEST` failure is fixed or explicitly, narrowly reserved with a documented reason.
+- All six evidence categories (auth, gateway/quota, runtime, payload, infrastructure, regression) are recorded.
+- A readiness result is produced honestly (ready / ready with reservations / blocked), never inferred from intent.
+- `docs/project-status/milestone-state.json` is updated only if this milestone's own evidence supports it.
+
+### Minimum Evidence
+
+- The triage outcome (fixed/reserved) for each of the four named test files.
+- Test run output for each of the six evidence categories above.
+- The phase-scoped readiness result artifact.
+
+### Risks and Gaps
+
+- Risk of certifying readiness while quietly carrying forward the public-surface contract/publication regressions this milestone exists to resolve.
+- Risk of over-scoping into fixing every remaining `M49-API-TEST` failure, including ones unrelated to public security, delaying this phase without a proportional security benefit.
+- Gap: if this milestone's own result is `blocked`, a further targeted milestone may be required, exactly as M49 anticipated for itself.
+
+### Derivability Criteria
+
+The milestone will be ready to derive issues when:
+
+- M50–M52 have implementation results or explicit blockers;
+- the four public-surface test files' failures have been individually read and categorized;
+- validation commands and evidence categories are known.
+
+### Continuity Notes
+
+M53 closes this phase the way M49 closed the first version: by checking evidence instead of assuming completion. It must not silently absorb `M49-API-TEST`'s non-public-security failures into "done" — those remain a recorded, lower-priority regression-health item for a future cycle.

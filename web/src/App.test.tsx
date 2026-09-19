@@ -1,7 +1,59 @@
 import "@testing-library/jest-dom/vitest";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, useLocation, useNavigate, type NavigateFunction } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+// M51-03: shared fake Supabase browser client. vi.mock is hoisted and survives
+// vi.resetModules(), so every dynamically imported App sees the same fake.
+// Values are obviously fake and non-secret.
+const supabaseFake = vi.hoisted(() => ({
+  authListener: null as null | ((event: string, session: unknown) => void),
+  createClient: vi.fn(),
+  getSession: vi.fn(),
+  signInWithPassword: vi.fn(),
+  signOut: vi.fn(),
+  unsubscribe: vi.fn(),
+}));
+
+vi.mock("@supabase/supabase-js", () => ({ createClient: supabaseFake.createClient }));
+
+const FAKE_SESSION = { access_token: "fake-access-token", user: { id: "fake-user" } };
+
+function installSupabaseFake(getSession?: () => Promise<unknown>) {
+  supabaseFake.authListener = null;
+  supabaseFake.unsubscribe.mockReset();
+  supabaseFake.getSession.mockReset();
+  supabaseFake.getSession.mockImplementation(
+    getSession ?? (async () => ({ data: { session: FAKE_SESSION }, error: null })),
+  );
+  supabaseFake.signInWithPassword.mockReset();
+  supabaseFake.signInWithPassword.mockResolvedValue({ data: { session: FAKE_SESSION }, error: null });
+  supabaseFake.signOut.mockReset();
+  supabaseFake.signOut.mockResolvedValue({ error: null });
+  supabaseFake.createClient.mockReset();
+  supabaseFake.createClient.mockImplementation(() => ({
+    auth: {
+      getSession: supabaseFake.getSession,
+      onAuthStateChange: (callback: (event: string, session: unknown) => void) => {
+        supabaseFake.authListener = callback;
+        return { data: { subscription: { unsubscribe: supabaseFake.unsubscribe } } };
+      },
+      signInWithPassword: supabaseFake.signInWithPassword,
+      signOut: supabaseFake.signOut,
+    },
+  }));
+}
+
+type SupabaseEnvMode = "valid" | "missing" | "invalid";
+
+function stubAppEnv(enableAdmin: boolean, supabaseEnv: SupabaseEnvMode = "valid") {
+  vi.stubEnv("VITE_ENABLE_ADMIN", enableAdmin ? "true" : "false");
+  if (!enableAdmin) {
+    return;
+  }
+  vi.stubEnv("VITE_SUPABASE_URL", supabaseEnv === "valid" ? "https://fake-project.example.test" : supabaseEnv === "invalid" ? "not a url" : "");
+  vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", supabaseEnv === "missing" ? "" : "fake-publishable-key");
+}
 
 type MockResponse = {
   ok: boolean;
@@ -137,9 +189,9 @@ function installFetchMock() {
   return fetchMock;
 }
 
-async function renderApp(route: string, enableAdmin: boolean) {
+async function renderApp(route: string, enableAdmin: boolean, supabaseEnv: SupabaseEnvMode = "valid") {
   vi.resetModules();
-  vi.stubEnv("VITE_ENABLE_ADMIN", enableAdmin ? "true" : "false");
+  stubAppEnv(enableAdmin, supabaseEnv);
 
   const { default: App } = await import("./App");
 
@@ -164,9 +216,9 @@ async function renderApp(route: string, enableAdmin: boolean) {
 // LocationProbe reads the live React Router location so compatibility tests
 // can assert the browser ends at the canonical path, using public Router
 // behavior rather than implementation internals.
-async function renderAppWithLocation(route: string, enableAdmin: boolean) {
+async function renderAppWithLocation(route: string, enableAdmin: boolean, supabaseEnv: SupabaseEnvMode = "valid") {
   vi.resetModules();
-  vi.stubEnv("VITE_ENABLE_ADMIN", enableAdmin ? "true" : "false");
+  stubAppEnv(enableAdmin, supabaseEnv);
 
   const { default: App } = await import("./App");
 
@@ -231,6 +283,7 @@ async function renderAppWithNavigation(initialRoute: string) {
 describe("App admin routing", () => {
   beforeEach(() => {
     installFetchMock();
+    installSupabaseFake();
     mockMatchMedia(true);
   });
 
@@ -261,8 +314,11 @@ describe("App admin routing", () => {
     // the canonical Dataset Detail route element (DatasetAdminPage) is what
     // renders there -- proven by its active canonical nav link and heading.
     expect(await screen.findByRole("navigation", { name: "Admin sections" })).toBeInTheDocument();
-    expect(screen.getByTestId("location-pathname")).toHaveTextContent("/admin/dataset-detail");
-    expect(screen.getByRole("link", { name: "Dataset Detail" })).toHaveAttribute("aria-current", "page");
+    // The redirect is applied after the async session settle; wait for it.
+    await waitFor(() =>
+      expect(screen.getByTestId("location-pathname")).toHaveTextContent("/admin/dataset-detail"),
+    );
+    expect(await screen.findByRole("link", { name: "Dataset Detail" })).toHaveAttribute("aria-current", "page");
     expect(
       await screen.findByRole("heading", { name: "Dataset — Telco Customer Churn" }),
     ).toBeInTheDocument();
@@ -296,8 +352,10 @@ describe("App admin routing", () => {
     await renderAppWithLocation("/admin", true);
 
     expect(await screen.findByRole("navigation", { name: "Admin sections" })).toBeInTheDocument();
-    expect(screen.getByTestId("location-pathname")).toHaveTextContent("/admin/dashboard");
-    expect(screen.getByRole("link", { name: "Dashboard" })).toHaveAttribute("aria-current", "page");
+    await waitFor(() =>
+      expect(screen.getByTestId("location-pathname")).toHaveTextContent("/admin/dashboard"),
+    );
+    expect(await screen.findByRole("link", { name: "Dashboard" })).toHaveAttribute("aria-current", "page");
     expect(await screen.findByRole("heading", { name: "Dashboard" })).toBeInTheDocument();
   });
 
@@ -363,6 +421,124 @@ describe("App admin routing", () => {
 
     expect(await screen.findByRole("heading", { name: /Atlas DataFlow/i })).toBeInTheDocument();
     expect(screen.queryByRole("navigation", { name: "Admin sections" })).not.toBeInTheDocument();
+  });
+});
+
+// M51-03: private Admin session boundary. Admin-enabled builds guard every
+// /admin/* route except /admin/login behind a Supabase browser session.
+describe("App admin session boundary (M51-03)", () => {
+  let fetchMock: ReturnType<typeof installFetchMock>;
+
+  beforeEach(() => {
+    fetchMock = installFetchMock();
+    installSupabaseFake();
+    mockMatchMedia(true);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+
+  it("does not register /admin/login or construct a Supabase client in the public build", async () => {
+    const { container } = await renderApp("/admin/login", false);
+
+    expect(screen.queryByRole("heading", { name: "Admin sign-in" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Password")).not.toBeInTheDocument();
+    expect(container).toBeEmptyDOMElement();
+    expect(supabaseFake.createClient).not.toHaveBeenCalled();
+  });
+
+  it("renders the login form at /admin/login without a session", async () => {
+    supabaseFake.getSession.mockImplementation(async () => ({ data: { session: null }, error: null }));
+    await renderApp("/admin/login", true);
+
+    expect(await screen.findByRole("heading", { name: "Admin sign-in" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Email")).toBeInTheDocument();
+    expect(screen.getByLabelText("Password")).toBeInTheDocument();
+  });
+
+  it("renders nothing protected and issues no Admin fetches while the session is pending", async () => {
+    installSupabaseFake(() => new Promise(() => undefined));
+    const { container } = await renderApp("/admin/dashboard", true);
+
+    expect(screen.queryByRole("navigation", { name: "Admin sections" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Dashboard" })).not.toBeInTheDocument();
+    expect(container).toBeEmptyDOMElement();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("redirects an unauthenticated visit to /admin/login without mounting the shell", async () => {
+    installSupabaseFake(async () => ({ data: { session: null }, error: null }));
+    await renderAppWithLocation("/admin/settings", true);
+
+    expect(await screen.findByRole("heading", { name: "Admin sign-in" })).toBeInTheDocument();
+    expect(screen.getByTestId("location-pathname")).toHaveTextContent("/admin/login");
+    expect(screen.queryByRole("navigation", { name: "Admin sections" })).not.toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("restores the shell from a persisted session without credentials", async () => {
+    await renderApp("/admin/help", true);
+
+    expect(await screen.findByRole("navigation", { name: "Admin sections" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("Password")).not.toBeInTheDocument();
+    expect(supabaseFake.signInWithPassword).not.toHaveBeenCalled();
+  });
+
+  it("returns to /admin/login when the session ends with a SIGNED_OUT event", async () => {
+    await renderAppWithLocation("/admin/help", true);
+    expect(await screen.findByRole("navigation", { name: "Admin sections" })).toBeInTheDocument();
+
+    act(() => {
+      supabaseFake.authListener?.("SIGNED_OUT", null);
+    });
+
+    expect(await screen.findByRole("heading", { name: "Admin sign-in" })).toBeInTheDocument();
+    expect(screen.getByTestId("location-pathname")).toHaveTextContent("/admin/login");
+    expect(screen.queryByRole("navigation", { name: "Admin sections" })).not.toBeInTheDocument();
+  });
+
+  it("returns to /admin/login through Sign out", async () => {
+    await renderAppWithLocation("/admin/help", true);
+    fireEvent.click(await screen.findByRole("button", { name: "Sign out" }));
+
+    expect(await screen.findByRole("heading", { name: "Admin sign-in" })).toBeInTheDocument();
+    expect(screen.getByTestId("location-pathname")).toHaveTextContent("/admin/login");
+    expect(supabaseFake.signOut).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails closed to a generic unavailable state when getSession rejects", async () => {
+    installSupabaseFake(async () => {
+      throw new Error("provider-internal-detail");
+    });
+    await renderAppWithLocation("/admin/dashboard", true);
+
+    expect(await screen.findByText("Admin sign-in is unavailable.")).toBeInTheDocument();
+    expect(screen.getByTestId("location-pathname")).toHaveTextContent("/admin/login");
+    expect(screen.queryByText(/provider-internal-detail/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("navigation", { name: "Admin sections" })).not.toBeInTheDocument();
+  });
+
+  it.each<SupabaseEnvMode>(["missing", "invalid"])(
+    "fails closed without constructing a client when Supabase config is %s",
+    async (mode) => {
+      await renderAppWithLocation("/admin/dashboard", true, mode);
+
+      expect(await screen.findByText("Admin sign-in is unavailable.")).toBeInTheDocument();
+      expect(screen.getByTestId("location-pathname")).toHaveTextContent("/admin/login");
+      expect(screen.getByRole("button", { name: "Sign in" })).toBeDisabled();
+      expect(supabaseFake.createClient).not.toHaveBeenCalled();
+      expect(screen.queryByRole("navigation", { name: "Admin sections" })).not.toBeInTheDocument();
+    },
+  );
+
+  it("redirects an authenticated visit to /admin/login to /admin/dashboard", async () => {
+    await renderAppWithLocation("/admin/login", true);
+
+    expect(await screen.findByRole("navigation", { name: "Admin sections" })).toBeInTheDocument();
+    expect(screen.getByTestId("location-pathname")).toHaveTextContent("/admin/dashboard");
   });
 });
 

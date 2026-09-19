@@ -1,8 +1,19 @@
 import "@testing-library/jest-dom/vitest";
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { useEffect, type ReactNode } from "react";
-import { MemoryRouter, Navigate, Route, Routes } from "react-router-dom";
-import { describe, expect, it } from "vitest";
+import { MemoryRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+// M51-03: AdminShell reads the optional Admin session context. The hook is
+// mocked so existing stand-alone cases keep rendering with no provider (null)
+// and the Sign out cases can supply a fake provider value.
+const authMock = vi.hoisted(() => ({
+  value: null as null | { signInWithEmailPassword: () => Promise<boolean>; signOut: () => Promise<void>; status: string },
+}));
+
+vi.mock("../auth/AdminAuthContext", () => ({
+  useOptionalAdminAuth: () => authMock.value,
+}));
 
 import AdminShell from "./AdminShell";
 import { useAdminSettings } from "./AdminSettingsContext";
@@ -113,5 +124,63 @@ describe("AdminShell profile block", () => {
 
     expect(screen.queryByRole("button", { name: "Run discovery private" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Publishing unavailable" })).not.toBeInTheDocument();
+  });
+});
+
+describe("AdminShell Sign out (M51-03)", () => {
+  afterEach(() => {
+    authMock.value = null;
+  });
+
+  function LocationProbe() {
+    return <span data-testid="pathname">{useLocation().pathname}</span>;
+  }
+
+  function renderWithLogin(indexElement: ReactNode = null) {
+    return render(
+      <MemoryRouter initialEntries={["/admin/dashboard"]}>
+        <LocationProbe />
+        <Routes>
+          <Route element={<div>Login route</div>} path="/admin/login" />
+          <Route element={<AdminShell />} path="/admin">
+            <Route element={indexElement} path="dashboard" />
+          </Route>
+        </Routes>
+      </MemoryRouter>,
+    );
+  }
+
+  it("renders no Sign out control without an Admin auth provider", () => {
+    renderWithLogin();
+
+    expect(screen.queryByRole("button", { name: "Sign out" })).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Current admin profile")).toBeInTheDocument();
+  });
+
+  it("renders Sign out beside the profile block when a provider is present, and signs out to /admin/login", async () => {
+    const signOut = vi.fn(async () => undefined);
+    authMock.value = { signInWithEmailPassword: async () => true, signOut, status: "authenticated" };
+    renderWithLogin();
+
+    expect(screen.getByLabelText("Current admin profile")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
+
+    await waitFor(() => expect(screen.getByTestId("pathname")).toHaveTextContent("/admin/login"));
+    expect(signOut).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("Login route")).toBeInTheDocument();
+  });
+
+  it("does not replace the profile display name with session data", () => {
+    authMock.value = {
+      email: "fake-operator@example.test",
+      signInWithEmailPassword: async () => true,
+      signOut: async () => undefined,
+      status: "authenticated",
+    } as unknown as NonNullable<typeof authMock.value>;
+    renderWithLogin(<DisplayNameSetter name="Ada Lovelace" />);
+
+    const profile = screen.getByLabelText("Current admin profile");
+    expect(within(profile).getByText("Ada Lovelace")).toBeInTheDocument();
+    expect(screen.queryByText(/fake-operator@example\.test/)).not.toBeInTheDocument();
   });
 });

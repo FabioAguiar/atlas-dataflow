@@ -1,5 +1,7 @@
 import type { ReactNode } from "react";
-import { NavLink, Outlet } from "react-router-dom";
+import { NavLink, Outlet, useNavigate } from "react-router-dom";
+
+import { useOptionalAdminAuth } from "../auth/AdminAuthContext";
 
 import atlasLogoSidebar from "../assets/admin/atlas-logo-sidebar.png";
 import { AdminSettingsProvider, useAdminSettings } from "./AdminSettingsContext";
@@ -128,6 +130,30 @@ function AdminProfileBlock() {
   );
 }
 
+// M51-03: explicit session sign-out. Rendered only when an Admin auth provider
+// is present; it never reads session identity into the profile block.
+function AdminSignOutButton() {
+  const auth = useOptionalAdminAuth();
+  const navigate = useNavigate();
+
+  if (!auth) {
+    return null;
+  }
+
+  return (
+    <button
+      className="admin-shell__nav-link admin-shell__signout"
+      onClick={async () => {
+        await auth.signOut();
+        navigate("/admin/login", { replace: true });
+      }}
+      type="button"
+    >
+      Sign out
+    </button>
+  );
+}
+
 export default function AdminShell() {
   return (
     <AdminSettingsProvider>
@@ -146,6 +172,7 @@ export default function AdminShell() {
           <AdminNavGroup ariaLabel="Admin utilities" className="admin-shell__nav--utility" items={utilityNavItems} />
 
           <AdminProfileBlock />
+          <AdminSignOutButton />
         </aside>
 
         <div className="admin-shell__workspace">

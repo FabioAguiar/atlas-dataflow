@@ -13,6 +13,15 @@ const DashboardPage = isAdminEnabled ? lazy(() => import("./pages/admin/Dashboar
 const DatasetAdminPage = isAdminEnabled ? lazy(() => import("./pages/admin/DatasetAdminPage")) : null;
 const HelpPage = isAdminEnabled ? lazy(() => import("./pages/admin/HelpPage")) : null;
 const SettingsPage = isAdminEnabled ? lazy(() => import("./pages/admin/SettingsPage")) : null;
+// M51-03: the private session boundary is reached only through these gated
+// lazy imports so the Supabase client never enters the public bundle.
+const AdminAuthRoot = isAdminEnabled
+  ? lazy(() => import("./auth/AdminAuthContext").then((m) => ({ default: m.AdminAuthRoot })))
+  : null;
+const AdminSessionGuard = isAdminEnabled
+  ? lazy(() => import("./auth/AdminAuthContext").then((m) => ({ default: m.AdminSessionGuard })))
+  : null;
+const LoginPage = isAdminEnabled ? lazy(() => import("./pages/admin/LoginPage")) : null;
 
 // Project Spec S0139: the dataset slug is the explicit route-entry identity
 // for Dataset Detail. Keying PublicShell on it forces a fresh shell instance
@@ -45,7 +54,16 @@ function HomeRoute() {
 }
 
 function renderAdminRoutes() {
-  if (!AdminShell || !DashboardPage || !DatasetAdminPage || !HelpPage || !SettingsPage) {
+  if (
+    !AdminShell ||
+    !DashboardPage ||
+    !DatasetAdminPage ||
+    !HelpPage ||
+    !SettingsPage ||
+    !AdminAuthRoot ||
+    !AdminSessionGuard ||
+    !LoginPage
+  ) {
     return <Route path="/admin/*" element={null} />;
   }
 
@@ -55,14 +73,22 @@ function renderAdminRoutes() {
   // only -- they never render a second copy of a canonical page. Both Navigate
   // targets resolve within this same AdminShell parent, so the shell is not
   // unmounted mid-redirect and the aliases cannot loop.
+  // M51-03: /admin/login is a sibling of the guarded shell (so the guard can
+  // never redirect to itself); every other /admin/* route sits behind the
+  // session guard, which renders nothing protected until a session is known.
   return (
-    <Route path="/admin" element={<AdminShell />}>
-      <Route index element={<Navigate replace to="/admin/dashboard" />} />
-      <Route path="dashboard" element={<DashboardPage />} />
-      <Route path="dataset-detail" element={<DatasetAdminPage />} />
-      <Route path="dataset-admin" element={<Navigate replace to="/admin/dataset-detail" />} />
-      <Route path="settings" element={<SettingsPage />} />
-      <Route path="help" element={<HelpPage />} />
+    <Route element={<AdminAuthRoot />}>
+      <Route path="/admin/login" element={<LoginPage />} />
+      <Route element={<AdminSessionGuard />}>
+        <Route path="/admin" element={<AdminShell />}>
+          <Route index element={<Navigate replace to="/admin/dashboard" />} />
+          <Route path="dashboard" element={<DashboardPage />} />
+          <Route path="dataset-detail" element={<DatasetAdminPage />} />
+          <Route path="dataset-admin" element={<Navigate replace to="/admin/dataset-detail" />} />
+          <Route path="settings" element={<SettingsPage />} />
+          <Route path="help" element={<HelpPage />} />
+        </Route>
+      </Route>
     </Route>
   );
 }

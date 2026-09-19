@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 // mocked so existing stand-alone cases keep rendering with no provider (null)
 // and the Sign out cases can supply a fake provider value.
 const authMock = vi.hoisted(() => ({
-  value: null as null | { signInWithEmailPassword: () => Promise<boolean>; signOut: () => Promise<void>; status: string },
+  value: null as null | { email?: string | null; signInWithEmailPassword: () => Promise<boolean>; signOut: () => Promise<void>; status: string },
 }));
 
 vi.mock("../auth/AdminAuthContext", () => ({
@@ -181,6 +181,20 @@ describe("AdminShell Sign out (M51-03)", () => {
 
     const profile = screen.getByLabelText("Current admin profile");
     expect(within(profile).getByText("Ada Lovelace")).toBeInTheDocument();
-    expect(screen.queryByText(/fake-operator@example\.test/)).not.toBeInTheDocument();
+    // M51-04: the live email is shown beside Sign out, never inside the profile block.
+    expect(within(profile).queryByText(/fake-operator@example\.test/)).not.toBeInTheDocument();
+    expect(screen.getByTestId("admin-session-email")).toHaveTextContent("fake-operator@example.test");
+  });
+
+  it("renders no session email when the provider email is null", () => {
+    authMock.value = {
+      email: null,
+      signInWithEmailPassword: async () => true,
+      signOut: async () => undefined,
+      status: "authenticated",
+    };
+    renderWithLogin();
+
+    expect(screen.queryByTestId("admin-session-email")).not.toBeInTheDocument();
   });
 });

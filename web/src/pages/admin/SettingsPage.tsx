@@ -1,6 +1,7 @@
 import { useState, type CSSProperties } from "react";
 
 import { useAdminSettings } from "../../layouts/AdminSettingsContext";
+import { adminFetch } from "../../auth/adminFetch";
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "";
 
@@ -158,7 +159,7 @@ export default function SettingsPage() {
 
   function loadSettings() {
     setState({ status: "loading" });
-    fetch(`${apiBaseUrl}/admin/settings`)
+    adminFetch(`${apiBaseUrl}/admin/settings`)
       .then((response) => {
         if (!response.ok) {
           setState({
@@ -190,7 +191,7 @@ export default function SettingsPage() {
 
   function saveSettings() {
     setState({ status: "loading" });
-    fetch(`${apiBaseUrl}/admin/settings`, {
+    adminFetch(`${apiBaseUrl}/admin/settings`, {
       method: "PUT",
       headers: {
         "Content-Type": "application/json",

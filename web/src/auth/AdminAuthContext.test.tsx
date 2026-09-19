@@ -24,14 +24,16 @@ import {
   useAdminAuth,
   useOptionalAdminAuth,
 } from "./AdminAuthContext";
+import { adminFetch, AdminSessionError } from "./adminFetch";
 
-const SESSION = { access_token: "fake-access-token", user: { id: "fake-user" } };
+const SESSION = { access_token: "fake-access-token", user: { email: "fake-operator@example.test", id: "fake-user" } };
 
 function StatusProbe() {
-  const { signInWithEmailPassword, signOut, status } = useAdminAuth();
+  const { email, signInWithEmailPassword, signOut, status } = useAdminAuth();
   return (
     <div>
       <span data-testid="status">{status}</span>
+      <span data-testid="email">{email ?? "none"}</span>
       <button onClick={() => void signInWithEmailPassword("a@example.test", "fake-password")} type="button">
         sign-in
       </button>
@@ -244,6 +246,60 @@ describe("AdminAuthProvider (M51-03)", () => {
 
     await waitFor(() => expect(screen.getByTestId("status")).toHaveTextContent("unauthenticated"));
     expect(fake.signOut).toHaveBeenCalledTimes(1);
+  });
+
+  it("registers the session source, reading the token per call, and clears it on unmount (M51-04)", async () => {
+    const fetchMock = vi.fn(async () => new Response("{}"));
+    vi.stubGlobal("fetch", fetchMock);
+    const view = renderProvider();
+    await waitFor(() => expect(screen.getByTestId("status")).toHaveTextContent("authenticated"));
+    fake.getSession.mockClear();
+
+    await adminFetch("/admin/datasets");
+    fake.getSession.mockResolvedValue({ data: { session: { ...SESSION, access_token: "fake-rotated-token" } }, error: null });
+    await adminFetch("/admin/datasets");
+
+    expect(fake.getSession).toHaveBeenCalledTimes(2);
+    const auth = (i: number) => new Headers((fetchMock.mock.calls[i] as unknown as [string, RequestInit])[1].headers);
+    expect(auth(0).get("Authorization")).toBe("Bearer fake-access-token");
+    expect(auth(1).get("Authorization")).toBe("Bearer fake-rotated-token");
+
+    view.unmount();
+    await expect(adminFetch("/admin/datasets")).rejects.toBeInstanceOf(AdminSessionError);
+    vi.unstubAllGlobals();
+  });
+
+  it("keeps a single working registration under StrictMode (M51-04)", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("{}")));
+    renderProvider(true);
+    await waitFor(() => expect(screen.getByTestId("status")).toHaveTextContent("authenticated"));
+
+    await expect(adminFetch("/admin/datasets")).resolves.toBeInstanceOf(Response);
+    vi.unstubAllGlobals();
+  });
+
+  it("terminates the session locally when the token is unavailable (M51-04)", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    renderProvider();
+    await waitFor(() => expect(screen.getByTestId("status")).toHaveTextContent("authenticated"));
+    fake.getSession.mockResolvedValue({ data: { session: null }, error: null });
+
+    await expect(adminFetch("/admin/datasets")).rejects.toBeInstanceOf(AdminSessionError);
+
+    await waitFor(() => expect(screen.getByTestId("status")).toHaveTextContent("unauthenticated"));
+    expect(fake.signOut).toHaveBeenCalledWith({ scope: "local" });
+    expect(fetchMock).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
+  it("exposes a live email that is null after sign-out and never exposes the token (M51-04)", async () => {
+    const view = renderProvider();
+    await waitFor(() => expect(screen.getByTestId("email")).toHaveTextContent("fake-operator@example.test"));
+    expect(view.container.innerHTML).not.toContain("fake-access-token");
+
+    fireEvent.click(screen.getByRole("button", { name: "sign-out" }));
+    await waitFor(() => expect(screen.getByTestId("email")).toHaveTextContent("none"));
   });
 
   it("useAdminAuth throws outside a provider while useOptionalAdminAuth returns null", () => {

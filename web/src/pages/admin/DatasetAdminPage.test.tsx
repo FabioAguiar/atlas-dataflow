@@ -15,6 +15,29 @@ import DatasetAdminPage, {
   OperationalConsole,
   reduceLiveInferenceAuditEvent,
 } from "./DatasetAdminPage";
+import { registerAdminSessionSource } from "../../auth/adminFetch";
+import dashboardSource from "./DashboardPage.tsx?raw";
+import datasetAdminSource from "./DatasetAdminPage.tsx?raw";
+import settingsSource from "./SettingsPage.tsx?raw";
+
+// M51-04: every /admin/* call goes through adminFetch, which fails closed
+// without a registered session source. The token below is obviously fake.
+const FAKE_ADMIN_TOKEN = "fake-admin-token-not-a-secret";
+const fakeSessionSource = {
+  getAccessToken: async () => FAKE_ADMIN_TOKEN,
+  terminateSession: () => undefined,
+};
+let unregisterFakeSessionSource: (() => void) | null = null;
+
+beforeEach(() => {
+  unregisterFakeSessionSource = registerAdminSessionSource(fakeSessionSource);
+});
+
+afterEach(() => {
+  unregisterFakeSessionSource?.();
+  unregisterFakeSessionSource = null;
+});
+
 
 // DatasetAdminPage's Home card preview renders the shared DatasetCard
 // component, which uses react-router-dom's <Link> -- it needs a Router
@@ -789,9 +812,9 @@ function installFetchMock(
       return jsonResponse({ saved: true, profile: publicProfile });
     }
     if (url.endsWith(`/admin/datasets/${datasetSlug}/home-card-image`) && init?.method === "POST") {
-      const headers = init.headers as Record<string, string>;
-      const fileName = decodeURIComponent(headers["X-File-Name"]);
-      if (fileName.includes("fail") || headers["Content-Type"] === "image/svg+xml") {
+      const headers = new Headers(init.headers);
+      const fileName = decodeURIComponent(headers.get("X-File-Name") ?? "");
+      if (fileName.includes("fail") || headers.get("Content-Type") === "image/svg+xml") {
         return jsonResponse({ errors: [{ message: "Choose a PNG, JPEG, WebP, or AVIF image." }] }, 422);
       }
       if (fileName.includes("htmlerror")) {
@@ -1087,9 +1110,10 @@ describe("DatasetAdminPage", () => {
       .slice(callsBeforeToggle)
       .filter((call: unknown[]) => String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/visibility`));
     expect(visibilityCalls).toHaveLength(1);
+    expect(new Headers((visibilityCalls[0]?.[1] as RequestInit).headers).get("Content-Type")).toBe("application/json");
+    expect(new Headers((visibilityCalls[0]?.[1] as RequestInit).headers).get("Authorization")).toBe(`Bearer ${FAKE_ADMIN_TOKEN}`);
     expect(visibilityCalls[0]?.[1]).toMatchObject({
       method: "PUT",
-      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ visible: false }),
     });
     // Successful PUT triggers an authoritative re-fetch of publication-state.
@@ -2282,7 +2306,8 @@ describe("DatasetAdminPage", () => {
       String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/publish`),
     );
     expect(publishCall).toBeDefined();
-    expect(publishCall?.[1]).toMatchObject({ method: "PUT", headers: { "Content-Type": "application/json" } });
+    expect(publishCall?.[1]).toMatchObject({ method: "PUT" });
+    expect(new Headers((publishCall?.[1] as RequestInit).headers).get("Content-Type")).toBe("application/json");
     expect(JSON.parse(String((publishCall?.[1] as RequestInit).body)).display?.subtitle).toBe("Toolbar-edited subtitle");
   });
 
@@ -2937,9 +2962,7 @@ describe("DatasetAdminPage", () => {
           (call[1] as RequestInit | undefined)?.method === "PUT",
       );
     expect(saveCall).toBeDefined();
-    expect(saveCall?.[1]).toMatchObject({
-      headers: { "Content-Type": "application/json" },
-    });
+    expect(new Headers((saveCall?.[1] as RequestInit).headers).get("Content-Type")).toBe("application/json");
     const body = JSON.parse(String((saveCall?.[1] as RequestInit).body)) as {
       home_card?: { icon?: string; primary_metric_key?: string | null };
       performance_focus?: { focus_id?: string; highlighted_score_id?: string; visible_scores?: Array<{ score_id: string; value: string }> };
@@ -3176,8 +3199,10 @@ describe("DatasetAdminPage", () => {
     expect(previewCard?.querySelector(".dataset-card__frame")).toBeInTheDocument();
     const uploadCall = fetchMock.mock.calls.find(([url]) => String(url).endsWith(`/admin/datasets/${datasetSlug}/home-card-image`));
     expect(uploadCall).toBeDefined();
-    expect(uploadCall?.[1]?.headers).toMatchObject({ "X-File-Name": encodeURIComponent("Visão geral (final).png") });
-    expect(uploadCall?.[1]?.headers).not.toHaveProperty("Content-Type");
+    const uploadHeaders = new Headers(uploadCall?.[1]?.headers);
+    expect(uploadHeaders.get("X-File-Name")).toBe(encodeURIComponent("Visão geral (final).png"));
+    expect(uploadHeaders.has("Content-Type")).toBe(false);
+    expect(uploadHeaders.get("Authorization")).toBe(`Bearer ${FAKE_ADMIN_TOKEN}`);
   });
 
   it("preserves Home card and Performance focus edits when an upload fails", async () => {
@@ -12399,5 +12424,38 @@ describe("Dataset-switch-safe Predict View rebinding and inference form bootstra
         String(input).endsWith(`/admin/datasets/${dryBeanSlug}/views/${viewId}/customization`),
       ),
     ).toBe(false);
+  });
+});
+
+describe("Admin transport migration (M51-04)", () => {
+  it("leaves no raw fetch of an /admin path in the three Admin pages", async () => {
+    const sources = {
+      "DashboardPage.tsx": dashboardSource,
+      "SettingsPage.tsx": settingsSource,
+      "DatasetAdminPage.tsx": datasetAdminSource,
+    };
+    for (const source of Object.values(sources)) {
+      const rawFetches = source.split("\n").filter((line: string) => /(^|[^A-Za-z_.])fetch\(/.test(line));
+      for (const line of rawFetches) {
+        expect(line).not.toContain("/admin");
+      }
+    }
+  });
+
+  it("sends no Authorization header on the public GET /datasets call", async () => {
+    const fetchMock = installFetchMock();
+    render(<DatasetAdminPage />);
+
+    await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/datasets"))).toBe(true));
+    const publicCalls = fetchMock.mock.calls.filter(([url]) => !String(url).includes("/admin/") && String(url).endsWith("/datasets"));
+    expect(publicCalls.length).toBeGreaterThan(0);
+    for (const [, init] of publicCalls) {
+      expect(new Headers((init as RequestInit | undefined)?.headers).has("Authorization")).toBe(false);
+    }
+    const adminCalls = fetchMock.mock.calls.filter(([url]) => String(url).includes("/admin/"));
+    expect(adminCalls.length).toBeGreaterThan(0);
+    for (const [, init] of adminCalls) {
+      expect(new Headers((init as RequestInit | undefined)?.headers).get("Authorization")).toBe(`Bearer ${FAKE_ADMIN_TOKEN}`);
+    }
   });
 });

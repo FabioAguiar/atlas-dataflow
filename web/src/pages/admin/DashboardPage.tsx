@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { Button, Card, EmptyState, ErrorState, StatusPill, TableRow } from "../../components/ui";
 import { presentDatasetOperationalTimestamp } from "../../lib/datasetPresentation";
+import { adminFetch } from "../../auth/adminFetch";
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "";
 
@@ -936,7 +937,7 @@ export default function DashboardPage() {
     // projection (draft and published Dataset Details alike) instead of the
     // public GET /datasets route, which only ever returns published,
     // publicly visible Dataset Details.
-    fetch(`${apiBaseUrl}/admin/datasets`)
+    adminFetch(`${apiBaseUrl}/admin/datasets`)
       .then((res) => {
         if (!res.ok) {
           setDatasetRegistryState({ status: "unavailable" });
@@ -967,7 +968,7 @@ export default function DashboardPage() {
     setState((previous) => (previous.status === "ready" ? previous : { status: "loading" }));
     setIsRefreshing(true);
 
-    fetch(`${apiBaseUrl}/admin/runs`, {
+    adminFetch(`${apiBaseUrl}/admin/runs`, {
       signal: controller.signal,
     })
       .then((res) => {
@@ -1026,7 +1027,7 @@ export default function DashboardPage() {
     // Project Spec S0050: removal always targets the original, full run id
     // (never the stripped display id) and uses the existing removal
     // endpoint/behavior unchanged, for promoted and non-promoted runs alike.
-    fetch(`${apiBaseUrl}/admin/runs/${encodeURIComponent(runId)}`, {
+    adminFetch(`${apiBaseUrl}/admin/runs/${encodeURIComponent(runId)}`, {
       method: "DELETE",
     })
       .then((res) => {
@@ -1081,7 +1082,7 @@ export default function DashboardPage() {
 
     // Project Spec S0049: removes only the registry entry -- distinct from
     // confirmRemoveRun above, which only ever removes a run artifact.
-    fetch(`${apiBaseUrl}/admin/datasets/${encodeURIComponent(slug)}`, {
+    adminFetch(`${apiBaseUrl}/admin/datasets/${encodeURIComponent(slug)}`, {
       method: "DELETE",
     })
       .then((res) => {
@@ -1134,7 +1135,7 @@ export default function DashboardPage() {
     // a dedicated private Admin route distinct from DELETE
     // /admin/datasets/{dataset_slug} (full removal) and
     // POST /admin/runs/{run_id}/promote (unrelated to Dataset Detail edits).
-    fetch(`${apiBaseUrl}/admin/datasets/${encodeURIComponent(originalSlug)}/slug`, {
+    adminFetch(`${apiBaseUrl}/admin/datasets/${encodeURIComponent(originalSlug)}/slug`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ new_dataset_slug: newSlug }),
@@ -1194,7 +1195,7 @@ export default function DashboardPage() {
     // is no operator-facing mode choice, so this request sends no
     // promotion-mode body; the backend route is the sole authority and always
     // applies create-new semantics.
-    fetch(`${apiBaseUrl}/admin/runs/${encodeURIComponent(runId)}/promote`, {
+    adminFetch(`${apiBaseUrl}/admin/runs/${encodeURIComponent(runId)}/promote`, {
       method: "POST",
     })
       .then(async (res) => {

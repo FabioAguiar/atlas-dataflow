@@ -1,9 +1,29 @@
 import "@testing-library/jest-dom/vitest";
-import { fireEvent, render, screen, within } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { presentDatasetOperationalTimestamp } from "../../lib/datasetPresentation";
 import DashboardPage from "./DashboardPage";
+import { registerAdminSessionSource } from "../../auth/adminFetch";
+
+// M51-04: every /admin/* call goes through adminFetch, which fails closed
+// without a registered session source. The token below is obviously fake.
+const FAKE_ADMIN_TOKEN = "fake-admin-token-not-a-secret";
+const fakeSessionSource = {
+  getAccessToken: async () => FAKE_ADMIN_TOKEN,
+  terminateSession: () => undefined,
+};
+let unregisterFakeSessionSource: (() => void) | null = null;
+
+beforeEach(() => {
+  unregisterFakeSessionSource = registerAdminSessionSource(fakeSessionSource);
+});
+
+afterEach(() => {
+  unregisterFakeSessionSource?.();
+  unregisterFakeSessionSource = null;
+});
+
 
 type MockResponse = {
   ok: boolean;
@@ -2684,10 +2704,13 @@ describe("DashboardPage", () => {
       const callsBefore = fetchMock.mock.calls.length;
       fireEvent.click(supersededRowActionButton(table));
 
-      const promoteCalls = fetchMock.mock.calls
-        .slice(callsBefore)
-        .filter(([input, init]) => String(input).includes("/admin/runs/validate-20260829T113112Z/promote") && (init as RequestInit | undefined)?.method === "POST");
-      expect(promoteCalls).toHaveLength(1);
+      const findPromoteCalls = () =>
+        fetchMock.mock.calls
+          .slice(callsBefore)
+          .filter(([input, init]) => String(input).includes("/admin/runs/validate-20260829T113112Z/promote") && (init as RequestInit | undefined)?.method === "POST");
+      await waitFor(() => expect(findPromoteCalls()).toHaveLength(1));
+      const promoteCalls = findPromoteCalls();
+      expect(new Headers((promoteCalls[0][1] as RequestInit).headers).get("Authorization")).toBe(`Bearer ${FAKE_ADMIN_TOKEN}`);
       const rawBody = (promoteCalls[0][1] as RequestInit).body;
       expect(rawBody == null ? "" : String(rawBody)).toBe("");
 

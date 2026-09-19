@@ -1,9 +1,29 @@
 import "@testing-library/jest-dom/vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AdminSettingsProvider, useAdminSettings } from "../../layouts/AdminSettingsContext";
 import SettingsPage from "./SettingsPage";
+import { registerAdminSessionSource } from "../../auth/adminFetch";
+
+// M51-04: every /admin/* call goes through adminFetch, which fails closed
+// without a registered session source. The token below is obviously fake.
+const FAKE_ADMIN_TOKEN = "fake-admin-token-not-a-secret";
+const fakeSessionSource = {
+  getAccessToken: async () => FAKE_ADMIN_TOKEN,
+  terminateSession: () => undefined,
+};
+let unregisterFakeSessionSource: (() => void) | null = null;
+
+beforeEach(() => {
+  unregisterFakeSessionSource = registerAdminSessionSource(fakeSessionSource);
+});
+
+afterEach(() => {
+  unregisterFakeSessionSource?.();
+  unregisterFakeSessionSource = null;
+});
+
 
 function SharedDisplayNameProbe() {
   const { displayName } = useAdminSettings();
@@ -92,7 +112,10 @@ describe("SettingsPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Load settings" }));
 
     expect(await screen.findByText("Current display name loaded from the private/admin settings endpoint.")).toBeInTheDocument();
-    expect(fetchMock).toHaveBeenCalledWith("/admin/settings");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe("/admin/settings");
+    expect(new Headers(init.headers).get("Authorization")).toBe(`Bearer ${FAKE_ADMIN_TOKEN}`);
     expect(screen.queryByText(/operator token/i)).not.toBeInTheDocument();
   });
 
@@ -104,6 +127,22 @@ describe("SettingsPage", () => {
 
     expect(screen.getByLabelText("Display name")).toHaveValue("Internal operator");
     expect(screen.getByTestId("shared-display-name")).toHaveTextContent("Internal operator");
+  });
+
+  it("keeps the PUT payload exactly { display_name } and never leaks the token into payload or DOM (M51-04)", async () => {
+    const fetchMock = installFetchMock();
+    const view = renderSettingsPage();
+
+    await loadSettings();
+    fireEvent.change(screen.getByLabelText("Display name"), { target: { value: "New operator name" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save display name" }));
+    await screen.findByText("Display name saved.");
+
+    const put = fetchMock.mock.calls.find(([, init]) => init?.method === "PUT") as unknown as [string, RequestInit];
+    expect(JSON.parse(String(put[1].body))).toEqual({ display_name: "New operator name" });
+    expect(String(put[1].body)).not.toContain(FAKE_ADMIN_TOKEN);
+    expect(new Headers(put[1].headers).get("Authorization")).toBe(`Bearer ${FAKE_ADMIN_TOKEN}`);
+    expect(view.container.innerHTML).not.toContain(FAKE_ADMIN_TOKEN);
   });
 
   it("saves an edited display name through PUT /admin/settings", async () => {

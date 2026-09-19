@@ -12,6 +12,7 @@ import {
 import { Badge, Card, FormRow, StatusPill, Tabs, type TabItem } from "../../components/ui";
 import DatasetCard from "../../components/DatasetCard";
 import { DatasetIcon } from "../../components/DatasetCard/DatasetCard";
+import { adminFetch } from "../../auth/adminFetch";
 import DatasetDetailSurface from "../../components/DatasetDetail/DatasetDetailSurface";
 import DatasetDocumentation from "../../components/DatasetDetail/DatasetDocumentation";
 import PerformanceSummary from "../../components/DatasetDetail/PerformanceSummary";
@@ -2295,7 +2296,7 @@ async function executeAdminInference(
   payload: InferenceExecutorPayload,
 ): Promise<InferenceExecutionResult> {
   try {
-    const res = await fetch(`${apiBaseUrl}/admin/datasets/${encodeURIComponent(slug)}/inference`, {
+    const res = await adminFetch(`${apiBaseUrl}/admin/datasets/${encodeURIComponent(slug)}/inference`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
@@ -2386,7 +2387,7 @@ function presentationFromForm(form: DraftForm): ResultPresentation {
 
 async function fetchJson<T>(path: string, signal: AbortSignal): Promise<SectionState<T>> {
   try {
-    const response = await fetch(`${apiBaseUrl}${path}`, { signal });
+    const response = await adminFetch(`${apiBaseUrl}${path}`, { signal });
     if (!response.ok) {
       return { status: "unavailable", message: `Unavailable (${response.status})` };
     }
@@ -2707,7 +2708,7 @@ function MetadataCardTab({
     setImageUploadState("uploading");
     const headers: Record<string, string> = { "X-File-Name": encodeURIComponent(file.name) };
     if (file.type) headers["Content-Type"] = file.type;
-    fetch(`${apiBaseUrl}/admin/datasets/${encodeURIComponent(selectedSlug)}/home-card-image`, {
+    adminFetch(`${apiBaseUrl}/admin/datasets/${encodeURIComponent(selectedSlug)}/home-card-image`, {
       method: "POST",
       headers,
       body: file,
@@ -5603,7 +5604,7 @@ export default function DatasetAdminPage() {
   useEffect(() => {
     const controller = new AbortController();
 
-    fetch(`${apiBaseUrl}/admin/datasets`, { signal: controller.signal })
+    adminFetch(`${apiBaseUrl}/admin/datasets`, { signal: controller.signal })
       .then((res) => {
         if (!res.ok) {
           setAdminDatasetsState({ status: "error", message: "Admin dataset listing unavailable." });
@@ -5702,7 +5703,7 @@ export default function DatasetAdminPage() {
     // one exists, or (via the canonicalDisplayTitle seed effect below, once
     // draftState resolves with draftExists: false) the established S0056
     // blank-form-with-seeded-title baseline otherwise.
-    fetch(`${apiBaseUrl}/admin/datasets/${encodeURIComponent(selectedSlug)}/profile-draft`, {
+    adminFetch(`${apiBaseUrl}/admin/datasets/${encodeURIComponent(selectedSlug)}/profile-draft`, {
       signal: controller.signal,
     })
       .then((response) => {
@@ -6231,7 +6232,7 @@ export default function DatasetAdminPage() {
       status: "publishing",
       publishedProfile: current.publishedProfile,
     }));
-    fetch(`${apiBaseUrl}/admin/datasets/${encodeURIComponent(selectedSlug)}/publish`, {
+    adminFetch(`${apiBaseUrl}/admin/datasets/${encodeURIComponent(selectedSlug)}/publish`, {
       method: "PUT",
       headers: {
         "Content-Type": "application/json",
@@ -6420,7 +6421,7 @@ export default function DatasetAdminPage() {
     const requestId = publicationProjectionRequestRef.current + 1;
     publicationProjectionRequestRef.current = requestId;
 
-    fetch(`${apiBaseUrl}/admin/datasets/${encodeURIComponent(slug)}/publication-state`, signal ? { signal } : undefined)
+    adminFetch(`${apiBaseUrl}/admin/datasets/${encodeURIComponent(slug)}/publication-state`, signal ? { signal } : undefined)
       .then((response): Promise<{ ok: boolean; body: unknown }> => {
         if (response.status === 404) {
           return Promise.resolve({ ok: false, body: null });
@@ -6480,7 +6481,7 @@ export default function DatasetAdminPage() {
     setVisibilityWriteFailed(false);
     setPublicationProjection({ status: "saving", datasetSlug: slug, projection: priorProjection, pendingVisible: visible });
 
-    fetch(`${apiBaseUrl}/admin/datasets/${encodeURIComponent(slug)}/visibility`, {
+    adminFetch(`${apiBaseUrl}/admin/datasets/${encodeURIComponent(slug)}/visibility`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ visible }),
@@ -6533,7 +6534,7 @@ export default function DatasetAdminPage() {
     setReviewApprovalWriteFailed(false);
     setPublicationProjection({ status: "approving", datasetSlug: slug, projection: priorProjection });
 
-    fetch(`${apiBaseUrl}/admin/datasets/${encodeURIComponent(slug)}/review-status`, {
+    adminFetch(`${apiBaseUrl}/admin/datasets/${encodeURIComponent(slug)}/review-status`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ status: "ready" }),
@@ -6646,7 +6647,7 @@ export default function DatasetAdminPage() {
     };
     type CustomizationLoadResult = { data: CustomizationReadResponse } | { transportFailed: true } | null;
 
-    fetch(
+    adminFetch(
       `${apiBaseUrl}/admin/datasets/${encodeURIComponent(selectedSlug)}/views/${encodeURIComponent(boundPredictViewId)}/customization`,
       { signal: controller.signal },
     )
@@ -6849,7 +6850,7 @@ export default function DatasetAdminPage() {
 
     setCustomizationEditorState({ status: "saving", draft });
 
-    return fetch(
+    return adminFetch(
       `${apiBaseUrl}/admin/datasets/${encodeURIComponent(selectedSlug)}/views/${encodeURIComponent(boundPredictViewId)}/customization`,
       {
         method: "PUT",

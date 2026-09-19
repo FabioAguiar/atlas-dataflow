@@ -140,17 +140,25 @@ function AdminSignOutButton() {
     return null;
   }
 
+  // M51-04: live session email only; never replaces the Settings display name.
   return (
-    <button
-      className="admin-shell__nav-link admin-shell__signout"
-      onClick={async () => {
-        await auth.signOut();
-        navigate("/admin/login", { replace: true });
-      }}
-      type="button"
-    >
-      Sign out
-    </button>
+    <>
+      {auth.email ? (
+        <span className="admin-shell__session-email" data-testid="admin-session-email">
+          {auth.email}
+        </span>
+      ) : null}
+      <button
+        className="admin-shell__nav-link admin-shell__signout"
+        onClick={async () => {
+          await auth.signOut();
+          navigate("/admin/login", { replace: true });
+        }}
+        type="button"
+      >
+        Sign out
+      </button>
+    </>
   );
 }
 

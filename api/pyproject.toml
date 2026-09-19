@@ -10,6 +10,9 @@ dependencies = [
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.30.0",
     "jsonschema>=4.20.0",
+    # M51-01: local Supabase access-token verification (JWKS-backed
+    # ES256/RS256 signature and claim validation for the Admin operator).
+    "PyJWT[crypto]>=2.8.0,<3",
     # Pinned to the exact versions verified against the controlled training
     # environment (conda env `atlas`, the environment used to run
     # pipeline.training for the active Telco release): joblib matches the

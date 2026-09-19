@@ -14,6 +14,7 @@ import uvicorn
 from fastapi import Body, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
+from starlette.concurrency import run_in_threadpool
 from starlette.requests import ClientDisconnect
 
 # Ensure the repository root is on the Python path so registry/ is importable
@@ -510,11 +511,31 @@ def _admin_runtime_enabled() -> bool:
     return value is not None and value.strip().lower() in _ADMIN_ENABLED_VALUES
 
 
-# Admin routes must not be reachable unless the backend admin runtime mode is
-# explicitly enabled. M47 private admin operation relies on the private runtime
-# boundary rather than browser-held operator token state.
-def _admin_request_authorized(_request: Request) -> bool:
-    return _admin_runtime_enabled()
+# M51-02: every /admin/* route is guarded by two independent, mandatory gates
+# composed here in the single shared predicate: the ATLAS_ADMIN_ENABLED
+# runtime flag (checked first; when off the verifier is never invoked, so no
+# JWKS fetch happens) AND the M51-01 verified-operator decision. Fail closed:
+# any exception (including the lazy ImportError of a missing PyJWT) or any
+# decision whose ``authorized`` is not exactly True denies, and nothing about
+# the failure is logged or surfaced -- callers get the not-found response.
+def _admin_request_authorized(request: Request) -> bool:
+    if not _admin_runtime_enabled():
+        return False
+    try:
+        decision = _admin_auth_decision_from_request(request)
+        return getattr(decision, "authorized", None) is True
+    except Exception:
+        return False
+
+
+# M51-01: the fail-closed Supabase identity-verification boundary, composed
+# with the runtime flag in _admin_request_authorized (M51-02). The import is
+# lazy so that importing this module continues to work in environments
+# without PyJWT installed.
+def _admin_auth_decision_from_request(request: Request):
+    from admin_auth import evaluate_admin_authorization
+
+    return evaluate_admin_authorization(request.headers.get("authorization"))
 
 
 # On an access-control failure this must be byte-for-byte the same response
@@ -1617,7 +1638,9 @@ def put_admin_profile_publish(
 
 @app.post("/admin/datasets/{dataset_slug}/home-card-image")
 async def post_admin_home_card_image(dataset_slug: str, request: Request):
-    if not _admin_request_authorized(request):
+    # The verifier may do a blocking JWKS fetch; evaluate it in a worker
+    # thread and always before any request-body read.
+    if not await run_in_threadpool(_admin_request_authorized, request):
         return _admin_route_not_found_response()
     if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", dataset_slug):
         return public_error_response(PROFILE_PUBLISH_DATASET_SLUG_INVALID)

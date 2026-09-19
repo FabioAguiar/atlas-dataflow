@@ -41,6 +41,22 @@ from registry.list import is_dataset_needs_review as _real_is_dataset_needs_revi
 from registry.list import list_datasets as _real_list_datasets  # noqa: E402
 from registry.resolve import resolve_dataset as _real_resolve_dataset  # noqa: E402
 
+import pytest  # noqa: E402
+from types import SimpleNamespace as _IdentityNamespace  # noqa: E402
+
+
+# M51-02: the composed Admin gate needs a verified operator identity on top of
+# the runtime flag. Patch ONLY the identity seam with a controlled valid
+# decision; ATLAS_ADMIN_ENABLED handling stays real in each test and
+# _admin_request_authorized itself is never patched.
+@pytest.fixture(autouse=True)
+def _valid_operator_identity(monkeypatch):
+    monkeypatch.setattr(
+        api_main,
+        "_admin_auth_decision_from_request",
+        lambda request: _IdentityNamespace(authorized=True, reason="test_operator"),
+    )
+
 _TARGET_SLUG = "telco-customer-churn"
 _RELEASE_ID = "release-20260101-001"
 _ADMIN_TOKEN = "correct-token"

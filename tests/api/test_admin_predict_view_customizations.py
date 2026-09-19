@@ -44,6 +44,22 @@ from registry.predict_view_customization_store import (  # noqa: E402
 )
 from registry.resolve import ResolvedDataset  # noqa: E402
 
+import pytest  # noqa: E402
+from types import SimpleNamespace as _IdentityNamespace  # noqa: E402
+
+
+# M51-02: the composed Admin gate needs a verified operator identity on top of
+# the runtime flag. Patch ONLY the identity seam with a controlled valid
+# decision; ATLAS_ADMIN_ENABLED handling stays real in each test and
+# _admin_request_authorized itself is never patched.
+@pytest.fixture(autouse=True)
+def _valid_operator_identity(monkeypatch):
+    monkeypatch.setattr(
+        api_main,
+        "_admin_auth_decision_from_request",
+        lambda request: _IdentityNamespace(authorized=True, reason="test_operator"),
+    )
+
 
 _PUBLIC_CONTRACT = {
     "features": [

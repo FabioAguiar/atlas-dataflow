@@ -48,6 +48,22 @@ from registry.dataset_public_profile_snapshot_store import (  # noqa: E402
     publish_snapshot_from_payload as _real_publish_snapshot_from_payload,
 )
 
+import pytest  # noqa: E402
+from types import SimpleNamespace as _IdentityNamespace  # noqa: E402
+
+
+# M51-02: the composed Admin gate needs a verified operator identity on top of
+# the runtime flag. Patch ONLY the identity seam with a controlled valid
+# decision; ATLAS_ADMIN_ENABLED handling stays real in each test and
+# _admin_request_authorized itself is never patched.
+@pytest.fixture(autouse=True)
+def _valid_operator_identity(monkeypatch):
+    monkeypatch.setattr(
+        api_main,
+        "_admin_auth_decision_from_request",
+        lambda request: _IdentityNamespace(authorized=True, reason="test_operator"),
+    )
+
 
 def _make_request(
     headers: dict[str, str],

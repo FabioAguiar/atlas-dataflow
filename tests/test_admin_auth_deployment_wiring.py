@@ -59,12 +59,17 @@ def test_dockerfile_declares_publishable_args_with_empty_defaults():
         assert f"ENV {name}=${{{name}}}" in text
 
 
-def test_public_compose_gains_no_auth_configuration():
+def test_public_compose_gains_only_the_two_publishable_build_args():
     text = PROD_COMPOSE.read_text(encoding="utf-8")
-    for name in TRUSTED_VARS + PUBLISHABLE_VARS:
+    for name in TRUSTED_VARS:
         assert name not in text
-    assert "SUPABASE" not in text.upper()
+    assert "SECRET" not in text.upper()
+    assert "SERVICE_ROLE" not in text.upper()
     services = _load(PROD_COMPOSE)["services"]
+    web_args = services["web"]["build"]["args"]
+    supabase_args = {k: v for k, v in web_args.items() if "SUPABASE" in k.upper()}
+    assert supabase_args == {name: f"${{{name}:-}}" for name in PUBLISHABLE_VARS}
+    assert not any("SUPABASE" in k.upper() for k in services["api"]["environment"])
     assert services["api"]["environment"]["ATLAS_ADMIN_ENABLED"] == "${ATLAS_ADMIN_ENABLED:-false}"
     assert services["web"]["build"]["args"]["VITE_ENABLE_ADMIN"] == "${VITE_ENABLE_ADMIN:-false}"
 

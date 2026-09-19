@@ -38,6 +38,12 @@ services:
       args:
         VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api}
         VITE_ENABLE_ADMIN: ${VITE_ENABLE_ADMIN:-false}
+        # M52-01: publishable by definition (inlined into the public bundle).
+        # Empty means the visitor session reports unavailable/not_configured.
+        # External prerequisite: Anonymous Auth must be enabled on the hosted
+        # Supabase project; this repository cannot perform or verify that.
+        VITE_SUPABASE_URL: ${VITE_SUPABASE_URL:-}
+        VITE_SUPABASE_PUBLISHABLE_KEY: ${VITE_SUPABASE_PUBLISHABLE_KEY:-}
     expose:
       - "80"
     security_opt:

@@ -723,7 +723,7 @@ The private administrative surface includes Dashboard, Dataset Admin, Settings, 
 
 The private administrative surface must not be exposed directly to the public internet.
 
-For the first version, operator access to that surface is provided by the private runtime and network boundary, such as the local/private stack or an SSH tunnel. Admin screens must not require a visible shared-token field, and any backend defense-in-depth must remain infrastructure/runtime behavior rather than a public login or multi-user authentication model.
+Admin access is governed by two independent gates. The first is the private runtime mode (`ATLAS_ADMIN_ENABLED`) together with the private network boundary, such as the local/private stack or an SSH tunnel; the public deployment keeps this disabled and returns 404 for Admin paths. The second is an exact operator identity: the backend verifies a Supabase-issued session token against trusted, backend-only configuration and admits only the single provisioned operator, failing closed when that configuration is absent. The private web build receives only the two publishable Supabase values; trusted verification settings and provisioning credentials never reach the web bundle, Settings, or committed files. Admin screens still expose no visible shared-token field, and this remains a single-operator boundary rather than a multi-user or role-management model. Operator provisioning, rotation, and recovery are described in [admin-operator-provisioning](operations/admin-operator-provisioning.md).
 
 ### Public Runtime API vs Private Admin API
 

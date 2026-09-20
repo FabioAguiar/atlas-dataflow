@@ -99,6 +99,8 @@ O perfil editorial pode alterar título, texto, tema, card, documentação e apr
 
 `api/` serve endpoints públicos para catálogo, Dataset Detail, contrato, métricas, contexto, model card, visualizações, views e inferência. Também expõe operações administrativas somente quando `ATLAS_ADMIN_ENABLED=true`.
 
+Duas camadas de identidade ficam acima do runtime. A inferência pública chega por uma Supabase Edge Function (`inference-gateway`), que verifica o JWT de Anonymous Auth do visitante, reserva uma cota por sujeito e dataset (429 antes de chegar ao Atlas) e encaminha ao Atlas com uma credencial de gateway compartilhada; leituras públicas de Home e Dataset Detail vão direto à API. As operações administrativas exigem o modo runtime privado e a identidade exata do operador, verificada pelo backend a partir de um token de sessão Supabase. As proteções de contenção do runtime (limite de payload, limitador de concorrência, hardening) permanecem abaixo do gateway. Detalhes operacionais: `docs/operations/inference-gateway-operations.md` e `docs/operations/admin-operator-provisioning.md`.
+
 O processo principal da API é o runtime de inferência canônico. `runtime/inference.py` é o boundary governado de carregamento e execução, e `api/` resolve release, manifest, bundle e contrato antes de delegar a ele — não há um segundo serviço de inferência nem um cliente HTTP interno. O pacote de release é o boundary de ownership do modelo. Um modelo ou runtime incompatível é bloqueado/reconciliado no gate, nunca despachado para um serviço alternativo.
 
 ### 3.7 Frontend
@@ -179,7 +181,7 @@ O Dataset Detail possui `Overview`, `Inference` e `Documentation` quando a relea
 
 `docker-compose.prod.yml` desabilita admin no backend e no build web. O stack expõe serviços apenas para composição com uma camada de proxy/rede externa. HTTPS, domínio público e certificados válidos devem ser fornecidos pelo ambiente de deployment; o `Caddyfile` versionado usa TLS interno e não representa uma configuração pronta para internet.
 
-Não existe login público no admin. Portanto, habilitar o admin e expô-lo diretamente à internet é uma configuração inválida para a primeira versão.
+Não existe login público no admin; o acesso privado exige a identidade do operador provisionado (sessão Supabase verificada pelo backend). Portanto, habilitar o admin e expô-lo diretamente à internet é uma configuração inválida para a primeira versão.
 
 ## 8. Organização de `.py` e `.json`
 

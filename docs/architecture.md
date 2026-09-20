@@ -364,8 +364,8 @@ weakening either route's own access-resolution ordering. Increasing the
 Uvicorn worker count would multiply effective process-local capacity beyond
 this approved baseline and is not authorized by this issue. This local
 capacity control is deliberately narrow: it is not the visitor
-identity/rate-limiting/quota policy reserved for a later gateway layer, and it
-now composes with the Issue M50-06 application execution deadline. Baseline
+identity/rate-limiting/quota policy, which the Supabase Edge Function gateway
+now owns above this layer, and it now composes with the Issue M50-06 application execution deadline. Baseline
 measurement against the real active `dry-bean` release recorded 2.058041s for
 the first cold-load governed inference and 0.041286s for the immediately
 cached/warm inference. `_INFERENCE_EXECUTION_DEADLINE_SECONDS` is therefore

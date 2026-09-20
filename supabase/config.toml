@@ -1,0 +1,9 @@
+# M52-04: minimal Supabase CLI configuration for the inference gateway.
+project_id = "atlas-dataflow"
+
+[functions.inference-gateway]
+# The gateway verifies the visitor JWT inside the function (JWKS, issuer,
+# audience, algorithm allowlist and an explicit is_anonymous === true check).
+# Platform-level verification is disabled on purpose: it does not enforce
+# is_anonymous and depends on the project's signing-key mode.
+verify_jwt = false

@@ -43,6 +43,29 @@ _S0109_VALID_BINARY_RESULT = {
     "model_descriptor": {"model_family": "gradient_boosting", "display_name": "Gradient Boosting"},
 }
 
+_S0109_BINARY_RUNTIME_DECLARATION = {
+    "artifacts": [],
+    "runtime_execution": {"execution_strategy": "in_process"},
+    "output_schema": {"class_labels": ["No", "Yes"]},
+    "result_semantics": {
+        "schema_version": "binary-result-semantics.v1",
+        "problem_type": "binary_classification",
+        "result_schema_version": "binary-classification-result.v1",
+        "primary_output": "positive_class_probability",
+        "positive_class": {"class_id": "Yes", "event_label": "Churn"},
+        "decision": {"threshold": 0.5},
+        "interpretation": {
+            "preset": "risk",
+            "bands": [
+                {"band_id": "low", "lower_bound": 0.0, "upper_bound": 0.35},
+                {"band_id": "medium", "lower_bound": 0.35, "upper_bound": 0.65},
+                {"band_id": "high", "lower_bound": 0.65, "upper_bound": 1.0},
+            ],
+        },
+        "model_descriptor": {"model_family": "gradient_boosting", "display_name": "Gradient Boosting"},
+    },
+}
+
 _REAL_REGISTRY_PATH = REPO_ROOT / "registry" / "datasets.json"
 
 _FIXTURE_DATASET_SLUG = "fixture-public-dataset"
@@ -372,6 +395,16 @@ def test_public_inference_success_shape_matches_binary_result_contract_for_brows
             ],
         }
         api_main.execute_prediction = lambda *_args, **_kwargs: {"result": _S0109_VALID_BINARY_RESULT}
+        # M50-M52: the governed route acquires a runtime adapter and projects
+        # the result contract from its declaration before execute_prediction
+        # is reached; an empty-artifact manifest cannot supply a bundle, so
+        # seam the adapter (restored by monkeypatch) and keep the real
+        # project_result_contract/_resolve_runtime_dispatch/result validation.
+        monkeypatch.setattr(
+            api_main,
+            "get_cached_runtime_bundle_adapter",
+            lambda *_args, **_kwargs: SimpleNamespace(declaration=_S0109_BINARY_RUNTIME_DECLARATION),
+        )
 
         with tempfile.TemporaryDirectory() as releases_root:
             release_dir = Path(releases_root) / "release-m27-05-success-fixture"

@@ -4057,6 +4057,13 @@ def test_public_contract_endpoint_loads_promoted_contract_distinct_from_runtime_
                     "status": "unavailable",
                     "reason": "binary_result_semantics_unavailable",
                 },
+                # Project Spec S0284: /contract also carries the reduced
+                # target projection; with the result contract unavailable it
+                # deterministically fails closed to prediction_target_unavailable.
+                "target_contract": {
+                    "status": "unavailable",
+                    "reason": "prediction_target_unavailable",
+                },
             }
         finally:
             api_main.resolve_dataset = original_resolve_dataset

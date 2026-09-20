@@ -18,13 +18,13 @@
     "github_role": "publication_target_or_human_reference"
   },
   "current_milestone": {
-    "id": "M52",
-    "title": "Governed Public Inference Gateway and Usage Control",
+    "id": "M53",
+    "title": "Security Validation and Public Readiness",
     "status": "active"
   },
   "last_completed_milestone": {
-    "id": "M51",
-    "title": "Supabase Identity and Private Admin Security",
+    "id": "M52",
+    "title": "Governed Public Inference Gateway and Usage Control",
     "status": "completed"
   },
   "completed_milestones": [
@@ -282,6 +282,11 @@
       "id": "M51",
       "title": "Supabase Identity and Private Admin Security",
       "status": "completed"
+    },
+    {
+      "id": "M52",
+      "title": "Governed Public Inference Gateway and Usage Control",
+      "status": "completed"
     }
   ],
   "locked_completed_milestones": [
@@ -538,6 +543,11 @@
     {
       "id": "M51",
       "title": "Supabase Identity and Private Admin Security",
+      "status": "locked"
+    },
+    {
+      "id": "M52",
+      "title": "Governed Public Inference Gateway and Usage Control",
       "status": "locked"
     }
   ],
@@ -824,12 +834,18 @@
     {
       "id": "M52",
       "title": "Governed Public Inference Gateway and Usage Control",
+      "status": "completed"
+    },
+    {
+      "id": "M53",
+      "title": "Security Validation and Public Readiness",
       "status": "active"
     }
   ],
   "notes": [
     "This file records operational milestone state only.",
-    "M52 is the current active milestone for Governed Public Inference Gateway and Usage Control in Atlas DataFlow.",
+    "M53 is the current active milestone for Security Validation and Public Readiness in Atlas DataFlow.",
+    "M52 is marked as completed because Governed Public Inference Gateway and Usage Control has been completed.",
     "M51 is marked as completed because Supabase Identity and Private Admin Security has been completed.",
     "M50 is marked as completed because Public Runtime Containment and Delivery Correctness has been completed.",
     "M49 is marked as completed because First-Version Release Readiness and Evidence Gate has been completed.",
@@ -887,9 +903,9 @@
     "docs/architecture.md defines the implementation documentation strategy; this file only records milestone state.",
     "Issues, handoffs, workflows, and scripts may use this state as input for validation, but must not infer authorization to implement from this file alone.",
     "This file should remain in the atlas-dataflow repository at docs/project-status/milestone-state.json.",
-    "M1, M2, M3, M4, M5, M6, M7, M8, M9, M10, M11, M12, M13, M14, M15, M16, M17, M18, M19, M20, M21, M22, M23, M24, M25, M26, M27, M28, M29, M30, M31, M32, M33, M34, M35, M36, M37, M38, M39, M40, M41, M42, M43, M44, M45, M46, M47, M48, M49, M50, M51 are locked as completed milestones and must not be reopened without an explicit reopen record.",
-    "M52 should be validated against docs/milestones.md before workflow continuation.",
-    "The current milestone points to M52 because the next implementation focus is Governed Public Inference Gateway and Usage Control."
+    "M1, M2, M3, M4, M5, M6, M7, M8, M9, M10, M11, M12, M13, M14, M15, M16, M17, M18, M19, M20, M21, M22, M23, M24, M25, M26, M27, M28, M29, M30, M31, M32, M33, M34, M35, M36, M37, M38, M39, M40, M41, M42, M43, M44, M45, M46, M47, M48, M49, M50, M51, M52 are locked as completed milestones and must not be reopened without an explicit reopen record.",
+    "M53 should be validated against docs/milestones.md before workflow continuation.",
+    "The current milestone points to M53 because the next implementation focus is Security Validation and Public Readiness."
   ],
   "documentation_boundary": {
     "vision_document": "docs/vision.md",

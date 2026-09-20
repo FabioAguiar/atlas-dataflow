@@ -45,8 +45,9 @@ services:
         VITE_ENABLE_ADMIN: ${VITE_ENABLE_ADMIN:-false}
         # M52-01: publishable by definition (inlined into the public bundle).
         # Empty means the visitor session reports unavailable/not_configured.
-        # External prerequisite: Anonymous Auth must be enabled on the hosted
-        # Supabase project; this repository cannot perform or verify that.
+        # External prerequisite: Anonymous Auth must be enabled on this
+        # environment's Atlas-specific Supabase project/stack; this repository
+        # cannot perform or verify that.
         VITE_SUPABASE_URL: ${VITE_SUPABASE_URL:-}
         VITE_SUPABASE_PUBLISHABLE_KEY: ${VITE_SUPABASE_PUBLISHABLE_KEY:-}
     expose:

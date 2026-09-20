@@ -3,7 +3,13 @@
 // stripping) and `deno test`. No network, database or clock is used.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { handleRequest, MAX_BODY_BYTES, UPSTREAM_TIMEOUT_MS } from "./handler.ts";
+import {
+  handleRequest,
+  isPrivateHttpHost,
+  MAX_BODY_BYTES,
+  resolveVerifierConfig,
+  UPSTREAM_TIMEOUT_MS,
+} from "./handler.ts";
 import type { GatewayConfig, GatewayDeps } from "./handler.ts";
 
 const ORIGIN = "https://atlas.example.test";
@@ -560,4 +566,92 @@ test("gateway error bodies are fixed generic text without secrets, tokens or ups
   assert.deepEqual(JSON.parse(text), {
     error: { code: "GATEWAY_RESERVATION_UNAVAILABLE", message: "Service temporarily unavailable." },
   });
+});
+
+test("private http is rejected by default and by any value other than exactly true", async () => {
+  for (const allow of [undefined, null, "", "false", "1", "yes", "truee"]) {
+    const h = harness({ config: { atlasBaseUrl: "http://atlas-dataflow-dev-api:8000", allowPrivateHttp: allow } });
+    assert.equal((await handleRequest(post("valid-anonymous"), h.deps)).status, 503, String(allow));
+    assert.deepEqual(h.calls, []);
+  }
+});
+
+test("private-http opt-in accepts service names, RFC1918, ULA and loopback and forwards to the service root", async () => {
+  const targets = [
+    "http://atlas-dataflow-dev-api:8000",
+    "http://10.0.0.25:8000",
+    "http://172.18.0.5:8000",
+    "http://192.168.1.30:8000/",
+    "http://127.0.0.1:8000",
+    "http://[fd12:3456::5]:8000",
+  ];
+  for (const target of targets) {
+    const h = harness({ config: { atlasBaseUrl: target, allowPrivateHttp: " True " } });
+    assert.equal((await handleRequest(post("valid-anonymous"), h.deps)).status, 200, target);
+    assert.equal(h.forwarded[0].url, `${new URL(target).origin}/datasets/${SLUG}/inference`);
+    assert.equal(h.forwarded[0].init.redirect, "manual");
+    assert.equal(
+      (h.forwarded[0].init.headers as Headers).get("x-atlas-gateway-token"),
+      ATLAS_TOKEN,
+    );
+  }
+});
+
+test("private-http opt-in still rejects public-looking hosts, credentials, query and fragment", async () => {
+  const targets = [
+    "http://example.com",
+    "http://atlas.example.internal:8000",
+    "http://8.8.8.8:8000",
+    "http://172.32.0.1:8000",
+    "http://172.15.0.1:8000",
+    "http://user:pass@atlas-dataflow-dev-api:8000",
+    "http://atlas-dataflow-dev-api:8000?x=1",
+    "http://atlas-dataflow-dev-api:8000#frag",
+    "http://[2001:db8::1]:8000",
+    "ftp://atlas-dataflow-dev-api",
+  ];
+  for (const target of targets) {
+    const h = harness({ config: { atlasBaseUrl: target, allowPrivateHttp: "true" } });
+    assert.equal((await handleRequest(post("valid-anonymous"), h.deps)).status, 503, target);
+    assert.deepEqual(h.calls, [], target);
+  }
+});
+
+test("https base URL behaviour is unchanged with the opt-in enabled", async () => {
+  const h = harness({ config: { allowPrivateHttp: "true" } });
+  assert.equal((await handleRequest(post("valid-anonymous"), h.deps)).status, 200);
+  assert.equal(h.forwarded[0].url, `${BASE_URL}/datasets/${SLUG}/inference`);
+});
+
+test("isPrivateHttpHost classifies the closed private host class", () => {
+  for (const ok of ["localhost", "127.0.0.1", "[::1]", "10.1.2.3", "172.16.0.1", "172.31.255.1", "192.168.0.1", "[fc00::1]", "[fd00::1]", "api", "atlas-dataflow-dev-api"]) {
+    assert.equal(isPrivateHttpHost(ok), true, ok);
+  }
+  for (const bad of ["example.com", "a.b", "8.8.8.8", "172.32.0.1", "192.169.0.1", "[2001:db8::1]", "[fe80::1]", "-bad", "bad-"]) {
+    assert.equal(isPrivateHttpHost(bad), false, bad);
+  }
+});
+
+test("verifier config: hosted default derives issuer and JWKS from SUPABASE_URL", () => {
+  assert.deepEqual(resolveVerifierConfig({ supabaseUrl: "https://proj.supabase.co/" }), {
+    issuer: "https://proj.supabase.co/auth/v1",
+    jwksUrl: "https://proj.supabase.co/auth/v1/.well-known/jwks.json",
+  });
+  assert.equal(resolveVerifierConfig({ supabaseUrl: "" }), null);
+});
+
+test("verifier config: external issuer and JWKS URL are independent of the internal SUPABASE_URL", () => {
+  const cfg = resolveVerifierConfig({
+    supabaseUrl: "http://kong:8000",
+    issuerOverride: " http://localhost:18000/auth/v1 ",
+    jwksUrlOverride: "http://kong:8000/auth/v1/.well-known/jwks.json",
+  });
+  assert.deepEqual(cfg, {
+    issuer: "http://localhost:18000/auth/v1",
+    jwksUrl: "http://kong:8000/auth/v1/.well-known/jwks.json",
+  });
+  const issuerOnly = resolveVerifierConfig({ supabaseUrl: "http://kong:8000", issuerOverride: "http://localhost:18000/auth/v1" });
+  assert.equal(issuerOnly?.jwksUrl, "http://kong:8000/auth/v1/.well-known/jwks.json");
+  assert.equal(resolveVerifierConfig({ supabaseUrl: "http://kong:8000", jwksUrlOverride: "not a url" }), null);
+  assert.equal(resolveVerifierConfig({ supabaseUrl: "http://kong:8000", jwksUrlOverride: "http://u:p@kong:8000/j" }), null);
 });

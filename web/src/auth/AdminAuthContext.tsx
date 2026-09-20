@@ -50,11 +50,7 @@ function readSupabaseConfig(): SupabaseConfig | null {
   return { publishableKey, url };
 }
 
-function constructClient(): SupabaseClient | null {
-  const config = readSupabaseConfig();
-  if (!config) {
-    return null;
-  }
+function constructClient(config: SupabaseConfig): SupabaseClient | null {
   try {
     return createClient(config.url, config.publishableKey, {
       auth: { autoRefreshToken: true, detectSessionInUrl: false, persistSession: true },
@@ -64,13 +60,55 @@ function constructClient(): SupabaseClient | null {
   }
 }
 
+// One logical Admin client per provider lifecycle. React StrictMode invokes
+// state initializers (and effects) twice; without sharing, that would build two
+// clients that each own a token-refresh timer and storage listener. The shared
+// slot is keyed by config, retained by mounted providers, and released one
+// microtask after the last provider unmounts (StrictMode's synchronous
+// unmount/remount therefore keeps the same client). It lives only inside this
+// lazily imported module, so it never enters the public build and is unrelated
+// to the visitor session client.
+let sharedClient: { client: SupabaseClient; key: string } | null = null;
+let clientHolders = 0;
+
+function acquireClient(): SupabaseClient | null {
+  const config = readSupabaseConfig();
+  if (!config) {
+    return null;
+  }
+  const key = `${config.url}\n${config.publishableKey}`;
+  if (sharedClient && sharedClient.key === key) {
+    return sharedClient.client;
+  }
+  // A failed construction is not shared, so a later mount can retry.
+  const client = constructClient(config);
+  sharedClient = client ? { client, key } : null;
+  return client;
+}
+
+function retainClient(): () => void {
+  clientHolders += 1;
+  return () => {
+    clientHolders -= 1;
+    if (clientHolders === 0) {
+      queueMicrotask(() => {
+        if (clientHolders === 0) {
+          sharedClient = null;
+        }
+      });
+    }
+  };
+}
+
 const AdminAuthContext = createContext<AdminAuthContextValue | null>(null);
 
 export function AdminAuthProvider({ children }: { children: ReactNode }) {
-  const [client] = useState<SupabaseClient | null>(constructClient);
+  const [client] = useState<SupabaseClient | null>(acquireClient);
   const [status, setStatus] = useState<AdminAuthStatus>(client ? "loading" : "unrecoverable");
   // Live, in-memory projection of the signed-in user; never persisted or logged.
   const [email, setEmail] = useState<string | null>(null);
+
+  useEffect(() => (client ? retainClient() : undefined), [client]);
 
   useEffect(() => {
     if (!client) {

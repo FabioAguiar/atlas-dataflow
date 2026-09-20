@@ -16,18 +16,29 @@ time, so callers -- including tests -- can change ``os.environ`` freely):
 
 - ``ATLAS_SUPABASE_JWT_ISSUER``   -- expected ``iss`` claim.
 - ``ATLAS_SUPABASE_JWT_AUDIENCE`` -- expected ``aud`` claim.
-- ``ATLAS_SUPABASE_JWKS_URL``     -- https-only public JWKS endpoint.
+- ``ATLAS_SUPABASE_JWKS_URL``     -- JWKS key-fetch transport address. https
+  only, unless ``ATLAS_SUPABASE_JWKS_ALLOW_PRIVATE_HTTP`` is exactly ``true``,
+  which additionally permits plain http to a closed private host class
+  (loopback, RFC1918 IPv4, IPv6 ULA/loopback, dotless single-label service
+  names). It is independent of the issuer: in a self-hosted stack the
+  browser-visible issuer and the container-private JWKS address differ.
+  Redirects are never followed.
+- ``ATLAS_SUPABASE_JWKS_ALLOW_PRIVATE_HTTP`` -- optional, default off.
 - ``ATLAS_ADMIN_USER_ID``         -- the provisioned operator's Supabase
   user id; the only ``sub`` value that can ever be authorized.
 """
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
+import re
 import threading
 import time
+import urllib.error
 import urllib.request
+from urllib.parse import urlsplit
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
@@ -39,7 +50,16 @@ _REQUIRED_CLAIMS = ("exp", "iss", "aud", "sub")
 _JWKS_TIMEOUT_SECONDS = 3.0
 _JWKS_TTL_SECONDS = 600.0
 _JWKS_UNKNOWN_KID_COOLDOWN_SECONDS = 60.0
+_JWKS_FAILED_REFRESH_COOLDOWN_SECONDS = 5.0
 _JWKS_MAX_RESPONSE_BYTES = 1_000_000
+
+_PRIVATE_HTTP_ENV = "ATLAS_SUPABASE_JWKS_ALLOW_PRIVATE_HTTP"
+_SINGLE_LABEL_PATTERN = re.compile(r"^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$")
+_PRIVATE_IPV4_NETWORKS = tuple(
+    ipaddress.ip_network(cidr)
+    for cidr in ("127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
+)
+_PRIVATE_IPV6_NETWORKS = (ipaddress.ip_network("::1/128"), ipaddress.ip_network("fc00::/7"))
 
 _CONFIG_VARS = (
     "ATLAS_SUPABASE_JWT_ISSUER",
@@ -67,6 +87,35 @@ class _AdminAuthConfig:
     admin_user_id: str
 
 
+def _private_http_allowed() -> bool:
+    return os.environ.get(_PRIVATE_HTTP_ENV, "").strip().lower() == "true"
+
+
+def _is_private_http_host(hostname: str) -> bool:
+    host = hostname.lower()
+    if host == "localhost":
+        return True
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return bool(_SINGLE_LABEL_PATTERN.match(host)) and not host.isdigit()
+    networks = _PRIVATE_IPV4_NETWORKS if address.version == 4 else _PRIVATE_IPV6_NETWORKS
+    return any(address in network for network in networks)
+
+
+def _jwks_url_allowed(jwks_url: str, allow_private_http: bool) -> bool:
+    try:
+        parts = urlsplit(jwks_url)
+        parts.port  # noqa: B018 -- raises ValueError for a malformed port
+    except ValueError:
+        return False
+    if not parts.hostname or "@" in parts.netloc or parts.query or parts.fragment:
+        return False
+    if parts.scheme == "https":
+        return True
+    return parts.scheme == "http" and allow_private_http and _is_private_http_host(parts.hostname)
+
+
 def _load_configuration() -> Optional[_AdminAuthConfig]:
     values: dict[str, str] = {}
     for name in _CONFIG_VARS:
@@ -79,7 +128,7 @@ def _load_configuration() -> Optional[_AdminAuthConfig]:
         values[name] = value
 
     jwks_url = values["ATLAS_SUPABASE_JWKS_URL"]
-    if not jwks_url.lower().startswith("https://"):
+    if not _jwks_url_allowed(jwks_url, _private_http_allowed()):
         return None
 
     return _AdminAuthConfig(
@@ -100,11 +149,20 @@ def _parse_bearer_token(authorization_header: Optional[str]) -> Optional[str]:
     return token or None
 
 
+class _RefuseRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args: Any, **kwargs: Any) -> None:
+        return None
+
+
+# A 3xx then surfaces as urllib.error.HTTPError, which fails the fetch closed.
+_JWKS_OPENER = urllib.request.build_opener(_RefuseRedirects)
+
+
 def _fetch_jwks_via_urllib(jwks_url: str) -> dict[str, Any]:
-    if not jwks_url.lower().startswith("https://"):
-        raise ValueError("jwks url must use https")
+    if not _jwks_url_allowed(jwks_url, _private_http_allowed()):
+        raise ValueError("jwks url must use https (or opted-in private http)")
     request = urllib.request.Request(jwks_url, headers={"Accept": "application/json"})
-    with urllib.request.urlopen(request, timeout=_JWKS_TIMEOUT_SECONDS) as response:
+    with _JWKS_OPENER.open(request, timeout=_JWKS_TIMEOUT_SECONDS) as response:
         raw = response.read(_JWKS_MAX_RESPONSE_BYTES + 1)
     if len(raw) > _JWKS_MAX_RESPONSE_BYTES:
         raise ValueError("jwks response exceeds size limit")
@@ -144,7 +202,11 @@ class AdminAuthVerifier:
         self._lock = threading.Lock()
         self._raw_keys: dict[str, Any] = {}
         self._fetched_at = 0.0
-        self._last_refresh_attempt_at = 0.0
+        # Independent throttles: a normal initial/TTL refresh must not consume
+        # the unknown-kid allowance, and a failed refresh only backs off
+        # further network I/O (it never authorizes with stale keys).
+        self._last_unknown_kid_refresh_at: Optional[float] = None
+        self._last_failed_refresh_at: Optional[float] = None
 
     def evaluate(self, authorization_header: Optional[str]) -> AdminAuthDecision:
         try:
@@ -220,11 +282,16 @@ class AdminAuthVerifier:
             now = self._clock()
             fresh = bool(self._raw_keys) and (now - self._fetched_at) < _JWKS_TTL_SECONDS
             if not fresh:
+                failed_at = self._last_failed_refresh_at
+                if failed_at is not None and (now - failed_at) < _JWKS_FAILED_REFRESH_COOLDOWN_SECONDS:
+                    return None
                 if not self._refresh(jwks_url, now):
                     return None
             elif kid not in self._raw_keys:
-                if (now - self._last_refresh_attempt_at) < _JWKS_UNKNOWN_KID_COOLDOWN_SECONDS:
+                last = self._last_unknown_kid_refresh_at
+                if last is not None and (now - last) < _JWKS_UNKNOWN_KID_COOLDOWN_SECONDS:
                     return None
+                self._last_unknown_kid_refresh_at = now
                 if not self._refresh(jwks_url, now):
                     return None
 
@@ -238,15 +305,16 @@ class AdminAuthVerifier:
             return None
 
     def _refresh(self, jwks_url: str, now: float) -> bool:
-        self._last_refresh_attempt_at = now
         try:
             keys = self._fetch_jwks(jwks_url)
         except Exception:
-            return False
+            keys = None
         if not keys:
+            self._last_failed_refresh_at = now
             return False
         self._raw_keys = keys
         self._fetched_at = now
+        self._last_failed_refresh_at = None
         return True
 
 

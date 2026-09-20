@@ -15,7 +15,12 @@ services:
       # backend then fails closed). See docs/operations/admin-operator-provisioning.md.
       ATLAS_SUPABASE_JWT_ISSUER: ${ATLAS_SUPABASE_JWT_ISSUER:-}
       ATLAS_SUPABASE_JWT_AUDIENCE: ${ATLAS_SUPABASE_JWT_AUDIENCE:-}
+      # JWKS key-fetch transport only (the issuer above is independent). https
+      # unless the explicit private-http opt-in below is exactly "true", which
+      # additionally admits loopback/RFC1918/ULA/single-label service hosts on
+      # the dedicated trusted Atlas/Supabase Docker network.
       ATLAS_SUPABASE_JWKS_URL: ${ATLAS_SUPABASE_JWKS_URL:-}
+      ATLAS_SUPABASE_JWKS_ALLOW_PRIVATE_HTTP: ${ATLAS_SUPABASE_JWKS_ALLOW_PRIVATE_HTTP:-false}
       ATLAS_ADMIN_USER_ID: ${ATLAS_ADMIN_USER_ID:-}
       # M52-02: dedicated backend-only shared credential for the public
       # inference route, distinct from every Supabase and Admin credential and

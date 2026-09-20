@@ -29,8 +29,13 @@ const BODYLESS_STATUSES = [204, 205, 304];
 export interface GatewayConfig {
   // Value of the ATLAS_GATEWAY_TOKEN function secret.
   atlasToken?: string | null;
-  // Value of ATLAS_GATEWAY_BASE_URL (includes the /api prefix).
+  // Value of ATLAS_GATEWAY_BASE_URL. Public https origin, or (with
+  // allowPrivateHttp) the FastAPI service root on the private Docker network.
   atlasBaseUrl?: string | null;
+  // Value of ATLAS_GATEWAY_ALLOW_PRIVATE_HTTP; only the exact value "true"
+  // (after trimming/lower-casing) enables plain http to a closed private host
+  // class. Anything else, including absence, preserves the https/loopback rule.
+  allowPrivateHttp?: string | null;
   // Comma-separated ATLAS_GATEWAY_ALLOWED_ORIGINS.
   allowedOrigins?: string | null;
   // False when SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY is missing.
@@ -105,6 +110,61 @@ function isLocalHost(hostname: string): boolean {
   return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]";
 }
 
+const IPV4_PATTERN = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
+const SINGLE_LABEL_PATTERN = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
+
+// Closed private host class for the explicit private-http opt-in: loopback,
+// RFC1918 IPv4 literals, IPv6 loopback/ULA literals and dotless single-label
+// service names. `hostname` is the WHATWG-normalized URL hostname, so odd
+// numeric spellings (e.g. "10.1") arrive as canonical dotted quads.
+export function isPrivateHttpHost(hostname: string): boolean {
+  const host = hostname.toLowerCase();
+  if (isLocalHost(host)) return true;
+  const v4 = IPV4_PATTERN.exec(host);
+  if (v4 !== null) {
+    const [a, b] = [Number(v4[1]), Number(v4[2])];
+    return (
+      a === 127 || a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168)
+    );
+  }
+  if (host.startsWith("[") && host.endsWith("]")) {
+    const inner = host.slice(1, -1);
+    return inner === "::1" || /^f[cd][0-9a-f]{2}:/.test(inner);
+  }
+  return SINGLE_LABEL_PATTERN.test(host) && !/^\d+$/.test(host);
+}
+
+export interface VerifierConfig {
+  issuer: string;
+  jwksUrl: string;
+}
+
+// Visitor-token verification identity. The expected issuer and the JWKS
+// transport address are external identity/config and are deliberately
+// independent of SUPABASE_URL (the internal service URL): in a self-hosted
+// stack the browser-visible issuer differs from the container-private URL.
+// Unset overrides keep the hosted behaviour derived from SUPABASE_URL.
+export function resolveVerifierConfig(env: {
+  supabaseUrl: string;
+  issuerOverride?: string | null;
+  jwksUrlOverride?: string | null;
+}): VerifierConfig | null {
+  const base = env.supabaseUrl.trim().replace(/\/+$/, "");
+  const issuerOverride = (env.issuerOverride ?? "").trim();
+  const jwksOverride = (env.jwksUrlOverride ?? "").trim();
+  const issuer = issuerOverride || (base ? `${base}/auth/v1` : "");
+  const jwksUrl = jwksOverride || (base ? `${base}/auth/v1/.well-known/jwks.json` : "");
+  if (!issuer || !jwksUrl) return null;
+  try {
+    const url = new URL(jwksUrl);
+    if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+    if (url.username || url.password || url.hash) return null;
+  } catch {
+    return null;
+  }
+  return { issuer, jwksUrl };
+}
+
 function isValidOrigin(value: string): boolean {
   try {
     const url = new URL(value);
@@ -133,9 +193,12 @@ function resolveConfig(config: GatewayConfig): ResolvedConfig | null {
   } catch {
     return null;
   }
+  const allowPrivate =
+    typeof config.allowPrivateHttp === "string" && config.allowPrivateHttp.trim().toLowerCase() === "true";
   const secure = base.protocol === "https:";
   const localPlain = base.protocol === "http:" && isLocalHost(base.hostname);
-  if (!secure && !localPlain) return null;
+  const privatePlain = base.protocol === "http:" && allowPrivate && isPrivateHttpHost(base.hostname);
+  if (!secure && !localPlain && !privatePlain) return null;
   if (base.username || base.password || base.search || base.hash) return null;
 
   return {

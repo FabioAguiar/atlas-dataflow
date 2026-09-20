@@ -1,7 +1,12 @@
 import base64
+import hashlib
+import hmac
+import http.server
 import json
 import sys
+import threading
 import time
+import urllib.error
 from pathlib import Path
 from typing import Any, Optional
 
@@ -31,6 +36,7 @@ _CONFIG_VARS = (
     "ATLAS_SUPABASE_JWKS_URL",
     "ATLAS_ADMIN_USER_ID",
 )
+_PRIVATE_HTTP_ENV = "ATLAS_SUPABASE_JWKS_ALLOW_PRIVATE_HTTP"
 
 _EC_PRIVATE_KEY = ec.generate_private_key(ec.SECP256R1())
 _EC_PUBLIC_JWK = ECAlgorithm.to_jwk(_EC_PRIVATE_KEY.public_key(), as_dict=True)
@@ -82,6 +88,19 @@ def _make_token(*, key, algorithm: str, kid: Optional[str], claims: dict) -> str
     if kid is not None:
         headers["kid"] = kid
     return jwt.encode(claims, key, algorithm=algorithm, headers=headers)
+
+
+def _b64url(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
+
+
+def _forge_hs256_token(claims: dict, secret: bytes, *, kid: str) -> str:
+    header = {"alg": "HS256", "typ": "JWT", "kid": kid}
+    signing_input = (
+        _b64url(json.dumps(header).encode()) + "." + _b64url(json.dumps(claims).encode())
+    )
+    signature = hmac.new(secret, signing_input.encode("ascii"), hashlib.sha256).digest()
+    return signing_input + "." + _b64url(signature)
 
 
 def _verifier_with_jwks(jwks: dict, clock_value: float = 0.0) -> admin_auth.AdminAuthVerifier:
@@ -206,6 +225,219 @@ def test_non_https_jwks_url_denies(monkeypatch):
     assert decision.authorized is False
 
 
+_PRIVATE_HTTP_URLS = (
+    "http://kong:8000/auth/v1/.well-known/jwks.json",
+    "http://atlas-supabase-dev-kong/jwks.json",
+    "http://10.0.0.5:8000/jwks.json",
+    "http://172.18.0.5:8000/jwks.json",
+    "http://192.168.1.30:8000/jwks.json",
+    "http://127.0.0.1:8000/jwks.json",
+    "http://localhost:8000/jwks.json",
+    "http://[::1]:8000/jwks.json",
+    "http://[fd12:3456::5]:8000/jwks.json",
+)
+_REJECTED_HTTP_URLS = (
+    "http://example.com/jwks.json",
+    "http://atlas.example.internal/jwks.json",
+    "http://8.8.8.8/jwks.json",
+    "http://172.32.0.1/jwks.json",
+    "http://169.254.169.254/jwks.json",
+    "http://[2001:db8::1]/jwks.json",
+    "http://user:pass@kong:8000/jwks.json",
+    "http://kong:8000/jwks.json?x=1",
+    "http://kong:8000/jwks.json#frag",
+    "http://kong:notaport/jwks.json",
+    "ftp://kong/jwks.json",
+    "http:///jwks.json",
+)
+
+
+def test_private_http_jwks_url_rejected_by_default(monkeypatch):
+    monkeypatch.delenv(_PRIVATE_HTTP_ENV, raising=False)
+    for url in _PRIVATE_HTTP_URLS:
+        _set_config(monkeypatch, ATLAS_SUPABASE_JWKS_URL=url)
+        assert admin_auth._load_configuration() is None, url
+    for value in ("", "false", "1", "yes"):
+        monkeypatch.setenv(_PRIVATE_HTTP_ENV, value)
+        _set_config(monkeypatch, ATLAS_SUPABASE_JWKS_URL=_PRIVATE_HTTP_URLS[0])
+        assert admin_auth._load_configuration() is None, value
+
+
+def test_private_http_opt_in_accepts_closed_private_host_class(monkeypatch):
+    monkeypatch.setenv(_PRIVATE_HTTP_ENV, "true")
+    for url in _PRIVATE_HTTP_URLS:
+        _set_config(monkeypatch, ATLAS_SUPABASE_JWKS_URL=url)
+        config = admin_auth._load_configuration()
+        assert config is not None and config.jwks_url == url, url
+
+
+def test_private_http_opt_in_rejects_public_and_malformed_urls(monkeypatch):
+    monkeypatch.setenv(_PRIVATE_HTTP_ENV, "true")
+    for url in _REJECTED_HTTP_URLS:
+        _set_config(monkeypatch, ATLAS_SUPABASE_JWKS_URL=url)
+        assert admin_auth._load_configuration() is None, url
+
+
+def test_https_jwks_url_accepted_with_and_without_opt_in(monkeypatch):
+    for value in (None, "true"):
+        if value is None:
+            monkeypatch.delenv(_PRIVATE_HTTP_ENV, raising=False)
+        else:
+            monkeypatch.setenv(_PRIVATE_HTTP_ENV, value)
+        _set_config(monkeypatch)
+        assert admin_auth._load_configuration() is not None
+    _set_config(monkeypatch, ATLAS_SUPABASE_JWKS_URL="https://u:p@example.com/jwks.json")
+    assert admin_auth._load_configuration() is None
+
+
+def test_issuer_is_independent_of_jwks_transport_host(monkeypatch):
+    monkeypatch.setenv(_PRIVATE_HTTP_ENV, "true")
+    _set_config(
+        monkeypatch,
+        ATLAS_SUPABASE_JWT_ISSUER="http://localhost:18000/auth/v1",
+        ATLAS_SUPABASE_JWKS_URL="http://kong:8000/auth/v1/.well-known/jwks.json",
+    )
+    urls = []
+
+    def fetch(url):
+        urls.append(url)
+        return {"test-ec-kid": _EC_PUBLIC_JWK}
+
+    verifier = admin_auth.AdminAuthVerifier(fetch_jwks=fetch, clock=lambda: 0.0)
+    good = _make_token(
+        key=_EC_PRIVATE_KEY, algorithm="ES256", kid="test-ec-kid",
+        claims=_valid_claims(iss="http://localhost:18000/auth/v1"),
+    )
+    assert verifier.evaluate(f"Bearer {good}").authorized is True
+    assert urls == ["http://kong:8000/auth/v1/.well-known/jwks.json"]
+    # The JWKS host is not accepted as an issuer.
+    bad = _make_token(
+        key=_EC_PRIVATE_KEY, algorithm="ES256", kid="test-ec-kid",
+        claims=_valid_claims(iss="http://kong:8000/auth/v1"),
+    )
+    assert verifier.evaluate(f"Bearer {bad}") == admin_auth.AdminAuthDecision(False, "issuer_mismatch")
+
+
+def test_fetch_jwks_via_urllib_refuses_private_http_without_opt_in(monkeypatch):
+    monkeypatch.delenv(_PRIVATE_HTTP_ENV, raising=False)
+    try:
+        admin_auth._fetch_jwks_via_urllib("http://127.0.0.1:1/jwks.json")
+        assert False, "expected ValueError"
+    except ValueError:
+        pass
+
+
+class _JwksServer:
+    def __init__(self, handler_cls):
+        self.server = http.server.HTTPServer(("127.0.0.1", 0), handler_cls)
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+
+    def __enter__(self):
+        self.thread.start()
+        return f"http://127.0.0.1:{self.server.server_address[1]}"
+
+    def __exit__(self, *args):
+        self.server.shutdown()
+        self.server.server_close()
+
+
+def _send_jwks(handler) -> None:
+    body = json.dumps({"keys": [_EC_PUBLIC_JWK]}).encode()
+    handler.send_response(200)
+    handler.send_header("Content-Length", str(len(body)))
+    handler.end_headers()
+    handler.wfile.write(body)
+
+
+def test_fetch_jwks_via_urllib_fetches_over_opted_in_private_http(monkeypatch):
+    monkeypatch.setenv(_PRIVATE_HTTP_ENV, "true")
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            _send_jwks(self)
+
+        def log_message(self, *args):
+            pass
+
+    with _JwksServer(Handler) as base:
+        assert set(admin_auth._fetch_jwks_via_urllib(f"{base}/jwks.json")) == {"test-ec-kid"}
+
+
+def test_fetch_jwks_via_urllib_refuses_redirects(monkeypatch):
+    monkeypatch.setenv(_PRIVATE_HTTP_ENV, "true")
+    hits = {"target": 0}
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            if self.path == "/target":
+                hits["target"] += 1
+                _send_jwks(self)
+            else:
+                self.send_response(302)
+                self.send_header("Location", "/target")
+                self.end_headers()
+
+        def log_message(self, *args):
+            pass
+
+    with _JwksServer(Handler) as base:
+        try:
+            admin_auth._fetch_jwks_via_urllib(f"{base}/jwks.json")
+            assert False, "expected the redirect to fail closed"
+        except urllib.error.HTTPError:
+            pass
+    assert hits["target"] == 0
+
+
+def test_cold_cache_fetch_does_not_consume_unknown_kid_refresh_allowance(monkeypatch):
+    _set_config(monkeypatch)
+    clock = _FakeClock(0.0)
+    fetcher = _FakeJWKSFetcher(responses={"test-ec-kid": _EC_PUBLIC_JWK})
+    verifier = admin_auth.AdminAuthVerifier(fetch_jwks=fetcher, clock=clock)
+    unknown = _make_token(key=_EC_PRIVATE_KEY, algorithm="ES256", kid="rotated-kid", claims=_valid_claims())
+    assert verifier.evaluate(f"Bearer {unknown}").authorized is False
+    assert fetcher.calls == 1  # cold-cache fetch
+    assert verifier.evaluate(f"Bearer {unknown}").authorized is False
+    assert fetcher.calls == 2  # the one immediate unknown-kid refresh
+    for _ in range(20):
+        verifier.evaluate(f"Bearer {unknown}")
+    assert fetcher.calls == 2  # bounded within the cooldown
+
+
+def test_unknown_kid_refresh_picks_up_rotated_key_immediately(monkeypatch):
+    _set_config(monkeypatch)
+    state = {"jwks": {"test-ec-kid": _EC_PUBLIC_JWK}}
+    verifier = admin_auth.AdminAuthVerifier(fetch_jwks=lambda url: state["jwks"], clock=_FakeClock(0.0))
+    old = _make_token(key=_EC_PRIVATE_KEY, algorithm="ES256", kid="test-ec-kid", claims=_valid_claims())
+    assert verifier.evaluate(f"Bearer {old}").authorized is True
+    state["jwks"] = {"test-ec-kid": _EC_PUBLIC_JWK, "test-rsa-kid": _RSA_PUBLIC_JWK}
+    new = _make_token(key=_RSA_PRIVATE_KEY, algorithm="RS256", kid="test-rsa-kid", claims=_valid_claims())
+    assert verifier.evaluate(f"Bearer {new}").authorized is True
+
+
+def test_failed_refresh_backs_off_without_stale_authorization(monkeypatch):
+    _set_config(monkeypatch)
+    clock = _FakeClock(0.0)
+    calls = {"n": 0}
+
+    def fetch(_url):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return {"test-ec-kid": _EC_PUBLIC_JWK}
+        raise TimeoutError("jwks unreachable")
+
+    verifier = admin_auth.AdminAuthVerifier(fetch_jwks=fetch, clock=clock)
+    token = _make_token(key=_EC_PRIVATE_KEY, algorithm="ES256", kid="test-ec-kid", claims=_valid_claims())
+    assert verifier.evaluate(f"Bearer {token}").authorized is True
+    clock.advance(601.0)
+    for _ in range(5):
+        assert verifier.evaluate(f"Bearer {token}").authorized is False
+    assert calls["n"] == 2  # one failed attempt, the rest throttled
+    clock.advance(admin_auth._JWKS_FAILED_REFRESH_COOLDOWN_SECONDS)
+    assert verifier.evaluate(f"Bearer {token}").authorized is False
+    assert calls["n"] == 3
+
+
 # --- Header / token structural failures ----------------------------------
 
 
@@ -284,12 +516,9 @@ def test_hs256_signed_with_public_key_material_denies_algorithm_confusion(monkey
         encoding=serialization.Encoding.PEM,
         format=serialization.PublicFormat.SubjectPublicKeyInfo,
     )
-    token = jwt.encode(
-        _valid_claims(),
-        public_pem,
-        algorithm="HS256",
-        headers={"kid": "test-rsa-kid"},
-    )
+    # Hand-built: PyJWT >= 2.14 refuses PEM public material as an HMAC secret,
+    # so the malicious HS256-shaped token is assembled without PyJWT.
+    token = _forge_hs256_token(_valid_claims(), public_pem, kid="test-rsa-kid")
     fetcher = _FakeJWKSFetcher(responses={"test-rsa-kid": _RSA_PUBLIC_JWK})
     verifier = admin_auth.AdminAuthVerifier(fetch_jwks=fetcher, clock=lambda: 0.0)
     decision = verifier.evaluate(f"Bearer {token}")
@@ -393,7 +622,7 @@ def test_fetch_jwks_via_urllib_raises_on_non_json_response(monkeypatch):
         def read(self, _n):
             return b"not json"
 
-    monkeypatch.setattr(admin_auth.urllib.request, "urlopen", lambda *a, **k: _FakeResponse())
+    monkeypatch.setattr(admin_auth._JWKS_OPENER, "open", lambda *a, **k: _FakeResponse())
     try:
         admin_auth._fetch_jwks_via_urllib(_JWKS_URL)
         assert False, "expected an exception for non-JSON response"
@@ -412,7 +641,7 @@ def test_fetch_jwks_via_urllib_raises_when_keys_list_missing(monkeypatch):
         def read(self, _n):
             return json.dumps({"not_keys": []}).encode("utf-8")
 
-    monkeypatch.setattr(admin_auth.urllib.request, "urlopen", lambda *a, **k: _FakeResponse())
+    monkeypatch.setattr(admin_auth._JWKS_OPENER, "open", lambda *a, **k: _FakeResponse())
     try:
         admin_auth._fetch_jwks_via_urllib(_JWKS_URL)
         assert False, "expected ValueError for missing keys list"
@@ -433,7 +662,7 @@ def test_fetch_jwks_via_urllib_raises_when_response_oversized(monkeypatch):
         def read(self, n):
             return oversized[:n]
 
-    monkeypatch.setattr(admin_auth.urllib.request, "urlopen", lambda *a, **k: _FakeResponse())
+    monkeypatch.setattr(admin_auth._JWKS_OPENER, "open", lambda *a, **k: _FakeResponse())
     try:
         admin_auth._fetch_jwks_via_urllib(_JWKS_URL)
         assert False, "expected ValueError for oversized response"

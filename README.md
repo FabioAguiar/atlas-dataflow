@@ -172,6 +172,10 @@ O fluxo foi desenhado para a autoria curada dos estudos do portfólio. Upload p�
 
 Uma visão técnica mais detalhada e atual está em [`docs/current-architecture-overview.md`](docs/current-architecture-overview.md). A documentação normativa e histórica permanece em [`docs/architecture.md`](docs/architecture.md), [`docs/vision.md`](docs/vision.md) e [`docs/milestones.md`](docs/milestones.md).
 
+### Integração com Supabase
+
+Cada ambiente do Atlas usa um projeto/stack Supabase específico do Atlas (DEV com DEV, PROD com PROD), hospedado ou self-hosted. O Atlas mantém datasets, contratos, registry, releases, publisher, artefatos e execução de modelos; o Supabase cuida da identidade do Admin, da identidade anônima do visitante, da cota de inferência e do gateway. O frontend público contém apenas `VITE_SUPABASE_URL` e `VITE_SUPABASE_PUBLISHABLE_KEY`. A rede privada opcional entre Atlas e Supabase é descrita em `docker-compose.self-hosted-network.yml`, `docs/operations/inference-gateway-operations.md` e `docs/operations/admin-operator-provisioning.md`.
+
 ## Organização do repositório
 
 ```text

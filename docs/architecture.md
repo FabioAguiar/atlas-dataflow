@@ -580,6 +580,13 @@ Responsibilities:
 - hide internal paths and sensitive details;
 - return predictable errors.
 
+
+### Supabase Integration Boundary
+
+Atlas integrates with an Atlas-specific Supabase project/stack per environment (Atlas DEV with Supabase Atlas DEV, Atlas PROD with Supabase Atlas PROD); the stack may be hosted or self-hosted. Atlas owns datasets, contracts, registry, releases, the publisher, model artifacts, inference bundles, model execution and business rules. Supabase owns Admin identity issuance, anonymous visitor identity, inference quota state and the inference gateway. The shared boundaries are JWT/JWKS verification (asymmetric signing keys only, no HS256 fallback) and the dedicated Atlas gateway credential.
+
+The browser-visible Supabase values are `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY`; the public build never contains the `service_role` key, a Supabase secret key, JWT signing secrets, the gateway token or Admin backend secrets. Browser-visible addresses (for example SSH-forwarded `localhost` ports in DEV) differ from container-private ones: the Atlas API fetches JWKS from a private Supabase URL, and the Edge Function reaches the Atlas API through an environment-unique private alias at the FastAPI service root (no public `/api` prefix). The token issuer and the JWKS transport address are therefore configured independently on both sides. Plain-HTTP private hops are explicit opt-ins (`ATLAS_SUPABASE_JWKS_ALLOW_PRIVATE_HTTP`, `ATLAS_GATEWAY_ALLOW_PRIVATE_HTTP`), restricted to loopback, RFC1918, IPv6 ULA/loopback and single-label service hosts, and valid only on a dedicated trusted Docker network that only the Atlas API joins (`docker-compose.self-hosted-network.yml`). Operational detail lives in [inference-gateway-operations](operations/inference-gateway-operations.md) and [admin-operator-provisioning](operations/admin-operator-provisioning.md). CPU, memory and PID limits for the deployed runtime remain to be measured (M53); no values are defined here.
+
 ### Registry
 
 Responsibilities:

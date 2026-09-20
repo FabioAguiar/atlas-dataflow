@@ -106,7 +106,9 @@ def test_gateway_credential_header_and_atlas_path_shape():
 
 def test_verification_uses_jwks_and_service_role_reservation_only():
     index = _text(ENTRYPOINT)
-    assert "/auth/v1/.well-known/jwks.json" in index
+    # The hosted-default JWKS path now lives in handler.ts's resolveVerifierConfig.
+    assert "/auth/v1/.well-known/jwks.json" in _text(HANDLER)
+    assert "resolveVerifierConfig" in index and "createRemoteJWKSet" in index
     assert 'audience: "authenticated"' in index
     assert "algorithms:" in index
     assert '"reserve_inference_usage"' in index
@@ -202,3 +204,25 @@ def test_typescript_suite_passes_under_available_runtime():
         command, cwd=REPO_ROOT, capture_output=True, text=True, timeout=300
     )
     assert result.returncode == 0, (result.stdout + result.stderr)[-4000:]
+
+
+def test_gateway_private_http_and_verifier_config_are_documented_and_wired():
+    handler = (FUNCTION_DIR / "handler.ts").read_text(encoding="utf-8")
+    index = (FUNCTION_DIR / "index.ts").read_text(encoding="utf-8")
+    readme = (FUNCTION_DIR / "README.md").read_text(encoding="utf-8")
+    for name in (
+        "ATLAS_GATEWAY_ALLOW_PRIVATE_HTTP",
+        "ATLAS_SUPABASE_JWT_ISSUER",
+        "ATLAS_SUPABASE_JWKS_URL",
+    ):
+        assert name in readme, name
+    assert "ATLAS_GATEWAY_ALLOW_PRIVATE_HTTP" in index
+    assert "ATLAS_SUPABASE_JWT_ISSUER" in index and "ATLAS_SUPABASE_JWKS_URL" in index
+    # The service-role key never validates visitor tokens; no symmetric alg.
+    assert 'algorithms: ["ES256", "RS256", "EdDSA"]' in index
+    assert "HS256" not in index and "HS256" not in handler
+    # Issuer/JWKS no longer hard-derived from SUPABASE_URL inside index.ts.
+    assert "issuer: `${supabaseUrl}" not in index
+    assert "redirect: \"manual\"" in handler
+    # Old guidance that the private hop must carry the public /api prefix is gone.
+    assert "including the `/api` prefix** used by Caddy" not in readme

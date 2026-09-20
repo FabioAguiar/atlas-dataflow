@@ -1,0 +1,32 @@
+# Optional override: join the Atlas API (only) to the dedicated private Docker
+# network shared with this environment's Atlas-specific Supabase stack.
+#
+# Compose cannot express an optionally-external network safely inside the base
+# files, so the default local/production workflows stay untouched and this file
+# is layered on explicitly (Coolify/self-hosted deployments):
+#
+#   docker compose -f docker-compose.yml -f docker-compose.self-hosted-network.yml up
+#   docker compose -f docker-compose.prod.yml -f docker-compose.self-hosted-network.yml up
+#
+# Required variables (no defaults, so a mistake fails at `compose config`):
+#   ATLAS_SUPABASE_SHARED_NETWORK  name of the pre-existing external Docker
+#                                  network shared with the Supabase stack
+#   ATLAS_PRIVATE_API_ALIAS        environment-unique API alias on that network,
+#                                  e.g. atlas-dataflow-dev-api (never `api`)
+#
+# The network must be dedicated to and trusted by this Atlas/Supabase pair: the
+# gateway credential and JWKS fetches travel over plain HTTP on it. Only the API
+# joins it; web keeps the project default network. The API port is never
+# published to the host.
+services:
+  api:
+    networks:
+      default: {}
+      supabase_shared:
+        aliases:
+          - ${ATLAS_PRIVATE_API_ALIAS:?set an environment-unique alias such as atlas-dataflow-dev-api}
+
+networks:
+  supabase_shared:
+    external: true
+    name: ${ATLAS_SUPABASE_SHARED_NETWORK:?set the shared external Docker network name}

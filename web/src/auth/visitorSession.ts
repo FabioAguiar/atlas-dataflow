@@ -13,7 +13,7 @@
 // messages are never logged or persisted outside the Supabase client storage.
 //
 // External prerequisite (not verifiable from this repository): Anonymous Auth
-// must be enabled on the hosted Supabase project, otherwise sign-in fails and
+// must be enabled on the Atlas-specific Supabase project/stack, otherwise sign-in fails and
 // the accessor reports `unavailable` / `sign_in_failed`.
 
 import type { SupabaseClient } from "@supabase/supabase-js";

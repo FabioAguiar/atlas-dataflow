@@ -302,6 +302,15 @@ import runtime.inference as _runtime_inference_module  # noqa: E402
 from runtime.inference import BundleExecutionError, execute_prediction  # noqa: E402
 
 
+def _with_model_artifact_sha256(declaration: dict[str, Any], model_path: Path) -> dict[str, Any]:
+    bound = dict(declaration)
+    bound["model_artifact"] = {
+        **declaration["model_artifact"],
+        "sha256": _sha256(model_path.read_bytes()),
+    }
+    return bound
+
+
 class _FakeBinaryModel:
     def __init__(self, classes, predict_return, predict_proba_return):
         self.classes_ = classes
@@ -350,8 +359,12 @@ def _s0109_binary_declaration(
 
 def _s0109_execute(tmp_path: Path, declaration: dict[str, Any], model: _FakeBinaryModel):
     release_root = tmp_path / "release-s0109-edge"
-    _write_json(release_root / "predictions" / "bundle.json", declaration)
+    # The M50 gate verifies the model artifact digest before deserialization;
+    # bind the declaration to the fixture bytes so the intended downstream
+    # failure (not the integrity gate) is what these tests exercise.
     _write_json(release_root / "models" / "model.json", {"placeholder": True})
+    declaration = _with_model_artifact_sha256(declaration, release_root / "models" / "model.json")
+    _write_json(release_root / "predictions" / "bundle.json", declaration)
 
     def _load_declaration(path: Path) -> dict[str, Any]:
         return json.loads(path.read_text(encoding="utf-8"))
@@ -932,8 +945,12 @@ def _s0210_multiclass_declaration(
 
 def _s0210_execute(tmp_path: Path, declaration: dict[str, Any], model: _FakeMulticlassModel):
     release_root = tmp_path / "release-s0210-edge"
-    _write_json(release_root / "predictions" / "bundle.json", declaration)
+    # The M50 gate verifies the model artifact digest before deserialization;
+    # bind the declaration to the fixture bytes so the intended downstream
+    # failure (not the integrity gate) is what these tests exercise.
     _write_json(release_root / "models" / "model.json", {"placeholder": True})
+    declaration = _with_model_artifact_sha256(declaration, release_root / "models" / "model.json")
+    _write_json(release_root / "predictions" / "bundle.json", declaration)
 
     def _load_declaration(path: Path) -> dict[str, Any]:
         return json.loads(path.read_text(encoding="utf-8"))

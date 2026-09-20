@@ -544,6 +544,13 @@ def test_public_inference_historical_envelope_unaffected_by_forecasting_dispatch
         lambda _dataset_slug, _active_release: {"status": "current_release", "matches_active_release": True},
     )
     monkeypatch.setattr(api_main, "_inference_releases_root", lambda: releases_root)
+    # This test covers response-envelope compatibility, not model integrity:
+    # stub the M50 cached-adapter acquisition (the digest gate has its own tests).
+    monkeypatch.setattr(
+        api_main,
+        "get_cached_runtime_bundle_adapter",
+        lambda *_a, **_k: SimpleNamespace(declaration=_HISTORICAL_DECLARATIONS[variant]),
+    )
     monkeypatch.setattr(api_main, "execute_prediction", lambda *_a, **_k: {"result": _HISTORICAL_RESULTS[variant]})
 
     response = api_main.validate_dataset_inference_payload("fixture-historical-dataset", payload={"age": 41})

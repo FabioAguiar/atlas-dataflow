@@ -17,6 +17,11 @@ services:
       ATLAS_SUPABASE_JWT_AUDIENCE: ${ATLAS_SUPABASE_JWT_AUDIENCE:-}
       ATLAS_SUPABASE_JWKS_URL: ${ATLAS_SUPABASE_JWKS_URL:-}
       ATLAS_ADMIN_USER_ID: ${ATLAS_ADMIN_USER_ID:-}
+      # M52-02: dedicated backend-only shared credential for the public
+      # inference route, distinct from every Supabase and Admin credential and
+      # injected by trusted configuration. Empty makes the backend reject every
+      # public inference request. Never pass it to web/ or any VITE_ variable.
+      ATLAS_INFERENCE_GATEWAY_TOKEN: ${ATLAS_INFERENCE_GATEWAY_TOKEN:-}
       ADMIN_RUNS_ROOT: ${ADMIN_RUNS_ROOT:-/app/publisher/runs}
       ATLAS_MEDIA_ROOT: /app/media
     expose:

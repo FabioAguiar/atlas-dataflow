@@ -249,13 +249,20 @@ def test_payload_size_limit_preserves_valid_multi_chunk_body_once_and_in_order()
     assert reads == len(chunks)
 
 
-def test_payload_size_limit_rejects_before_real_route_json_parsing():
+def test_payload_size_limit_rejects_before_real_route_json_parsing(monkeypatch):
+    # M52-02: the public inference route requires the shared gateway
+    # credential first; an authenticated caller still gets the size limiter.
+    monkeypatch.setenv("ATLAS_INFERENCE_GATEWAY_TOKEN", "test-gateway-placeholder")
     limit = api_main._PAYLOAD_SIZE_LIMIT
     status, body, reads = _run_asgi_request_chunks(
         api_main.app,
         "/datasets/oversized/inference",
         [b'{"padding":"', b"x" * limit, b'"}', b"unread"],
-        headers=[(b"content-type", b"application/json"), (b"content-length", b"1")],
+        headers=[
+            (b"content-type", b"application/json"),
+            (b"content-length", b"1"),
+            (b"x-atlas-gateway-token", b"test-gateway-placeholder"),
+        ],
     )
 
     assert status == 413

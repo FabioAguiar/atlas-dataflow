@@ -1,4 +1,5 @@
 import concurrent.futures
+import hmac
 import json
 import math
 import os
@@ -183,6 +184,17 @@ PUBLIC_PREDICTION_NOT_AVAILABLE = PublicError(
     error_type="public_prediction_not_available",
     error_code="PUBLIC_PREDICTION_NOT_AVAILABLE",
     message="Public prediction interaction is not available for this dataset.",
+)
+
+# M52-02: single, generic, payload-independent failure for the public inference
+# route when the dedicated shared gateway credential is missing, empty, wrong,
+# duplicated or not configured. It never names the header, the environment
+# variable or which condition failed.
+GATEWAY_UNAUTHORIZED = PublicError(
+    status_code=401,
+    error_type="unauthorized",
+    error_code="GATEWAY_UNAUTHORIZED",
+    message="The request could not be authorized.",
 )
 
 # Project Spec S0121: bounded per-resource error for the private authoring
@@ -666,8 +678,62 @@ class PayloadSizeLimitMiddleware:
             await send_payload_too_large()
 
 
+_GATEWAY_TOKEN_ENV = "ATLAS_INFERENCE_GATEWAY_TOKEN"
+_GATEWAY_TOKEN_HEADER = b"x-atlas-gateway-token"
+_PUBLIC_INFERENCE_PATH = re.compile(r"^/datasets/[^/]+/inference/?$")
+_GATEWAY_DUMMY_CREDENTIAL = b"\x00" * 32
+
+
+def _gateway_credential_accepted(scope) -> bool:
+    """Decide once, without revealing which condition failed.
+
+    The configured value is read at request time; absent or whitespace-only
+    means unset. Duplicate credential headers fail closed. A constant-time
+    compare always runs, against a fixed dummy when nothing is configured.
+    """
+    configured = os.environ.get(_GATEWAY_TOKEN_ENV, "").strip().encode("utf-8")
+    presented = [
+        value
+        for name, value in scope.get("headers", [])
+        if name.lower() == _GATEWAY_TOKEN_HEADER
+    ]
+    configured_present = bool(configured)
+    single_valued = len(presented) == 1
+    candidate = presented[0] if single_valued else _GATEWAY_DUMMY_CREDENTIAL
+    expected = configured if configured_present else _GATEWAY_DUMMY_CREDENTIAL
+    digest_equal = hmac.compare_digest(candidate, expected)
+    return configured_present and single_valued and digest_equal
+
+
+class InferenceGatewayCredentialMiddleware:
+    """M52-02: gate only POST /datasets/{slug}/inference on a shared credential.
+
+    Pure ASGI and body-agnostic: it never calls receive(), so nothing is parsed
+    or consumed before an authorized request reaches the size limiter and app.
+    Every other request (Admin routes, GET, OPTIONS, /health) passes untouched.
+    """
+
+    def __init__(self, app) -> None:
+        self.app = app
+
+    async def __call__(self, scope, receive, send) -> None:
+        if (
+            scope["type"] == "http"
+            and scope.get("method") == "POST"
+            and _PUBLIC_INFERENCE_PATH.match(scope.get("path", ""))
+            and not _gateway_credential_accepted(scope)
+        ):
+            response = public_error_response(GATEWAY_UNAUTHORIZED)
+            await response(scope, receive, send)
+            return
+        await self.app(scope, receive, send)
+
+
 app = FastAPI()
+# Starlette runs the last-added middleware outermost. Effective order:
+# CORS -> gateway credential gate -> payload size limit -> routing.
 app.add_middleware(PayloadSizeLimitMiddleware, max_size=_PAYLOAD_SIZE_LIMIT)
+app.add_middleware(InferenceGatewayCredentialMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[os.environ.get("CORS_ALLOWED_ORIGIN", "")],

@@ -1,4 +1,5 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
+import { getVisitorAccess } from "../../auth/visitorSession";
 import ResultCardShell from "../ResultCard/ResultCardShell";
 import BinaryClassificationResult from "../ResultCard/BinaryClassificationResult";
 import MulticlassClassificationResult from "../ResultCard/MulticlassClassificationResult";
@@ -254,8 +255,6 @@ type SubmissionState =
   | { status: "success"; data: ResultData }
   | { status: "error"; message: string };
 
-const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "";
-
 const ERROR_MESSAGES: Record<string, string> = {
   INVALID_PAYLOAD: "Some inputs are invalid. Please check your answers and try again.",
   INFERENCE_FAILURE: "The prediction service is temporarily unavailable. Please try again later.",
@@ -263,7 +262,33 @@ const ERROR_MESSAGES: Record<string, string> = {
   RELEASE_UNAVAILABLE: "A prediction is not currently available for this dataset.",
   REGISTRY_UNAVAILABLE: "The prediction service is temporarily unavailable. Please try again later.",
   CONTRACT_UNAVAILABLE: "The prediction service is temporarily unavailable. Please try again later.",
+  GATEWAY_IDENTITY_UNAVAILABLE: "We could not verify your session. Please reload the page and try again.",
+  GATEWAY_UNAVAILABLE: "The prediction service is temporarily unavailable. Please try again later.",
 };
+
+/**
+ * Project M52-05: reserved client-side codes for the gateway-routed public
+ * prediction path. Only fixed, Atlas-authored messages are ever shown for
+ * them -- never a gateway response body.
+ */
+const GATEWAY_QUOTA_EXCEEDED = "GATEWAY_QUOTA_EXCEEDED";
+const GATEWAY_IDENTITY_UNAVAILABLE = "GATEWAY_IDENTITY_UNAVAILABLE";
+const GATEWAY_UNAVAILABLE = "GATEWAY_UNAVAILABLE";
+
+function resolveQuotaMessage(retryAfterSeconds: number | undefined): string {
+  if (retryAfterSeconds === undefined) {
+    return "Prediction limit reached. Please try again later.";
+  }
+  if (retryAfterSeconds < 60) {
+    return `Prediction limit reached. Please try again in about ${retryAfterSeconds} ${
+      retryAfterSeconds === 1 ? "second" : "seconds"
+    }.`;
+  }
+  const minutes = Math.ceil(retryAfterSeconds / 60);
+  return `Prediction limit reached. Please try again in about ${minutes} ${
+    minutes === 1 ? "minute" : "minutes"
+  }.`;
+}
 
 const FALLBACK_ERROR = "Something went wrong. Please try again later.";
 
@@ -461,6 +486,8 @@ export type InferenceExecutionResult =
       errorCode?: string;
       validationIssues?: InferenceValidationIssue[];
       runtimeDiagnostic?: InferenceRuntimeDiagnostic;
+      /** Project M52-05: whole seconds from a valid gateway Retry-After only. */
+      retryAfterSeconds?: number;
     };
 
 /** Project Spec S0143: the historical scalar-feature payload shape, unchanged. */
@@ -498,19 +525,77 @@ export type InferenceExecutor = (
   payload: InferenceExecutorPayload,
 ) => Promise<InferenceExecutionResult>;
 
+// Project M52-05: the gateway URL is derived only from VITE_SUPABASE_URL
+// (read at call time). An empty base yields null and no request is made.
+function resolveGatewayUrl(slug: string): string | null {
+  const base = String(import.meta.env.VITE_SUPABASE_URL ?? "")
+    .trim()
+    .replace(/\/+$/, "");
+  if (!base) return null;
+  return `${base}/functions/v1/inference-gateway/${encodeURIComponent(slug)}`;
+}
+
+// Retry-After is accepted only as a base-10 integer in 1..600 (gateway
+// contract); anything else yields undefined so no timer is fabricated.
+function parseRetryAfterSeconds(value: string | null): number | undefined {
+  if (value === null || !/^\d+$/.test(value.trim())) return undefined;
+  const seconds = Number.parseInt(value.trim(), 10);
+  return seconds >= 1 && seconds <= 600 ? seconds : undefined;
+}
+
+async function readJsonBody(res: Response): Promise<Record<string, unknown> | undefined> {
+  try {
+    const parsed: unknown = await res.json();
+    return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 async function defaultExecuteInference(
   slug: string,
   payload: InferenceExecutorPayload,
 ): Promise<InferenceExecutionResult> {
   try {
-    const res = await fetch(`${apiBaseUrl}/datasets/${encodeURIComponent(slug)}/inference`, {
+    const url = resolveGatewayUrl(slug);
+    if (!url) {
+      return { ok: false, errorCode: GATEWAY_IDENTITY_UNAVAILABLE };
+    }
+    const access = await getVisitorAccess();
+    if (access.status !== "available") {
+      return { ok: false, errorCode: GATEWAY_IDENTITY_UNAVAILABLE };
+    }
+    const res = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${access.accessToken}`,
+      },
       body: JSON.stringify(payload),
     });
-    const body = (await res.json()) as { result?: unknown; error_code?: string; errors?: unknown };
+    const body = await readJsonBody(res);
     if (res.ok) {
       return { ok: true, result: body?.result };
+    }
+    const gatewayCode =
+      body?.error && typeof body.error === "object"
+        ? (body.error as { code?: unknown }).code
+        : undefined;
+    if (res.status === 429 || gatewayCode === GATEWAY_QUOTA_EXCEEDED) {
+      const retryAfterSeconds = parseRetryAfterSeconds(res.headers.get("Retry-After"));
+      return retryAfterSeconds === undefined
+        ? { ok: false, errorCode: GATEWAY_QUOTA_EXCEEDED }
+        : { ok: false, errorCode: GATEWAY_QUOTA_EXCEEDED, retryAfterSeconds };
+    }
+    if (res.status === 401 || gatewayCode === "GATEWAY_UNAUTHENTICATED") {
+      return { ok: false, errorCode: GATEWAY_IDENTITY_UNAVAILABLE };
+    }
+    if (typeof gatewayCode === "string" && gatewayCode.startsWith("GATEWAY_")) {
+      return { ok: false, errorCode: GATEWAY_UNAVAILABLE };
+    }
+    if (typeof body?.error_code !== "string" && !Array.isArray(body?.errors)) {
+      // Not an Atlas pass-through shape (e.g. a bare 502/503 or non-JSON body).
+      return { ok: false, errorCode: GATEWAY_UNAVAILABLE };
     }
     // Project Spec S0147: normalized for type consistency with the private
     // Admin executor -- the public InferenceForm rendering path never reads
@@ -518,7 +603,7 @@ async function defaultExecuteInference(
     // diagnostics merely because this executor now carries them.
     return {
       ok: false,
-      errorCode: body?.error_code,
+      errorCode: typeof body?.error_code === "string" ? body.error_code : undefined,
       validationIssues: normalizeInferenceValidationIssues(body?.errors),
     };
   } catch {
@@ -1031,7 +1116,10 @@ export default function InferenceForm({
     } else {
       setSubmission({
         status: "error",
-        message: resolveInvalidPayloadMessage(outcome.errorCode, outcome.validationIssues, contract),
+        message:
+          outcome.errorCode === GATEWAY_QUOTA_EXCEEDED
+            ? resolveQuotaMessage(outcome.retryAfterSeconds)
+            : resolveInvalidPayloadMessage(outcome.errorCode, outcome.validationIssues, contract),
       });
       if (outcome.errorCode === "INVALID_PAYLOAD") {
         const issues = resolveIssues(outcome.validationIssues);

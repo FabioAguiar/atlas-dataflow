@@ -1,6 +1,8 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import { getVisitorAccess } from "../../auth/visitorSession";
 
 import InferenceForm, {
   normalizeAdminInferenceGuidance,
@@ -19,16 +21,35 @@ import type {
   UnivariateForecastingResultPresentation,
 } from "../ResultCard/types";
 
+// Project M52-05: the public default executor goes through the gateway with
+// the visitor session; the session module is mocked with a non-secret
+// placeholder token and the gateway host is a placeholder.
+vi.mock("../../auth/visitorSession", () => ({
+  getVisitorAccess: vi.fn(),
+}));
+
+const GATEWAY_BASE = "https://gateway-host.example";
+const PLACEHOLDER_TOKEN = "placeholder-visitor-token";
+
 type MockResponse = {
   ok: boolean;
   status: number;
+  headers: { get: (name: string) => string | null };
   json: () => Promise<unknown>;
 };
 
-function jsonResponse(body: unknown, status = 200): MockResponse {
+function jsonResponse(
+  body: unknown,
+  status = 200,
+  headers: Record<string, string> = {},
+): MockResponse {
   return {
     ok: status >= 200 && status < 300,
     status,
+    headers: {
+      get: (name: string) =>
+        Object.entries(headers).find(([key]) => key.toLowerCase() === name.toLowerCase())?.[1] ?? null,
+    },
     json: async () => body,
   };
 }
@@ -115,9 +136,21 @@ const validResult = {
   model_descriptor: { model_family: "gradient_boosting", display_name: "Gradient Boosting" },
 };
 
+beforeEach(() => {
+  vi.stubEnv("VITE_SUPABASE_URL", GATEWAY_BASE);
+  vi.mocked(getVisitorAccess).mockResolvedValue({
+    accessToken: PLACEHOLDER_TOKEN,
+    isAnonymous: true,
+    status: "available",
+    subject: "placeholder-subject",
+  });
+});
+
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
+  vi.mocked(getVisitorAccess).mockReset();
 });
 
 describe("InferenceForm multiclass result dispatch (S0214)", () => {
@@ -453,6 +486,292 @@ describe("InferenceForm public execution (Project Spec S0112)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Submit" }));
 
     expect(await screen.findByText("Positive outcome")).toBeInTheDocument();
+  });
+});
+
+describe("InferenceForm gateway-routed public execution (Project M52-05)", () => {
+  function renderForm() {
+    return render(
+      <InferenceForm
+        contract={contract}
+        slug={slug}
+        resultContract={availableContract}
+        resultPresentation={presentation}
+      />,
+    );
+  }
+
+  it("posts to the derived gateway URL with only a bearer visitor token and no Atlas credential", async () => {
+    vi.stubEnv("VITE_SUPABASE_URL", ` ${GATEWAY_BASE}// `);
+    const fetchMock = vi.fn(async () => jsonResponse({ dataset_slug: slug, result: validResult }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderForm();
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+
+    expect(await screen.findByText("Likely to churn")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe(`${GATEWAY_BASE}/functions/v1/inference-gateway/${encodeURIComponent(slug)}`);
+    expect(init.method).toBe("POST");
+    expect(init.headers).toEqual({
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${PLACEHOLDER_TOKEN}`,
+    });
+    const headerNames = Object.keys(init.headers as Record<string, string>).map((name) => name.toLowerCase());
+    expect(headerNames).not.toContain("x-atlas-gateway-token");
+    expect(headerNames).not.toContain("apikey");
+  });
+
+  it("shows a retry time in seconds for a 429 with a valid Retry-After", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({ error: { code: "GATEWAY_QUOTA_EXCEEDED", message: "raw gateway text" } }, 429, {
+          "Retry-After": "30",
+        }),
+      ),
+    );
+    const events: InferenceLifecycleEvent[] = [];
+    render(
+      <InferenceForm
+        contract={contract}
+        slug={slug}
+        resultContract={availableContract}
+        resultPresentation={presentation}
+        onLifecycleEvent={(event) => events.push(event)}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Prediction limit reached. Please try again in about 30 seconds.");
+    expect(alert).not.toHaveTextContent("raw gateway text");
+    expect(screen.queryByText("Likely to churn")).not.toBeInTheDocument();
+    expect(events).toEqual([{ type: "started" }, { type: "execution_failed" }]);
+  });
+
+  it("rounds a Retry-After of a minute or more up to whole minutes", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({ error: { code: "GATEWAY_QUOTA_EXCEEDED" } }, 429, { "Retry-After": "90" }),
+      ),
+    );
+
+    renderForm();
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Prediction limit reached. Please try again in about 2 minutes.",
+    );
+  });
+
+  it.each([
+    ["absent", {}],
+    ["non-integer", { "Retry-After": "soon" }],
+    ["zero", { "Retry-After": "0" }],
+    ["out of range", { "Retry-After": "601" }],
+    ["fractional", { "Retry-After": "1.5" }],
+  ])("shows a generic quota message with no timer for a 429 with a %s Retry-After", async (_case, headers) => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse({ error: { code: "GATEWAY_QUOTA_EXCEEDED" } }, 429, headers)),
+    );
+
+    renderForm();
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/^Prediction limit reached\. Please try again later\.$/);
+  });
+
+  it("treats a 429 with a non-JSON body as quota exhaustion", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: false,
+        status: 429,
+        headers: { get: () => "12" },
+        json: async () => {
+          throw new SyntaxError("not json");
+        },
+      })),
+    );
+
+    renderForm();
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("about 12 seconds");
+  });
+
+  it("issues no request of any kind when the visitor identity is unavailable", async () => {
+    vi.mocked(getVisitorAccess).mockResolvedValue({ reason: "sign_in_failed", status: "unavailable" });
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderForm();
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "We could not verify your session. Please reload the page and try again.",
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("issues no request when the Supabase base URL is not configured", async () => {
+    vi.stubEnv("VITE_SUPABASE_URL", "  ");
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderForm();
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("We could not verify your session.");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("maps a gateway 401 to the identity message without retrying or calling the Atlas origin", async () => {
+    const fetchMock = vi.fn(async () =>
+      jsonResponse({ error: { code: "GATEWAY_UNAUTHENTICATED", message: "raw jwt detail" } }, 401),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderForm();
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("We could not verify your session.");
+    expect(alert).not.toHaveTextContent("raw jwt detail");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([400, 404, 405, 413, 502, 503, 504])(
+    "maps a gateway %s to the temporary-unavailable message without showing the gateway text",
+    async (status) => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => jsonResponse({ error: { code: "GATEWAY_UPSTREAM_FAILED", message: "raw upstream text" } }, status)),
+      );
+
+      renderForm();
+      fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+
+      const alert = await screen.findByRole("alert");
+      expect(alert).toHaveTextContent("The prediction service is temporarily unavailable. Please try again later.");
+      expect(alert).not.toHaveTextContent("raw upstream text");
+    },
+  );
+
+  it("maps a non-JSON bare gateway failure to the temporary-unavailable message", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: false,
+        status: 502,
+        headers: { get: () => null },
+        json: async () => {
+          throw new SyntaxError("not json");
+        },
+      })),
+    );
+
+    renderForm();
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "The prediction service is temporarily unavailable. Please try again later.",
+    );
+  });
+
+  it("passes an Atlas INVALID_PAYLOAD response through the gateway unchanged", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse(
+          { error_code: "INVALID_PAYLOAD", errors: [{ field: "tenure", violation: "domain_violation" }] },
+          422,
+        ),
+      ),
+    );
+    const events: InferenceLifecycleEvent[] = [];
+    render(
+      <InferenceForm
+        contract={contract}
+        slug={slug}
+        resultContract={availableContract}
+        resultPresentation={presentation}
+        onLifecycleEvent={(event) => events.push(event)}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Some inputs are invalid. Please check your answers and try again.",
+    );
+    expect(events[1]?.type).toBe("validation_failed");
+  });
+
+  it("falls back to the generic error state on a network failure", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      throw new TypeError("network down");
+    }));
+
+    renderForm();
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Something went wrong. Please try again later.");
+  });
+
+  it("never lets a gateway response for a previous identity overwrite the current identity's state", async () => {
+    let releaseSession: ((value: Awaited<ReturnType<typeof getVisitorAccess>>) => void) | null = null;
+    vi.mocked(getVisitorAccess).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          releaseSession = resolve;
+        }),
+    );
+    const fetchMock = vi.fn(async () => jsonResponse({ dataset_slug: slug, result: validResult }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { rerender } = render(
+      <InferenceForm
+        contract={contract}
+        slug={slug}
+        resultContract={availableContract}
+        resultPresentation={presentation}
+        initialResultProbability={0}
+        resetKey="dataset-a::view-1"
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+    await screen.findByRole("button", { name: "Submitting…" });
+
+    rerender(
+      <InferenceForm
+        contract={contract}
+        slug={slug}
+        resultContract={availableContract}
+        resultPresentation={presentation}
+        initialResultProbability={0}
+        resetKey="dataset-b::view-1"
+      />,
+    );
+
+    releaseSession!({
+      accessToken: PLACEHOLDER_TOKEN,
+      isAnonymous: true,
+      status: "available",
+      subject: "placeholder-subject",
+    });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(screen.queryByText("68%")).not.toBeInTheDocument();
+    expect(
+      screen.getByText("0%", { selector: ".binary-classification-result__probability-value" }),
+    ).toBeInTheDocument();
   });
 });
 

@@ -570,7 +570,9 @@ Responsibilities:
 - expose public contract projections;
 - expose public metrics;
 - expose public visualization metadata or artifacts when available;
-- receive inference requests;
+- receive inference requests reached through the Supabase Edge Function gateway, where the visitor's Anonymous Auth JWT is verified and a fixed-window per-subject, per-dataset quota is reserved (429 before Atlas) ahead of forwarding;
+- accept public inference requests only with the dedicated shared gateway credential, rejecting anything else with the same generic 401;
+- keep the M50 containment (payload size limit, process-local concurrency limiter, runtime hardening) in force beneath the gateway;
 - validate payloads against the runtime contract;
 - load the active release bundle;
 - execute prediction;

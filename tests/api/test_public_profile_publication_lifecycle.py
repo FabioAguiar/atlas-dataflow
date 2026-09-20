@@ -139,6 +139,14 @@ def _build_fake_repo(tmp_path: Path) -> Path:
     )
 
     _write_metrics(fake_repo, {"accuracy": 0.86, "auc_roc": 0.93})
+    # Project Spec S0240: publication fails closed unless the active release
+    # carries a bounded predictions/bundle.json naming its problem type.
+    predictions_dir = fake_repo / "releases" / _RELEASE_ID / "predictions"
+    predictions_dir.mkdir(parents=True, exist_ok=True)
+    predictions_dir.joinpath("bundle.json").write_text(
+        json.dumps({"result_semantics": {"problem_type": "binary_classification"}}),
+        encoding="utf-8",
+    )
     return fake_repo
 
 

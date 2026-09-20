@@ -132,6 +132,14 @@ def _build_fake_repo(
         }),
         encoding="utf-8",
     )
+    # Project Spec S0240: publication fails closed unless the active release
+    # carries a bounded predictions/bundle.json naming its problem type.
+    predictions_dir = tmp_root / "releases" / active_release / "predictions"
+    predictions_dir.mkdir(parents=True)
+    predictions_dir.joinpath("bundle.json").write_text(
+        json.dumps({"result_semantics": {"problem_type": "binary_classification"}}),
+        encoding="utf-8",
+    )
     return tmp_root
 
 

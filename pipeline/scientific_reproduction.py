@@ -1230,25 +1230,43 @@ def describe_lineage_separation(report: Mapping[str, Any], *, repo_root: Path) -
             release_metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
 
     selected = (report.get("selection", {}).get("executed") or {}).get("selected_model_id")
-    reproduced_final = next(
-        (m for m in report["metric_sets"] if m["metric_set_id"] == f"final_test.{selected}.probability"), None
-    )
+    reproduced_sets = {
+        suffix: next((m for m in report["metric_sets"] if m["metric_set_id"] == f"final_test.{selected}.{suffix}"), None)
+        for suffix in ("probability", "at_default_threshold")
+    }
     rows = []
     if release_metrics is not None:
         for metric in release_metrics.get("final_test_evaluation", {}).get("metrics", []):
             canonical = NATIVE_METRIC_ALIASES.get(metric["name"], metric["name"])
+            # Threshold-free metrics come from the probability set; threshold-dependent
+            # ones from the default-threshold set, whose threshold is reported with them.
+            reproduced_set = next(
+                (s for s in reproduced_sets.values() if s is not None and canonical in s["metrics"]), None
+            )
             rows.append({
                 "canonical_metric": canonical,
                 "partition": "test",
                 "atlas_native_release": {
                     "value": metric["value"],
                     "native_metric_name": metric["name"],
-                    "provenance": {"lineage": RELEASE_KIND, "release_id": entry["active_release"],
-                                   "training_run_id": release_metrics.get("training_run_identity", {}).get("run_id")},
+                    "provenance": {
+                        "lineage": RELEASE_KIND,
+                        "release_id": entry["active_release"],
+                        "training_run_id": release_metrics.get("training_run_identity", {}).get("run_id"),
+                        "decision_threshold": ((native_contract or {}).get("result_semantics") or {})
+                        .get("decision", {}).get("threshold"),
+                        "decision_threshold_provenance": "native execution contract result_semantics",
+                    },
                 },
                 "scientific_reproduction": {
-                    "value": (reproduced_final or {}).get("metrics", {}).get(canonical),
-                    "provenance": {"lineage": RUN_KIND, "run_id": report["run_identity"]["run_id"], "model_id": selected},
+                    "value": reproduced_set["metrics"][canonical] if reproduced_set else None,
+                    "provenance": {
+                        "lineage": RUN_KIND,
+                        "run_id": report["run_identity"]["run_id"],
+                        "model_id": selected,
+                        "metric_set_id": reproduced_set["metric_set_id"] if reproduced_set else None,
+                        "threshold": reproduced_set["provenance"]["threshold"] if reproduced_set else None,
+                    },
                 },
                 "directly_comparable": False,
             })

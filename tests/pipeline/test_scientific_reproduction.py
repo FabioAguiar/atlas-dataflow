@@ -718,3 +718,19 @@ def test_tie_breaker_fields_are_validated_by_pattern(synthetic):
     ]
     gaps = ssc.assess_protocol_support(payload)
     assert [g["value"] for g in gaps if g["element"] == "selection.tie_breakers.field"] == ["validation_bogus"]
+
+
+def test_lineage_view_takes_threshold_metrics_from_the_default_threshold_set(synthetic):
+    root = synthetic["root"]
+    (root / "registry").mkdir()
+    (root / "registry/datasets.json").write_text(json.dumps({"datasets": [
+        {"dataset_slug": "synthetic-study", "active_release": "r1"}]}), encoding="utf-8")
+    (root / "releases/r1/metrics").mkdir(parents=True)
+    (root / "releases/r1/metrics/metrics.json").write_text(json.dumps(
+        {"final_test_evaluation": {"metrics": [{"name": "f1", "value": 0.4}]}}), encoding="utf-8")
+    report = _run(synthetic).build_report()
+    row = sr.describe_lineage_separation(report, repo_root=root)["rows"][0]
+    reproduced = row["scientific_reproduction"]
+    assert reproduced["value"] is not None
+    assert reproduced["provenance"]["metric_set_id"].endswith("at_default_threshold")
+    assert reproduced["provenance"]["threshold"]["rule"] == "fixed_default_threshold"

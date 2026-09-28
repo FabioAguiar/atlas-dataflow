@@ -1186,6 +1186,93 @@ def answer_reproduction_questions(report: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+# Canonical metric identities: the native binary vocabulary names Average
+# Precision "pr_auc" (it is computed with average_precision_score).
+NATIVE_METRIC_ALIASES = {"pr_auc": "average_precision"}
+
+
+def describe_lineage_separation(report: Mapping[str, Any], *, repo_root: Path) -> dict[str, Any]:
+    """Read-only side-by-side view of a reproduction and the Atlas-native lineage.
+
+    Reads the dataset's governed native execution contract and the registry's
+    active release metrics; writes nothing. Every value keeps its own
+    provenance, and the view states which protocol facts differ so values are
+    never presented as interchangeable.
+    """
+    root = Path(repo_root)
+    slug = report["run_identity"]["dataset_slug"]
+    registry = json.loads((root / "registry/datasets.json").read_text(encoding="utf-8"))
+    entry = next((d for d in registry["datasets"] if d["dataset_slug"] == slug), None)
+    native_contract_path = root / "contracts" / slug / "execution-contract.json"
+    native_contract = json.loads(native_contract_path.read_text(encoding="utf-8")) if native_contract_path.is_file() else None
+    release_metrics = None
+    if entry is not None:
+        metrics_path = root / "releases" / entry["active_release"] / "metrics" / "metrics.json"
+        if metrics_path.is_file():
+            release_metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
+
+    selected = (report.get("selection", {}).get("executed") or {}).get("selected_model_id")
+    reproduced_final = next(
+        (m for m in report["metric_sets"] if m["metric_set_id"] == f"final_test.{selected}.probability"), None
+    )
+    rows = []
+    if release_metrics is not None:
+        for metric in release_metrics.get("final_test_evaluation", {}).get("metrics", []):
+            canonical = NATIVE_METRIC_ALIASES.get(metric["name"], metric["name"])
+            rows.append({
+                "canonical_metric": canonical,
+                "partition": "test",
+                "atlas_native_release": {
+                    "value": metric["value"],
+                    "native_metric_name": metric["name"],
+                    "provenance": {"lineage": RELEASE_KIND, "release_id": entry["active_release"],
+                                   "training_run_id": release_metrics.get("training_run_identity", {}).get("run_id")},
+                },
+                "scientific_reproduction": {
+                    "value": (reproduced_final or {}).get("metrics", {}).get(canonical),
+                    "provenance": {"lineage": RUN_KIND, "run_id": report["run_identity"]["run_id"], "model_id": selected},
+                },
+                "directly_comparable": False,
+            })
+
+    differences = []
+    if native_contract is not None:
+        scientific_split = "two_stage_stratified_holdout (identifier-ordered, seeds from the study contract)"
+        differences.append({
+            "fact": "split",
+            "atlas_native": f"{native_contract.get('split_policy', {}).get('strategy')} with random_seed="
+                            f"{native_contract.get('random_seed')}",
+            "scientific_reproduction": scientific_split,
+        })
+        differences.append({
+            "fact": "primary_metric",
+            "atlas_native": native_contract.get("primary_metric"),
+            "scientific_reproduction": report["selection"]["rule"].get("eligibility", {}).get("metric"),
+        })
+        differences.append({
+            "fact": "decision_threshold",
+            "atlas_native": (native_contract.get("result_semantics") or {}).get("decision", {}).get("threshold"),
+            "scientific_reproduction": report["thresholds"]["scientific_reproduced"]["value"],
+        })
+        differences.append({
+            "fact": "model_selection",
+            "atlas_native": (native_contract.get("modeling_constraints") or {}).get("selection_mode"),
+            "scientific_reproduction": report["selection"]["rule"]["kind"],
+        })
+    return {
+        "dataset_slug": slug,
+        "active_release": entry["active_release"] if entry else None,
+        "native_execution_contract_sha256": _sha256_file(native_contract_path) if native_contract else None,
+        "rows": rows,
+        "protocol_differences": differences,
+        "interpretation": (
+            "The two lineages use different partitions, seeds, selection procedures, and thresholds. "
+            "Their metrics describe different experiments and are shown side by side only with their own "
+            "provenance; neither replaces the other."
+        ),
+    }
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run an Atlas scientific reproduction for one study contract.")
     parser.add_argument("--contract", required=True, help="Repository-relative study contract path.")

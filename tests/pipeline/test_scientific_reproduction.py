@@ -611,3 +611,35 @@ def test_committed_telco_reproduction_reports_are_valid_and_separated():
         reference = report.get("search_results_reference")
         if reference:
             assert hashlib.sha256((REPO_ROOT / reference["path"]).read_bytes()).hexdigest() == reference["sha256"]
+
+
+def test_lineage_separation_view_is_read_only_and_normalizes_native_metric_names(synthetic):
+    root = synthetic["root"]
+    (root / "registry").mkdir()
+    (root / "registry/datasets.json").write_text(json.dumps({"datasets": [
+        {"dataset_slug": "synthetic-study", "active_release": "release-20260101-001"}]}), encoding="utf-8")
+    metrics_dir = root / "releases/release-20260101-001/metrics"
+    metrics_dir.mkdir(parents=True)
+    (metrics_dir / "metrics.json").write_text(json.dumps({
+        "training_run_identity": {"run_id": "train-x"},
+        "final_test_evaluation": {"metrics": [{"name": "pr_auc", "value": 0.5}, {"name": "roc_auc", "value": 0.6}]},
+    }), encoding="utf-8")
+    contract_dir = root / "contracts/synthetic-study"
+    contract_dir.mkdir(parents=True)
+    (contract_dir / "execution-contract.json").write_text(json.dumps({
+        "split_policy": {"strategy": "stratified"}, "random_seed": 0, "primary_metric": "roc_auc",
+        "result_semantics": {"decision": {"threshold": 0.5}},
+        "modeling_constraints": {"selection_mode": "fixed_configuration"},
+    }), encoding="utf-8")
+    report = _run(synthetic).build_report()
+    before = {p: p.read_bytes() for p in root.rglob("*") if p.is_file()}
+    view = sr.describe_lineage_separation(report, repo_root=root)
+    assert {p: p.read_bytes() for p in root.rglob("*") if p.is_file()} == before
+    ap_row = next(r for r in view["rows"] if r["canonical_metric"] == "average_precision")
+    assert ap_row["atlas_native_release"]["native_metric_name"] == "pr_auc"
+    assert ap_row["atlas_native_release"]["provenance"]["lineage"] == sr.RELEASE_KIND
+    assert ap_row["scientific_reproduction"]["provenance"]["lineage"] == sr.RUN_KIND
+    assert all(row["directly_comparable"] is False for row in view["rows"])
+    facts = {d["fact"]: d for d in view["protocol_differences"]}
+    assert facts["decision_threshold"]["atlas_native"] == 0.5
+    assert facts["model_selection"]["scientific_reproduction"] == "leader_anchored_practical_tie"

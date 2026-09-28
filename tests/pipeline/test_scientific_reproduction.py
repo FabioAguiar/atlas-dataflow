@@ -690,3 +690,31 @@ def test_source_verification_detects_study_drift(tmp_path):
     result = ssc.verify_against_study_checkout(payload, checkout)
     assert result["status"] == "study_revision_drift"
     assert not any(check["rendered_text_found"] for check in result["expected_evidence_locators"])
+
+
+def test_selection_rule_respects_lower_is_better_metrics_and_declared_interval_metric():
+    rule = {
+        "eligibility": {"metric": "log_loss", "margin": 0.05, "strict": True},
+        "leader": {"metric": "log_loss"},
+        "practical_tie": {"metric": "log_loss", "tolerance": 0.02, "cv_interval_metric": "log_loss"},
+        "tie_breakers": [{"criterion": "stable_model_id", "field": "model_id", "direction": "min"}],
+    }
+    records = [
+        {"model_id": "b", "validation_log_loss": 0.40, "cv_log_loss_ci_lower": 0.38, "cv_log_loss_ci_upper": 0.44},
+        {"model_id": "a", "validation_log_loss": 0.41, "cv_log_loss_ci_lower": 0.39, "cv_log_loss_ci_upper": 0.45},
+        {"model_id": "c", "validation_log_loss": 0.66, "cv_log_loss_ci_lower": 0.6, "cv_log_loss_ci_upper": 0.7},
+    ]
+    selection = sr.select_leader_anchored_practical_tie(records, 0.69, rule)
+    assert selection["eligible_model_ids"] == ["b", "a"]
+    assert selection["practical_tie_group"] == ["b", "a"]
+    assert selection["selected_model_id"] == "a"
+
+
+def test_tie_breaker_fields_are_validated_by_pattern(synthetic):
+    payload = copy.deepcopy(synthetic["payload"])
+    payload["selection"]["tie_breakers"] = [
+        {"criterion": "x", "field": "cv_roc_auc_mean", "direction": "max"},
+        {"criterion": "y", "field": "validation_bogus", "direction": "max"},
+    ]
+    gaps = ssc.assess_protocol_support(payload)
+    assert [g["value"] for g in gaps if g["element"] == "selection.tie_breakers.field"] == ["validation_bogus"]

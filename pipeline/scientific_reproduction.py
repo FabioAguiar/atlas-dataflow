@@ -62,7 +62,7 @@ REPORT_FILENAME = "reproduction-report.json"
 SEARCH_RESULTS_FILENAME = "search-results.json"
 RUNS_ROOT_RELATIVE = "pipeline/scientific-reproduction-runs"
 ENGINE_ID = "pipeline/scientific_reproduction.py"
-ENGINE_VERSION = "1"
+ENGINE_VERSION = "2"
 
 RUN_KIND = "scientific_reproduction_run"
 STUDY_RUN_KIND = "scientific_study_run"
@@ -417,31 +417,37 @@ def run_candidate_search(candidate: Mapping[str, Any], contract: Mapping[str, An
     best = int(searcher.best_index_)
     n_splits = int(cv_spec["n_splits"])
     z_value = float(contract["selection"].get("practical_tie", {}).get("cv_interval_z", 1.96))
-    mean_ap = float(results["mean_test_average_precision"][best])
-    std_ap = float(results["std_test_average_precision"][best])
-    half = z_value * std_ap / math.sqrt(n_splits)
-    summary = {
+    refit = common["refit"]
+
+    def cv_values(scorer: str, index: int) -> tuple[str, float, float]:
+        # sklearn exposes losses as negated scores; report them in their natural orientation.
+        sign = -1.0 if scorer.startswith("neg_") else 1.0
+        return (scorer.removeprefix("neg_"), sign * float(results[f"mean_test_{scorer}"][index]),
+                float(results[f"std_test_{scorer}"][index]))
+
+    summary: dict[str, Any] = {
         "candidate_count_executed": executed,
         "candidate_count_expected": expected,
         "best_index": best,
         "best_params": {name.removeprefix("model__"): _jsonable(value) for name, value in searcher.best_params_.items()},
-        "average_precision_mean": mean_ap,
-        "average_precision_std": std_ap,
-        "average_precision_ci_lower": mean_ap - half,
-        "average_precision_ci_upper": mean_ap + half,
-        "roc_auc_mean": float(results["mean_test_roc_auc"][best]),
-        "log_loss_mean": float(-results["mean_test_neg_log_loss"][best]),
-        "brier_score_mean": float(-results["mean_test_neg_brier_score"][best]),
+        "refit_metric": refit,
         "search_duration_seconds": round(duration, 3),
     }
+    for scorer in common["scoring"]:
+        name, mean, std = cv_values(scorer, best)
+        summary[f"{name}_mean"] = mean
+        if scorer == refit:
+            half = z_value * std / math.sqrt(n_splits)
+            summary[f"{name}_std"] = std
+            summary[f"{name}_ci_lower"] = mean - half
+            summary[f"{name}_ci_upper"] = mean + half
     table = [
         {
             "candidate_index": index,
             "params": {k.removeprefix("model__"): _jsonable(v) for k, v in params.items()},
-            "rank_average_precision": int(results["rank_test_average_precision"][index]),
-            "mean_average_precision": float(results["mean_test_average_precision"][index]),
-            "std_average_precision": float(results["std_test_average_precision"][index]),
-            "mean_roc_auc": float(results["mean_test_roc_auc"][index]),
+            f"rank_{refit}": int(results[f"rank_test_{refit}"][index]),
+            **{f"mean_{cv_values(s, index)[0]}": cv_values(s, index)[1] for s in common["scoring"]},
+            f"std_{refit}": float(results[f"std_test_{refit}"][index]),
         }
         for index, params in enumerate(results["params"])
     ]
@@ -494,20 +500,32 @@ def probability_metrics(y_true: Sequence[int], probabilities: Sequence[float]) -
 # --------------------------------------------------------------------------
 
 
+LOWER_IS_BETTER_METRICS = frozenset({"log_loss", "brier_score", "mae", "rmse", "medae"})
+
+
+def metric_direction(metric: str) -> str:
+    return "min" if metric in LOWER_IS_BETTER_METRICS else "max"
+
+
 def select_leader_anchored_practical_tie(records: Sequence[Mapping[str, Any]], baseline_value: float, rule: Mapping[str, Any]) -> dict[str, Any]:
     """Eligibility over a baseline, leader by a validation metric, a
     leader-anchored practical-tie group, then ordered tie-breakers applied to
     the whole group until one candidate remains."""
     eligibility = rule["eligibility"]
     metric_field = f"validation_{eligibility['metric']}"
+    # Orientation comes from the declared metric: improvement over the
+    # baseline and the leader are "higher" for scores and "lower" for losses.
+    eligibility_sign = -1.0 if metric_direction(eligibility["metric"]) == "min" else 1.0
     rows = []
     for record in records:
-        margin = float(record[metric_field]) - baseline_value
+        margin = eligibility_sign * (float(record[metric_field]) - baseline_value)
         eligible = margin > eligibility["margin"] if eligibility.get("strict", True) else margin >= eligibility["margin"]
         rows.append({**record, "margin_over_baseline": margin, "eligible": bool(eligible)})
+    leader_metric = rule["leader"]["metric"]
+    leader_sign = -1.0 if rule["leader"].get("direction", metric_direction(leader_metric)) == "max" else 1.0
     eligible_rows = sorted(
         (r for r in rows if r["eligible"]),
-        key=lambda r: (-float(r[f"validation_{rule['leader']['metric']}"]), r["model_id"]),
+        key=lambda r: (leader_sign * float(r[f"validation_{leader_metric}"]), r["model_id"]),
     )
     if not eligible_rows:
         return {"eligible_model_ids": [], "practical_tie_group": [], "selected_model_id": None,
@@ -515,13 +533,15 @@ def select_leader_anchored_practical_tie(records: Sequence[Mapping[str, Any]], b
     leader = eligible_rows[0]
     tie = rule["practical_tie"]
     leader_field = f"validation_{tie['metric']}"
+    interval_metric = tie.get("cv_interval_metric", tie["metric"])
+    lower_field, upper_field = f"cv_{interval_metric}_ci_lower", f"cv_{interval_metric}_ci_upper"
 
     def tied(other: Mapping[str, Any]) -> bool:
         difference = abs(float(leader[leader_field]) - float(other[leader_field]))
-        overlap = max(leader["cv_average_precision_ci_lower"], other["cv_average_precision_ci_lower"]) <= min(
-            leader["cv_average_precision_ci_upper"], other["cv_average_precision_ci_upper"]
-        )
-        return difference <= tie["tolerance"] and (overlap or not tie.get("requires_cv_interval_overlap", True))
+        if not tie.get("requires_cv_interval_overlap", True):
+            return difference <= tie["tolerance"]
+        overlap = max(leader[lower_field], other[lower_field]) <= min(leader[upper_field], other[upper_field])
+        return difference <= tie["tolerance"] and overlap
 
     group = [leader] + [r for r in eligible_rows[1:] if tied(r)]
     remaining = list(group)
@@ -972,9 +992,9 @@ class Reproduction:
                 "best_params": summary["best_params"],
                 "search_duration_seconds": summary["search_duration_seconds"],
             }
-            actuals["cv"][model_id] = {k: summary[k] for k in (
-                "average_precision_mean", "average_precision_std", "average_precision_ci_lower",
-                "average_precision_ci_upper", "roc_auc_mean", "log_loss_mean", "brier_score_mean")}
+            actuals["cv"][model_id] = {
+                k: v for k, v in summary.items() if k.endswith(("_mean", "_std", "_ci_lower", "_ci_upper"))
+            }
             result.search_results[model_id] = outcome["table"]
             best_estimators[model_id] = outcome["best_estimator"]
             probabilities = _positive_probabilities(outcome["best_estimator"], x_val, positive_label)
@@ -995,9 +1015,7 @@ class Reproduction:
                 "model_id": model_id,
                 "family": candidate["family"],
                 **{f"validation_{k}": v for k, v in metrics.items() if isinstance(v, float)},
-                "cv_average_precision_std": summary["average_precision_std"],
-                "cv_average_precision_ci_lower": summary["average_precision_ci_lower"],
-                "cv_average_precision_ci_upper": summary["average_precision_ci_upper"],
+                **{f"cv_{k}": v for k, v in actuals["cv"][model_id].items()},
                 "simplicity_rank": simplicity.index(candidate["family"]) if candidate["family"] in simplicity else len(simplicity),
             })
 

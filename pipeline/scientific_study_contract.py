@@ -50,11 +50,24 @@ REPRODUCTION_CAPABILITIES: Mapping[str, Any] = {
         "average_precision", "roc_auc", "precision", "recall", "f1", "f2",
         "balanced_accuracy", "accuracy", "log_loss", "brier_score",
     },
-    "tie_breaker_fields": {
-        "validation_brier_score", "validation_log_loss", "validation_roc_auc",
-        "validation_average_precision", "cv_average_precision_std", "simplicity_rank", "model_id",
-    },
+    "tie_breaker_fields": {"simplicity_rank", "model_id"},
 }
+
+
+def _is_supported_tie_breaker_field(field: Any) -> bool:
+    """``validation_<metric>``, ``cv_<metric>_mean``/``_std``, or a fixed field."""
+    if field in REPRODUCTION_CAPABILITIES["tie_breaker_fields"]:
+        return True
+    if not isinstance(field, str):
+        return False
+    metrics = REPRODUCTION_CAPABILITIES["metrics"]
+    if field.startswith("validation_"):
+        return field.removeprefix("validation_") in metrics
+    if field.startswith("cv_"):
+        for suffix in ("_mean", "_std"):
+            if field.endswith(suffix):
+                return field.removeprefix("cv_").removesuffix(suffix) in metrics
+    return False
 
 
 class ScientificStudyContractError(ValueError):
@@ -161,7 +174,9 @@ def assess_protocol_support(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
     for metric in payload["metrics"]["evaluated"]:
         check("metrics.evaluated", metric, caps["metrics"])
     for breaker in payload["selection"].get("tie_breakers", []):
-        check("selection.tie_breakers.field", breaker.get("field"), caps["tie_breaker_fields"])
+        if not _is_supported_tie_breaker_field(breaker.get("field")):
+            gaps.append({"element": "selection.tie_breakers.field", "value": breaker.get("field"),
+                         "reason": "tie-breaker field is not a validation/cv metric or a supported fixed field"})
 
     task_type = (
         model_families.CLASSIFICATION

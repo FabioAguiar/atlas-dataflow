@@ -53,6 +53,8 @@ O Atlas pode consultá-lo enquanto traduz conclusões científicas revisadas, ma
 - ler seus paths, artifacts, evidence ou model bytes durante inferência;
 - depender da continuidade do layout externo após a autoria.
 
+Uma revisão específica do estudo pode ser pinada em um contrato científico (`pipeline/scientific-studies/<dataset>/study-<commit>/`) e reproduzida de forma independente pelo Atlas. Essa `scientific_reproduction_run` produz um relatório write-once comparado com a evidência de referência do estudo e é uma linhagem separada do treino nativo e das releases. Veja [scientific-reproduction.md](scientific-reproduction.md).
+
 ### 3.2 Notebook de integração
 
 Cada dataset possui um notebook canônico em `notebooks/datasets/<dataset>/dataset_integration.ipynb`. Ele é a superfície humana de orquestração da integração e deve reutilizar os módulos genéricos do pipeline.

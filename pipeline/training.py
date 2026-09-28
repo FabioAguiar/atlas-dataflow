@@ -897,14 +897,11 @@ def _select_model_family(contract: dict[str, Any], task_type: str) -> str:
 
 
 def _build_estimator(model_family: str, task_type: str, random_seed: int | None):
+    # Estimator classes resolve through the shared pipeline.model_families
+    # registry; the native constructor arguments below are unchanged.
+    from pipeline import model_families
+
     try:
-        from sklearn.ensemble import (
-            GradientBoostingClassifier,
-            GradientBoostingRegressor,
-            RandomForestClassifier,
-            RandomForestRegressor,
-        )
-        from sklearn.linear_model import LogisticRegression
         from sklearn.pipeline import Pipeline
     except ImportError as exc:
         raise TrainingInputError(
@@ -914,26 +911,24 @@ def _build_estimator(model_family: str, task_type: str, random_seed: int | None)
             field="modeling_constraints.allowed_model_families",
         ) from exc
 
-    if model_family == "logistic_regression":
-        estimator = LogisticRegression(max_iter=1000, random_state=random_seed)
-    elif model_family == "gradient_boosting":
-        estimator = (
-            GradientBoostingClassifier(random_state=random_seed)
-            if task_type == "classification"
-            else GradientBoostingRegressor(random_state=random_seed)
-        )
-    elif model_family == "random_forest":
-        estimator = (
-            RandomForestClassifier(random_state=random_seed)
-            if task_type == "classification"
-            else RandomForestRegressor(random_state=random_seed)
-        )
-    else:
+    if model_family not in SUPPORTED_MODEL_FAMILIES:
         raise TrainingInputError(
             "unsupported_model_family",
             f"unsupported model family selected: {model_family}",
             field="modeling_constraints.allowed_model_families",
         )
+    try:
+        estimator_cls = model_families.estimator_class(model_family, task_type)
+    except model_families.ModelFamilyError as exc:
+        raise TrainingInputError(
+            exc.code,
+            str(exc),
+            field="modeling_constraints.allowed_model_families",
+        ) from exc
+    if model_family == "logistic_regression":
+        estimator = estimator_cls(max_iter=1000, random_state=random_seed)
+    else:
+        estimator = estimator_cls(random_state=random_seed)
 
     return Pipeline([
         ("preprocess", None),

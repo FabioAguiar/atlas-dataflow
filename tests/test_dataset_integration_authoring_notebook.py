@@ -22,6 +22,29 @@ def _source(cell_type: str | None = None) -> str:
     )
 
 
+SCIENTIFIC_REPRODUCTION_MARKER = "## 20. Scientific reproduction boundary"
+
+
+def _native_cells() -> list[dict]:
+    """Cells of the native lineage (sections 1-19), before the separate
+    scientific-reproduction lineage begins."""
+    cells = _notebook()["cells"]
+    for index, cell in enumerate(cells):
+        if cell["cell_type"] == "markdown" and "".join(cell["source"]).startswith(SCIENTIFIC_REPRODUCTION_MARKER):
+            return cells[:index]
+    return cells
+
+
+def _reproduction_cells() -> list[dict]:
+    return _notebook()["cells"][len(_native_cells()):]
+
+
+def _cells_source(cells: list[dict], cell_type: str | None = None) -> str:
+    return "\n".join(
+        "".join(cell["source"]) for cell in cells if cell_type is None or cell["cell_type"] == cell_type
+    )
+
+
 def _called_names() -> set[str]:
     names: set[str] = set()
     for cell in _notebook()["cells"]:
@@ -233,7 +256,11 @@ def test_notebook_preserves_split_and_seed_identity():
 
 
 def test_notebook_performs_no_model_selection_or_threshold_optimization():
-    code = _source("code")
+    # Scoped to the native lineage (sections 1-19). The separate scientific
+    # reproduction lineage (sections 20-25) delegates the study's search,
+    # selection, and threshold policy to pipeline.scientific_reproduction and
+    # is covered by the scientific-reproduction tests below.
+    code = _cells_source(_native_cells(), "code")
     for forbidden in (
         "GridSearchCV",
         "RandomizedSearchCV",
@@ -619,3 +646,82 @@ def test_notebook_never_requires_real_telco_checkout_or_model_bytes_to_be_parsed
         if cell["cell_type"] != "code":
             continue
         ast.parse("".join(cell["source"]))
+
+
+# --- scientific reproduction lineage (sections 20-25) ------------------------
+
+
+def test_scientific_reproduction_sections_follow_the_native_stop_confirmation():
+    markdown = _source("markdown")
+    stages = [
+        "19. Orchestration stop confirmation",
+        "20. Scientific reproduction boundary (separate evidence lineage)",
+        "21. Scientific study contract loading",
+        "22. Scientific environment compatibility and protocol support",
+        "23. Independent scientific reproduction run",
+        "24. Comparison with scientific reference evidence and reproduction report",
+        "25. Lineage separation: scientific reproduction versus Atlas-native release",
+    ]
+    offsets = [markdown.index(stage) for stage in stages]
+    assert offsets == sorted(offsets)
+    assert _reproduction_cells(), "reproduction lineage must be present"
+
+
+def test_native_boundary_is_scoped_to_its_lineage():
+    code = _cells_source(_native_cells(), "code")
+    assert '"applies_to_lineage": "atlas_native_training_run"' in code
+
+
+def test_scientific_reproduction_declares_its_own_boundary():
+    code = _cells_source(_reproduction_cells(), "code")
+    assert "SCIENTIFIC_REPRODUCTION_BOUNDARY" in code
+    assert '"reproduction_feeds_atlas_release": False' in code
+    assert '"depends_on_native_run_state": False' in code
+    for forbidden in (
+        "native_execution_contract_mutation",
+        "release_candidate_or_manifest_input",
+        "publisher_promotion",
+        "registry_active_release_mutation",
+        "external_scientific_project_read_at_runtime",
+        "dataset_study_repository_mutation",
+    ):
+        assert forbidden in code
+
+
+def test_scientific_reproduction_is_thin_and_delegates_to_pipeline_modules():
+    code = _cells_source(_reproduction_cells(), "code")
+    assert "from pipeline.scientific_study_contract import load_scientific_study_contract" in code
+    assert "scientific_reproduction.build_reproduction(" in code
+    assert "reproduction.run()" in code
+    assert "scientific_reproduction.write_reproduction_report(" in code
+    assert "scientific_reproduction.answer_reproduction_questions(" in code
+    assert "scientific_reproduction.describe_lineage_separation(" in code
+    for forbidden in ("sklearn", "GridSearchCV", "RandomizedSearchCV", "train_test_split", ".fit(",
+                      ".predict_proba(", "if dataset_slug ==", "joblib", "pickle"):
+        assert forbidden not in code
+
+
+def test_scientific_reproduction_never_touches_native_or_release_state():
+    code = _cells_source(_reproduction_cells(), "code")
+    for forbidden in (
+        "run_state[",
+        "record_block(",
+        "write_governed_json(",
+        "execution_contract_relative_path",
+        "materialize_training_run_from_prepared_metadata",
+        "assemble_candidate",
+        "publisher_validate",
+        "validated_run",
+        "registry/datasets.json",
+    ):
+        assert forbidden not in code
+
+
+def test_scientific_reproduction_reads_the_atlas_stored_contract_not_the_study_checkout():
+    code = _cells_source(_reproduction_cells(), "code")
+    assert (
+        '"pipeline/scientific-studies/telco-customer-churn/study-43ced1fbb76f/scientific-study-contract.json"'
+        in code
+    )
+    assert "study_checkout" not in code
+    assert "dataset-study-telco-customer-churn" not in code

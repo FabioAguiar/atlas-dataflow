@@ -1,0 +1,210 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas-dataflow.local/schemas/pipeline/scientific-reproduction-report.schema.json",
+  "title": "Atlas DataFlow Scientific Reproduction Report",
+  "description": "Write-once evidence of one scientific_reproduction_run: Atlas independently re-executed a pinned Dataset Study protocol (scientific-study-contract.v1) and compared its own results against the study's published reference evidence. The report keeps the four evidence lineages separate (scientific_study_run, scientific_reproduction_run, atlas_native_training_run, atlas_release); every metric set carries its own provenance. It is never an input to native training, release assembly, or registry activation.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "artifact_kind",
+    "run_identity",
+    "evidence_lineage",
+    "dataset",
+    "environment",
+    "protocol_support",
+    "source_verification",
+    "candidate_models",
+    "selection",
+    "thresholds",
+    "metric_sets",
+    "comparison",
+    "evidence_gaps",
+    "study_observations",
+    "execution_notes",
+    "limitations",
+    "reproduction_status",
+    "immutability"
+  ],
+  "properties": {
+    "schema_version": { "const": "scientific-reproduction-report.v1" },
+    "artifact_kind": { "const": "scientific_reproduction_report" },
+    "run_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["run_kind", "run_id", "dataset_slug", "created_at", "producer", "engine_version"],
+      "properties": {
+        "run_kind": { "const": "scientific_reproduction_run" },
+        "run_id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$" },
+        "dataset_slug": { "type": "string" },
+        "created_at": { "type": "string" },
+        "producer": { "type": "string" },
+        "engine_version": { "type": "string" }
+      }
+    },
+    "evidence_lineage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scientific_study_run", "scientific_reproduction_run", "atlas_native_training_run", "atlas_release"],
+      "properties": {
+        "scientific_study_run": {
+          "type": "object",
+          "required": ["role", "study_id", "study_revision", "study_contract"],
+          "properties": { "role": { "const": "reference_evidence" } }
+        },
+        "scientific_reproduction_run": {
+          "type": "object",
+          "required": ["role", "run_id"],
+          "properties": { "role": { "const": "independent_atlas_reproduction" } }
+        },
+        "atlas_native_training_run": {
+          "type": "object",
+          "required": ["role", "referenced"],
+          "properties": { "role": { "const": "separate_lineage" }, "referenced": { "const": false } }
+        },
+        "atlas_release": {
+          "type": "object",
+          "required": ["role", "referenced"],
+          "properties": { "role": { "const": "separate_lineage" }, "referenced": { "const": false } }
+        }
+      }
+    },
+    "dataset": {
+      "type": "object",
+      "required": ["dataset_slug", "verified", "expected_sha256"],
+      "properties": { "verified": { "type": "boolean" } }
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scientific_reference", "reproduction_runtime", "compatibility"],
+      "properties": {
+        "scientific_reference": { "type": "object" },
+        "reproduction_runtime": { "type": "object" },
+        "compatibility": {
+          "type": "object",
+          "required": ["classification"],
+          "properties": { "classification": { "enum": ["exact", "compatible", "incompatible", "unknown"] } }
+        }
+      }
+    },
+    "protocol_support": {
+      "type": "object",
+      "required": ["status", "gaps"],
+      "properties": {
+        "status": { "enum": ["fully_supported", "unsupported_elements_present"] },
+        "gaps": { "type": "array" }
+      }
+    },
+    "source_verification": { "type": "object", "required": ["status"] },
+    "candidate_models": {
+      "type": "object",
+      "required": ["expected", "executed", "search_spaces"],
+      "properties": {
+        "expected": { "type": "array", "items": { "type": "string" } },
+        "executed": { "type": "array", "items": { "type": "string" } },
+        "search_spaces": { "type": "object" }
+      }
+    },
+    "selection": { "type": "object", "required": ["rule", "executed"] },
+    "thresholds": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scientific_policy", "scientific_reference", "scientific_reproduced", "atlas_native_operational"],
+      "properties": {
+        "scientific_policy": { "$ref": "#/$defs/threshold_entry" },
+        "scientific_reference": {
+          "allOf": [{ "$ref": "#/$defs/threshold_entry" }, { "properties": { "provenance": { "const": "scientific_study_run" } } }]
+        },
+        "scientific_reproduced": {
+          "allOf": [{ "$ref": "#/$defs/threshold_entry" }, { "properties": { "provenance": { "const": "scientific_reproduction_run" } } }]
+        },
+        "atlas_native_operational": {
+          "allOf": [{ "$ref": "#/$defs/threshold_entry" }, { "properties": { "provenance": { "const": "atlas_native_training_run" } } }]
+        }
+      }
+    },
+    "metric_sets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["metric_set_id", "provenance", "metrics"],
+        "properties": {
+          "metric_set_id": { "type": "string" },
+          "provenance": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "producer_lineage", "run_id", "study_revision", "study_contract_sha256", "dataset_sha256",
+              "partition", "partition_membership_sha256", "model_id", "threshold", "protocol_kind"
+            ],
+            "properties": {
+              "producer_lineage": { "const": "scientific_reproduction_run" },
+              "run_id": { "type": "string" },
+              "study_revision": { "type": "string" },
+              "study_contract_sha256": { "type": "string" },
+              "dataset_sha256": { "type": "string" },
+              "partition": { "type": "string" },
+              "partition_membership_sha256": { "type": ["string", "null"] },
+              "model_id": { "type": "string" },
+              "threshold": {
+                "oneOf": [
+                  { "type": "null" },
+                  {
+                    "type": "object",
+                    "required": ["value", "rule", "provenance"],
+                    "properties": { "value": { "type": "number" }, "rule": { "type": "string" }, "provenance": { "type": "string" } }
+                  }
+                ]
+              },
+              "protocol_kind": { "type": "string" }
+            }
+          },
+          "metrics": { "type": "object" }
+        }
+      }
+    },
+    "comparison": { "type": ["object", "null"] },
+    "evidence_gaps": { "type": "array" },
+    "study_observations": { "type": "array" },
+    "execution_notes": { "type": "array", "items": { "type": "string" } },
+    "limitations": { "type": "array", "items": { "type": "string" } },
+    "reproduction_status": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "reasons"],
+      "properties": {
+        "status": {
+          "enum": [
+            "reproduced_exact",
+            "reproduced_within_tolerance",
+            "atlas_capability_missing",
+            "environment_incompatible",
+            "insufficient_scientific_evidence",
+            "divergent",
+            "dataset_identity_mismatch"
+          ]
+        },
+        "reasons": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "immutability": {
+      "type": "object",
+      "required": ["write_once", "historical_artifacts_modified"],
+      "properties": { "write_once": { "const": true }, "historical_artifacts_modified": { "const": false } }
+    },
+    "search_results_reference": {
+      "type": "object",
+      "required": ["path", "sha256"],
+      "properties": { "path": { "type": "string" }, "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" } }
+    }
+  },
+  "$defs": {
+    "threshold_entry": {
+      "type": "object",
+      "required": ["provenance"],
+      "properties": { "provenance": { "type": "string" } }
+    }
+  }
+}

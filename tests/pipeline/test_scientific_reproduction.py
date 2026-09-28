@@ -643,3 +643,50 @@ def test_lineage_separation_view_is_read_only_and_normalizes_native_metric_names
     facts = {d["fact"]: d for d in view["protocol_differences"]}
     assert facts["decision_threshold"]["atlas_native"] == 0.5
     assert facts["model_selection"]["scientific_reproduction"] == "leader_anchored_practical_tie"
+
+
+# --------------------------------------------------------------------------
+# source verification against a (read-only) study checkout
+# --------------------------------------------------------------------------
+
+
+def _checkout(tmp_path: Path) -> tuple[Path, dict]:
+    checkout = tmp_path / "study-checkout"
+    (checkout / "reproducibility").mkdir(parents=True)
+    (checkout / "README.md").write_text("| Train | 192 |\n", encoding="utf-8")
+    (checkout / "reproducibility/canonical-run.json").write_text(
+        json.dumps({"final_test": {"metrics": {"macro_f1": 0.9418}}}), encoding="utf-8")
+    payload = _contract("0" * 64, 1)
+    payload["source_repository"]["pinned_files"] = [
+        {"path": "README.md", "sha256": hashlib.sha256((checkout / "README.md").read_bytes()).hexdigest(),
+         "role": "narrative"},
+    ]
+    payload["expected_evidence"]["values"] = [
+        {"quantity": "partitions.train.rows", "expected": 192, "comparison": "count",
+         "source": {"path": "README.md", "locator": "file_text", "rendered_text": "| Train | 192 |"}},
+        {"quantity": "final_test.probability.macro_f1", "expected": 0.9418, "comparison": "numeric",
+         "source": {"path": "reproducibility/canonical-run.json",
+                    "locator": "json_pointer:/final_test/metrics/macro_f1", "rendered_text": "0.9418"}},
+    ]
+    return checkout, payload
+
+
+def test_source_verification_checks_pins_text_and_json_pointer_locators(tmp_path):
+    checkout, payload = _checkout(tmp_path)
+    result = ssc.verify_against_study_checkout(payload, checkout)
+    assert all(check["rendered_text_found"] for check in result["expected_evidence_locators"])
+    assert all(check["matches"] for check in result["pinned_files"])
+    # No git metadata in the fixture: content matches but the revision cannot be confirmed.
+    assert result["status"] == "revision_differs_but_pinned_content_unchanged"
+    assert result["checkout_location_recorded"] is False
+    assert str(tmp_path) not in json.dumps(result)
+
+
+def test_source_verification_detects_study_drift(tmp_path):
+    checkout, payload = _checkout(tmp_path)
+    (checkout / "README.md").write_text("| Train | 193 |\n", encoding="utf-8")
+    (checkout / "reproducibility/canonical-run.json").write_text(
+        json.dumps({"final_test": {"metrics": {"macro_f1": 0.95}}}), encoding="utf-8")
+    result = ssc.verify_against_study_checkout(payload, checkout)
+    assert result["status"] == "study_revision_drift"
+    assert not any(check["rendered_text_found"] for check in result["expected_evidence_locators"])

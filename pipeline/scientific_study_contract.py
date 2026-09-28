@@ -210,11 +210,38 @@ def _notebook_output_text(notebook: Mapping[str, Any], cell_index: int) -> str:
     return "\n".join(chunks)
 
 
-def _locate_rendered_text(checkout: Path, source: Mapping[str, Any], cache: dict[str, Any]) -> bool:
+def _resolve_json_pointer(document: Any, pointer: str) -> tuple[bool, Any]:
+    if pointer in ("", "/"):
+        return True, document
+    node = document
+    for token in pointer.lstrip("/").split("/"):
+        token = token.replace("~1", "/").replace("~0", "~")
+        if isinstance(node, list) and token.isdigit() and int(token) < len(node):
+            node = node[int(token)]
+        elif isinstance(node, Mapping) and token in node:
+            node = node[token]
+        else:
+            return False, None
+    return True, node
+
+
+def _locate_rendered_text(checkout: Path, item: Mapping[str, Any], cache: dict[str, Any]) -> bool:
+    """Check that an expected value is present at its source locator.
+
+    Locators: ``notebook_cell_output:<index>`` and ``file_text`` search for
+    the rendered text; ``json_pointer:<RFC 6901 pointer>`` resolves a value in
+    a structured JSON artifact and requires it to equal the expected value.
+    """
+    source = item["source"]
     path = checkout / source["path"]
     if not path.is_file():
         return False
     locator = source["locator"]
+    if locator.startswith("json_pointer:"):
+        if source["path"] not in cache:
+            cache[source["path"]] = json.loads(path.read_text(encoding="utf-8"))
+        found, value = _resolve_json_pointer(cache[source["path"]], locator.split(":", 1)[1])
+        return found and value == item["expected"]
     if locator.startswith("notebook_cell_output:"):
         if source["path"] not in cache:
             cache[source["path"]] = json.loads(path.read_text(encoding="utf-8"))
@@ -265,7 +292,7 @@ def verify_against_study_checkout(payload: Mapping[str, Any], checkout_root: Pat
                 "quantity": item["quantity"],
                 "source_path": item["source"]["path"],
                 "locator": item["source"]["locator"],
-                "rendered_text_found": _locate_rendered_text(checkout, item["source"], cache),
+                "rendered_text_found": _locate_rendered_text(checkout, item, cache),
             })
 
     revision_matches = revision == pinned_revision

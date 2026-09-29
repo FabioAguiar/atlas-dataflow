@@ -1,0 +1,117 @@
+{
+  "features": [
+    {
+      "display_order": 1,
+      "input_type": "number",
+      "label": "Area",
+      "name": "Area",
+      "optional": false
+    },
+    {
+      "display_order": 2,
+      "input_type": "number",
+      "label": "Perimeter",
+      "name": "Perimeter",
+      "optional": false
+    },
+    {
+      "display_order": 3,
+      "input_type": "number",
+      "label": "MajorAxisLength",
+      "name": "MajorAxisLength",
+      "optional": false
+    },
+    {
+      "display_order": 4,
+      "input_type": "number",
+      "label": "MinorAxisLength",
+      "name": "MinorAxisLength",
+      "optional": false
+    },
+    {
+      "display_order": 5,
+      "input_type": "number",
+      "label": "AspectRatio",
+      "name": "AspectRatio",
+      "optional": false
+    },
+    {
+      "display_order": 6,
+      "input_type": "number",
+      "label": "Eccentricity",
+      "name": "Eccentricity",
+      "optional": false
+    },
+    {
+      "display_order": 7,
+      "input_type": "number",
+      "label": "ConvexArea",
+      "name": "ConvexArea",
+      "optional": false
+    },
+    {
+      "display_order": 8,
+      "input_type": "number",
+      "label": "EquivDiameter",
+      "name": "EquivDiameter",
+      "optional": false
+    },
+    {
+      "display_order": 9,
+      "input_type": "number",
+      "label": "Extent",
+      "name": "Extent",
+      "optional": false
+    },
+    {
+      "display_order": 10,
+      "input_type": "number",
+      "label": "Solidity",
+      "name": "Solidity",
+      "optional": false
+    },
+    {
+      "display_order": 11,
+      "input_type": "number",
+      "label": "Roundness",
+      "name": "Roundness",
+      "optional": false
+    },
+    {
+      "display_order": 12,
+      "input_type": "number",
+      "label": "Compactness",
+      "name": "Compactness",
+      "optional": false
+    },
+    {
+      "display_order": 13,
+      "input_type": "number",
+      "label": "ShapeFactor1",
+      "name": "ShapeFactor1",
+      "optional": false
+    },
+    {
+      "display_order": 14,
+      "input_type": "number",
+      "label": "ShapeFactor2",
+      "name": "ShapeFactor2",
+      "optional": false
+    },
+    {
+      "display_order": 15,
+      "input_type": "number",
+      "label": "ShapeFactor3",
+      "name": "ShapeFactor3",
+      "optional": false
+    },
+    {
+      "display_order": 16,
+      "input_type": "number",
+      "label": "ShapeFactor4",
+      "name": "ShapeFactor4",
+      "optional": false
+    }
+  ],
+  "schema_version": "1.0.0"
+}

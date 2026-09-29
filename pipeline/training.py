@@ -33,6 +33,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from pipeline import metric_identity
+
 
 PERMITTED_EXECUTION_CONTRACT_FIELDS = frozenset({
     "contract_version",
@@ -91,8 +93,8 @@ FEATURE_IMPORTANCE_TOP_N = 10
 # Partner/Dependents as "Yes"/"No" (confirmed via discovery-evidence.json).
 _BOOLEAN_ENCODED_VALUES = frozenset({"0", "1", "true", "false", "yes", "no", "t", "f", "y", "n"})
 
-# Project Spec S0224 adds mae/rmse (continuous-regression, lower_is_better).
-_LOWER_IS_BETTER_METRICS = frozenset({"log_loss", "mae", "rmse"})
+# Metric direction comes from the canonical metric identity registry.
+_LOWER_IS_BETTER_METRICS = metric_identity.lower_is_better_training_metrics()
 
 # Project Spec S0244: execution_contract.v2 univariate-forecasting dispatch
 # identities and the closed forecasting training-interface field/metric

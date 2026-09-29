@@ -76,6 +76,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from pipeline import metric_identity
 from pipeline.authoring_contracts import validate_authoring_contracts
 from pipeline.discovery_evidence import (
     build_binary_result_semantics_intent,
@@ -588,12 +589,11 @@ EXECUTION_CONTRACT_BOUNDARY_CONFIRMATIONS = {
 # `_build_execution_contract` before this validator is consulted.
 # ---------------------------------------------------------------------------
 
-_TRAINING_POLICY_METRIC_VOCABULARY = frozenset({
-    "roc_auc", "f1", "accuracy", "log_loss", "pr_auc", "average_precision",
-    "precision", "recall", "f2", "balanced_accuracy", "brier_score",
-    "f1_macro", "f1_weighted", "precision_macro", "recall_macro",
-    "r2", "mae", "rmse",
-})
+# Every native-training metric name applicable to a tabular (v1) problem
+# type, derived from the canonical metric identity registry.
+_TRAINING_POLICY_METRIC_VOCABULARY = metric_identity.training_metric_vocabulary(
+    metric_identity.TABULAR_PROBLEM_TYPES
+)
 # Only families Atlas can actually train natively. xgboost/lightgbm were
 # never trainable and are no longer offered (they survive only as historical
 # read-only schema vocabulary for already-written training records).
@@ -642,7 +642,7 @@ _HGB_REGRESSION_OPTIONAL_HYPERPARAMETERS = frozenset({"early_stopping"})
 _HGB_REGRESSION_ALLOWED_HYPERPARAMETERS = (
     _HGB_REGRESSION_REQUIRED_HYPERPARAMETERS | _HGB_REGRESSION_OPTIONAL_HYPERPARAMETERS
 )
-_CONTINUOUS_REGRESSION_METRIC_VOCABULARY = frozenset({"r2", "mae", "rmse"})
+_CONTINUOUS_REGRESSION_METRIC_VOCABULARY = metric_identity.training_metric_vocabulary({"continuous_regression"})
 _CONTINUOUS_REGRESSION_FIXED_FAMILY_VOCABULARY = frozenset({
     "gradient_boosting", "random_forest", "hist_gradient_boosting",
 })

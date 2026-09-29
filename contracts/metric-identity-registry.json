@@ -1,0 +1,366 @@
+{
+  "schema_version": "metric-identity-registry.v1",
+  "description": "Canonical Atlas metric identity authority. metric_id is the canonical identifier used by execution contracts (primary_metric/secondary_metrics). Every layer resolves metric names through this registry: native training (aliases.training), scientific reproduction (aliases.scientific), and the public API projection (aliases.public is the published key; aliases.public_input lists additional raw names the public projection accepts). direction states whether a higher or lower value is better; sklearn_scorer is the scikit-learn scorer string used when a metric drives estimator scoring (null when no built-in scorer exists). Adding a metric is a change to this file only; historical artifacts keep the names they were written with.",
+  "metrics": [
+    {
+      "metric_id": "roc_auc",
+      "direction": "higher_is_better",
+      "problem_types": [
+        "binary_classification"
+      ],
+      "sklearn_scorer": "roc_auc",
+      "display_label": "ROC AUC",
+      "aliases": {
+        "training": [
+          "roc_auc"
+        ],
+        "scientific": [
+          "roc_auc"
+        ],
+        "public": "roc_auc",
+        "public_input": [
+          "auc_roc",
+          "auc"
+        ]
+      }
+    },
+    {
+      "metric_id": "pr_auc",
+      "direction": "higher_is_better",
+      "problem_types": [
+        "binary_classification"
+      ],
+      "sklearn_scorer": "average_precision",
+      "display_label": "PR AUC",
+      "aliases": {
+        "training": [
+          "pr_auc",
+          "average_precision"
+        ],
+        "scientific": [
+          "average_precision"
+        ],
+        "public": "pr_auc",
+        "public_input": []
+      }
+    },
+    {
+      "metric_id": "f1",
+      "direction": "higher_is_better",
+      "problem_types": [
+        "binary_classification"
+      ],
+      "sklearn_scorer": "f1",
+      "display_label": "F1 Score",
+      "aliases": {
+        "training": [
+          "f1"
+        ],
+        "scientific": [
+          "f1"
+        ],
+        "public": "f1_score",
+        "public_input": [
+          "f1_score"
+        ]
+      }
+    },
+    {
+      "metric_id": "f2",
+      "direction": "higher_is_better",
+      "problem_types": [
+        "binary_classification"
+      ],
+      "sklearn_scorer": null,
+      "display_label": "F2 Score",
+      "aliases": {
+        "training": [
+          "f2"
+        ],
+        "scientific": [
+          "f2"
+        ],
+        "public": null,
+        "public_input": []
+      }
+    },
+    {
+      "metric_id": "precision",
+      "direction": "higher_is_better",
+      "problem_types": [
+        "binary_classification"
+      ],
+      "sklearn_scorer": "precision",
+      "display_label": "Precision",
+      "aliases": {
+        "training": [
+          "precision"
+        ],
+        "scientific": [
+          "precision"
+        ],
+        "public": "precision",
+        "public_input": []
+      }
+    },
+    {
+      "metric_id": "recall",
+      "direction": "higher_is_better",
+      "problem_types": [
+        "binary_classification"
+      ],
+      "sklearn_scorer": "recall",
+      "display_label": "Recall",
+      "aliases": {
+        "training": [
+          "recall"
+        ],
+        "scientific": [
+          "recall"
+        ],
+        "public": "recall",
+        "public_input": []
+      }
+    },
+    {
+      "metric_id": "brier_score",
+      "direction": "lower_is_better",
+      "problem_types": [
+        "binary_classification"
+      ],
+      "sklearn_scorer": "neg_brier_score",
+      "display_label": "Brier Score",
+      "aliases": {
+        "training": [
+          "brier_score"
+        ],
+        "scientific": [
+          "brier_score"
+        ],
+        "public": null,
+        "public_input": []
+      }
+    },
+    {
+      "metric_id": "accuracy",
+      "direction": "higher_is_better",
+      "problem_types": [
+        "binary_classification",
+        "multiclass_classification"
+      ],
+      "sklearn_scorer": "accuracy",
+      "display_label": "Accuracy",
+      "aliases": {
+        "training": [
+          "accuracy"
+        ],
+        "scientific": [
+          "accuracy"
+        ],
+        "public": "accuracy",
+        "public_input": []
+      }
+    },
+    {
+      "metric_id": "balanced_accuracy",
+      "direction": "higher_is_better",
+      "problem_types": [
+        "binary_classification",
+        "multiclass_classification"
+      ],
+      "sklearn_scorer": "balanced_accuracy",
+      "display_label": "Balanced Accuracy",
+      "aliases": {
+        "training": [
+          "balanced_accuracy"
+        ],
+        "scientific": [
+          "balanced_accuracy"
+        ],
+        "public": "balanced_accuracy",
+        "public_input": []
+      }
+    },
+    {
+      "metric_id": "log_loss",
+      "direction": "lower_is_better",
+      "problem_types": [
+        "binary_classification",
+        "multiclass_classification"
+      ],
+      "sklearn_scorer": "neg_log_loss",
+      "display_label": "Log Loss",
+      "aliases": {
+        "training": [
+          "log_loss"
+        ],
+        "scientific": [
+          "log_loss"
+        ],
+        "public": "log_loss",
+        "public_input": []
+      }
+    },
+    {
+      "metric_id": "f1_macro",
+      "direction": "higher_is_better",
+      "problem_types": [
+        "multiclass_classification"
+      ],
+      "sklearn_scorer": "f1_macro",
+      "display_label": "Macro F1",
+      "aliases": {
+        "training": [
+          "f1_macro"
+        ],
+        "scientific": [
+          "macro_f1"
+        ],
+        "public": "f1_macro",
+        "public_input": []
+      }
+    },
+    {
+      "metric_id": "f1_weighted",
+      "direction": "higher_is_better",
+      "problem_types": [
+        "multiclass_classification"
+      ],
+      "sklearn_scorer": "f1_weighted",
+      "display_label": "Weighted F1",
+      "aliases": {
+        "training": [
+          "f1_weighted"
+        ],
+        "scientific": [
+          "weighted_f1"
+        ],
+        "public": "f1_weighted",
+        "public_input": []
+      }
+    },
+    {
+      "metric_id": "precision_macro",
+      "direction": "higher_is_better",
+      "problem_types": [
+        "multiclass_classification"
+      ],
+      "sklearn_scorer": "precision_macro",
+      "display_label": "Macro Precision",
+      "aliases": {
+        "training": [
+          "precision_macro"
+        ],
+        "scientific": [],
+        "public": "precision_macro",
+        "public_input": []
+      }
+    },
+    {
+      "metric_id": "recall_macro",
+      "direction": "higher_is_better",
+      "problem_types": [
+        "multiclass_classification"
+      ],
+      "sklearn_scorer": "recall_macro",
+      "display_label": "Macro Recall",
+      "aliases": {
+        "training": [
+          "recall_macro"
+        ],
+        "scientific": [
+          "macro_recall"
+        ],
+        "public": "recall_macro",
+        "public_input": []
+      }
+    },
+    {
+      "metric_id": "minimum_per_class_recall",
+      "direction": "higher_is_better",
+      "problem_types": [
+        "multiclass_classification"
+      ],
+      "sklearn_scorer": null,
+      "display_label": "Minimum Per-Class Recall",
+      "aliases": {
+        "training": [],
+        "scientific": [
+          "minimum_per_class_recall"
+        ],
+        "public": null,
+        "public_input": []
+      }
+    },
+    {
+      "metric_id": "mae",
+      "direction": "lower_is_better",
+      "problem_types": [
+        "continuous_regression",
+        "univariate_forecasting"
+      ],
+      "sklearn_scorer": "neg_mean_absolute_error",
+      "display_label": "MAE",
+      "aliases": {
+        "training": [
+          "mae"
+        ],
+        "scientific": [],
+        "public": "mae",
+        "public_input": []
+      }
+    },
+    {
+      "metric_id": "rmse",
+      "direction": "lower_is_better",
+      "problem_types": [
+        "continuous_regression",
+        "univariate_forecasting"
+      ],
+      "sklearn_scorer": "neg_root_mean_squared_error",
+      "display_label": "RMSE",
+      "aliases": {
+        "training": [
+          "rmse"
+        ],
+        "scientific": [],
+        "public": "rmse",
+        "public_input": []
+      }
+    },
+    {
+      "metric_id": "r2",
+      "direction": "higher_is_better",
+      "problem_types": [
+        "continuous_regression"
+      ],
+      "sklearn_scorer": "r2",
+      "display_label": "R²",
+      "aliases": {
+        "training": [
+          "r2"
+        ],
+        "scientific": [],
+        "public": "r2",
+        "public_input": []
+      }
+    },
+    {
+      "metric_id": "seasonal_mase",
+      "direction": "lower_is_better",
+      "problem_types": [
+        "univariate_forecasting"
+      ],
+      "sklearn_scorer": null,
+      "display_label": "Seasonal MASE",
+      "aliases": {
+        "training": [
+          "seasonal_mase"
+        ],
+        "scientific": [],
+        "public": "seasonal_mase",
+        "public_input": []
+      }
+    }
+  ]
+}

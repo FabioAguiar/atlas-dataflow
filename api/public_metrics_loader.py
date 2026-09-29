@@ -25,43 +25,20 @@ import os
 from pathlib import Path
 from typing import Any
 
+from registry.metric_identity import public_metric_aliases
+
 _REPO_ROOT = Path(__file__).parent.parent
 
 _METRICS_ROLE = "metrics"
 
-# Bounded, explicit alias table (S0127): unknown metric identifiers are
-# never silently renamed into a supported metric and are simply omitted
-# from the public projection.
-_METRIC_ALIASES: dict[str, str] = {
-    "roc_auc": "roc_auc",
-    "auc_roc": "roc_auc",
-    "auc": "roc_auc",
-    "f1": "f1_score",
-    "f1_score": "f1_score",
-    "pr_auc": "pr_auc",
-    "average_precision": "pr_auc",
-    "precision": "precision",
-    "recall": "recall",
-    "accuracy": "accuracy",
-    "log_loss": "log_loss",
-    # Project Spec S0215: explicit multiclass aggregate metric ids, each
-    # projected 1:1 -- never aliased into the ambiguous binary-era
-    # f1_score/precision/recall ids, since those erase averaging semantics.
-    "balanced_accuracy": "balanced_accuracy",
-    "f1_macro": "f1_macro",
-    "f1_weighted": "f1_weighted",
-    "precision_macro": "precision_macro",
-    "recall_macro": "recall_macro",
-    # Project Spec S0227: bounded explicit continuous-regression metric ids,
-    # each projected 1:1 -- never aliased into a classification metric id.
-    "r2": "r2",
-    "mae": "mae",
-    "rmse": "rmse",
-    # Project Spec S0247: bounded explicit univariate-forecasting metric id,
-    # projected 1:1 -- shares the mae/rmse identity above (never a duplicate
-    # alias with different semantics).
-    "seasonal_mase": "seasonal_mase",
-}
+# Bounded, explicit alias table (S0127), derived from the canonical metric
+# identity registry (contracts/metric-identity-registry.json via
+# registry/metric_identity.py): unknown metric identifiers are never silently
+# renamed into a supported metric and are simply omitted from the public
+# projection. Multiclass aggregates (f1_macro, ...), regression and
+# forecasting ids are each projected 1:1 -- never aliased into the ambiguous
+# binary-era f1_score/precision/recall ids.
+_METRIC_ALIASES: dict[str, str] = public_metric_aliases()
 
 # Project Spec S0191: schema_version discriminator for the external
 # fitted-model training-metrics profile, dispatched on explicitly (never by

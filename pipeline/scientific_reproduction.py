@@ -62,7 +62,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from pipeline import model_families, scientific_environment
+from pipeline import metric_identity, model_families, scientific_environment
 from pipeline.scientific_study_contract import (
     BINARY,
     MULTICLASS,
@@ -2100,15 +2100,10 @@ def _answer_v2_questions(report: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-# Canonical metric identities: native Atlas metric names mapped to the
-# scientific vocabulary (binary "pr_auc" is computed with
+# Native Atlas metric names mapped to the scientific vocabulary, derived from
+# the canonical metric identity registry (binary "pr_auc" is computed with
 # average_precision_score; multiclass native names use sklearn's suffix style).
-NATIVE_METRIC_ALIASES = {
-    "pr_auc": "average_precision",
-    "f1_macro": "macro_f1",
-    "f1_weighted": "weighted_f1",
-    "recall_macro": "macro_recall",
-}
+NATIVE_METRIC_ALIASES = metric_identity.native_to_scientific_metric_aliases()
 
 
 def describe_lineage_separation(report: Mapping[str, Any], *, repo_root: Path) -> dict[str, Any]:

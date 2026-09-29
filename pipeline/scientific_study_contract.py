@@ -9,7 +9,7 @@ and are immutable: a changed study revision gets a new directory.
 
 Two schema versions are accepted and never rewritten into each other:
 
-* ``scientific-study-contract.v1`` -- binary classification only (Telco);
+* ``scientific-study-contract.v1`` -- binary classification only;
 * ``scientific-study-contract.v2`` -- binary and multiclass classification,
   with problem-type conditional rules (a multiclass contract must declare
   ``positive_class`` and ``threshold_policy`` as explicitly not applicable and

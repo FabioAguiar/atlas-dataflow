@@ -69,6 +69,9 @@ _FAKE_MODEL_CARD = {
     "model_summary": "Fixture model.",
     "problem_type": "binary_classification",
     "prediction_target": "fixture_target",
+    # The execution contract's primary metric as recorded by training into
+    # the release model card (native name "f1" -> published key "f1_score").
+    "evaluation": {"primary_metric_name": "f1"},
 }
 
 _FAKE_REGISTRY = {
@@ -204,7 +207,10 @@ def test_missing_model_card_artifact_omits_model_label_deterministically():
 
     assert result["sources_used"]["model_card"] is False
     assert result["profile"]["result_card"]["model_section_label"] == "Model"
-    assert result["profile"]["home_card"]["primary_metric_key"] == "f1_score"
+    # Without the model card the release's primary metric is genuinely
+    # unavailable, so the generic fallback takes the first published metric
+    # in the release's own metric order -- never a fixed preference list.
+    assert result["profile"]["home_card"]["primary_metric_key"] == "accuracy"
 
 
 def test_invalid_json_model_card_omits_model_label_deterministically():
@@ -310,3 +316,75 @@ if __name__ == "__main__":
     import pytest
 
     raise SystemExit(pytest.main([__file__, "-v"]))
+
+
+# ---------------------------------------------------------------------------
+# Headline metric comes from the release's contract primary metric
+# ---------------------------------------------------------------------------
+
+def test_fallback_has_no_fixed_metric_preference_list():
+    assert not hasattr(public_profile_fallback, "_METRIC_PREFERENCE_ORDER")
+    source = Path(public_profile_fallback.__file__).read_text(encoding="utf-8")
+    assert "auc_roc" not in source
+
+
+def test_primary_metric_not_published_falls_back_to_first_published_metric():
+    with tempfile.TemporaryDirectory() as tmp:
+        fake_repo = _build_fake_repo(Path(tmp), manifest_artifacts=_FULL_MANIFEST_ARTIFACTS)
+        model_card_path = fake_repo / "releases" / _FAKE_RELEASE_ID / "model-card.json"
+        model_card = json.loads(model_card_path.read_text(encoding="utf-8"))
+        model_card["evaluation"] = {"primary_metric_name": "roc_auc"}
+        model_card_path.write_text(json.dumps(model_card), encoding="utf-8")
+        result = generate_fallback_profile("fixture-dataset", repo_root=fake_repo)
+
+    assert result["profile"]["home_card"]["primary_metric_key"] == "accuracy"
+
+
+def test_unknown_primary_metric_name_falls_back_generically():
+    selected = public_profile_fallback._select_primary_metric_key(
+        {"evaluation": {"metrics": {"mae": 1.0, "rmse": 2.0}}, "metric_order": ["rmse", "mae"]},
+        {"evaluation": {"primary_metric_name": "not_a_metric"}},
+    )
+    assert selected == "rmse"
+
+
+def test_projection_primary_metric_id_is_used_when_release_designates_one():
+    selected = public_profile_fallback._select_primary_metric_key(
+        {
+            "evaluation": {"metrics": {"rmse": 2.0, "mae": 1.0}},
+            "primary_metric_id": "mae",
+            "metric_order": ["rmse", "mae"],
+        },
+        None,
+    )
+    assert selected == "mae"
+
+
+def _real_contract_primary_metric(dataset_slug: str) -> str:
+    contract = json.loads(
+        (REPO_ROOT / "contracts" / dataset_slug / "execution-contract.json").read_text(encoding="utf-8")
+    )
+    if contract["contract_version"] == "execution_contract.v2":
+        return contract["evaluation_policy"]["primary_metric"]["metric_id"]
+    return contract["primary_metric"]
+
+
+def test_real_releases_headline_matches_contract_primary_metric():
+    # Uses the real registry/releases read-only; the expected values are the
+    # governed execution contracts' own primary metrics.
+    expected = {
+        "telco-customer-churn": "roc_auc",
+        "dry-bean": "f1_macro",
+        "concrete-compressive-strength": "mae",
+        "nottem": "mae",
+    }
+    registry = json.loads((REPO_ROOT / "registry" / "datasets.json").read_text(encoding="utf-8"))
+    for entry in registry["datasets"]:
+        dataset_slug = entry["dataset_slug"]
+        result = generate_fallback_profile(dataset_slug, repo_root=REPO_ROOT)
+        headline = result["profile"]["home_card"]["primary_metric_key"]
+        assert headline == public_profile_fallback.public_metric_key(
+            _real_contract_primary_metric(dataset_slug)
+        ), dataset_slug
+        if dataset_slug in expected:
+            assert headline == expected[dataset_slug]

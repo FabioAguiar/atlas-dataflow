@@ -13,6 +13,8 @@ or directly:
 """
 
 import sys
+
+import pytest
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent.parent
@@ -224,6 +226,55 @@ def test_primary_metric_key_not_found_rejected():
     )
     assert result["valid"] is False
     assert "PRIMARY_METRIC_KEY_NOT_FOUND" in _codes(result)
+
+
+_MODERN_BINARY_RELEASE_METRICS = {
+    "schema_version": "training-metrics.v5",
+    "final_test_evaluation": {
+        "completed": True,
+        "metrics": [
+            {"name": "roc_auc", "value": 0.85},
+            {"name": "f1", "value": 0.61},
+            {"name": "pr_auc", "value": 0.67},
+        ],
+    },
+}
+
+
+@pytest.mark.parametrize("primary_metric_key", ["roc_auc", "f1_score", "pr_auc"])
+def test_primary_metric_key_accepts_published_keys_of_current_training_metrics(primary_metric_key):
+    # Current training-metrics artifacts declare metrics by native name in
+    # their sealed evaluation partition; the profile references the published
+    # key-space (canonical metric identity), e.g. native "f1" -> "f1_score".
+    result = validate_profile_references(
+        _profile(home_card={"primary_metric_key": primary_metric_key}),
+        _MOCK_PREDICT_VIEWS_REGISTRY,
+        _MODERN_BINARY_RELEASE_METRICS,
+    )
+    assert "PRIMARY_METRIC_KEY_NOT_FOUND" not in _codes(result)
+
+
+@pytest.mark.parametrize("primary_metric_key", ["f1_macro", "accuracy", "nonexistent_metric"])
+def test_primary_metric_key_rejects_keys_the_release_does_not_publish(primary_metric_key):
+    result = validate_profile_references(
+        _profile(home_card={"primary_metric_key": primary_metric_key}),
+        _MOCK_PREDICT_VIEWS_REGISTRY,
+        _MODERN_BINARY_RELEASE_METRICS,
+    )
+    assert "PRIMARY_METRIC_KEY_NOT_FOUND" in _codes(result)
+
+
+def test_primary_metric_key_accepts_forecasting_final_holdout_metrics():
+    release_metrics = {
+        "schema_version": "training-metrics.v4",
+        "final_holdout_evaluation": {"metrics": [{"name": "mae", "value": 1.5}, {"name": "seasonal_mase", "value": 0.5}]},
+    }
+    result = validate_profile_references(
+        _profile(home_card={"primary_metric_key": "mae"}),
+        _MOCK_PREDICT_VIEWS_REGISTRY,
+        release_metrics,
+    )
+    assert "PRIMARY_METRIC_KEY_NOT_FOUND" not in _codes(result)
 
 
 def test_both_references_invalid_accumulates_both_errors():

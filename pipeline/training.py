@@ -78,11 +78,12 @@ CONTROLLED_ENTRYPOINT_PROVENANCE_VERSION = "controlled-entrypoint-provenance.v1"
 ANALYTICAL_VISUALIZATIONS_SCHEMA_VERSION = "analytical-visualizations.v1"
 FEATURE_IMPORTANCE_TOP_N = 10
 
-# Columns that must never enter training as a model feature, regardless of
-# what a given execution contract declares (Project Spec S0026). customerID
-# is a raw record identifier, never a predictive feature, for every dataset
-# this entrypoint has been asked to govern so far.
-PROHIBITED_TRAINING_FEATURE_COLUMNS = frozenset({"customerID"})
+# Columns that must never enter training as a model feature are declared by
+# the execution contract itself (Project Spec S0026): `ignored_columns` holds
+# every identifier/ignored column the governed modeling intent excluded
+# (semantic role "identifier" included). Training never keeps its own list of
+# concrete column names -- a dataset's identifier ("id", "RowNumber", ...) is
+# protected purely by its contract, with no code edit.
 
 # Accepted on-disk encodings for an execution-contract `boolean` feature type
 # (Project Spec S0026). Telco's own raw CSV alone uses two different
@@ -354,17 +355,35 @@ def _load_execution_contract(path: Path) -> dict[str, Any]:
             "execution contract feature_columns must be a non-empty array.",
             field="feature_columns",
         )
-    prohibited = PROHIBITED_TRAINING_FEATURE_COLUMNS.intersection(reduced["feature_columns"])
+    prohibited = _contract_prohibited_feature_columns(contract).intersection(reduced["feature_columns"])
     if prohibited:
         raise TrainingInputError(
             "prohibited_training_feature",
             (
-                "execution contract feature_columns must not include prohibited "
-                f"columns: {sorted(prohibited)}."
+                "execution contract feature_columns must not include columns the contract "
+                f"itself declares as ignored/identifier columns: {sorted(prohibited)}."
             ),
             field="feature_columns",
         )
     return reduced
+
+
+def _contract_prohibited_feature_columns(contract: dict[str, Any]) -> frozenset[str]:
+    """Columns the execution contract excludes from modeling (its
+    `ignored_columns`, which carries every identifier column). Contract
+    authority only -- never a hardcoded column name."""
+    ignored_columns = contract.get("ignored_columns")
+    if ignored_columns is None:
+        return frozenset()
+    if not isinstance(ignored_columns, list) or not all(
+        isinstance(column, str) for column in ignored_columns
+    ):
+        raise TrainingInputError(
+            "invalid_contract_field",
+            "execution contract ignored_columns must be an array of column names.",
+            field="ignored_columns",
+        )
+    return frozenset(ignored_columns)
 
 
 def _is_missing_dataset_value(value: Any) -> bool:

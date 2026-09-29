@@ -16,11 +16,25 @@ Evidence lineages kept strictly apart:
 ``atlas_release``                 publisher/registry state; a reproduction
                                   never creates, modifies, or activates one.
 
-Every metric set the engine emits carries provenance (producer lineage, run,
-study revision, dataset hash, partition and its membership hash, model, the
-threshold and the rule that produced it, and the protocol). Reference values
-are only ever used on the *expected* side of a comparison; they are never
-copied into the reproduced results.
+The engine is generic. Everything problem-specific is dispatched on the
+contract's ``problem.problem_type`` through a task adapter
+(``binary_classification`` or ``multiclass_classification``); nothing is
+dispatched on a dataset slug. The adapter owns target representation, the
+cross-validation scorers, candidate evaluation, the decision stage (a
+threshold policy for binary problems, an explicit *not applicable* record and
+the argmax rule for multiclass problems), and the final test evaluation.
+Protocol stages shared by every problem type (dataset identity, preparation,
+split with membership evidence and gates, family search, family shortlist,
+feature-policy stage, practical-tie selection, final fit, comparison,
+status) live once in this module.
+
+Every metric set the engine emits carries provenance (producer lineage,
+metric scope, run, study revision, dataset hash, partition and its membership
+hash, model and feature policy, the threshold or its explicit
+not-applicable record, class order, and the protocol). Reference values are
+only ever used on the *expected* side of a comparison or as a protocol gate
+(a precondition that stops execution); they are never copied into the
+reproduced results.
 
 Typical use (a thin notebook or an orchestrator task per step)::
 
@@ -42,6 +56,7 @@ import json
 import math
 import re
 import time
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -49,6 +64,8 @@ from typing import Any, Mapping, Sequence
 
 from pipeline import model_families, scientific_environment
 from pipeline.scientific_study_contract import (
+    BINARY,
+    MULTICLASS,
     ScientificStudyContract,
     assess_protocol_support,
     load_scientific_study_contract,
@@ -56,13 +73,19 @@ from pipeline.scientific_study_contract import (
 )
 
 
-REPORT_SCHEMA_VERSION = "scientific-reproduction-report.v1"
-REPORT_SCHEMA_PATH = Path(__file__).resolve().parent / "scientific-reproduction-report.schema.json"
+REPORT_SCHEMA_VERSION_V1 = "scientific-reproduction-report.v1"
+REPORT_SCHEMA_VERSION = "scientific-reproduction-report.v2"
+_SCHEMA_DIR = Path(__file__).resolve().parent
+REPORT_SCHEMA_PATHS: Mapping[str, Path] = {
+    REPORT_SCHEMA_VERSION_V1: _SCHEMA_DIR / "scientific-reproduction-report.schema.json",
+    REPORT_SCHEMA_VERSION: _SCHEMA_DIR / "scientific-reproduction-report.v2.schema.json",
+}
+REPORT_SCHEMA_PATH = REPORT_SCHEMA_PATHS[REPORT_SCHEMA_VERSION]
 REPORT_FILENAME = "reproduction-report.json"
 SEARCH_RESULTS_FILENAME = "search-results.json"
 RUNS_ROOT_RELATIVE = "pipeline/scientific-reproduction-runs"
 ENGINE_ID = "pipeline/scientific_reproduction.py"
-ENGINE_VERSION = "2"
+ENGINE_VERSION = "3"
 
 RUN_KIND = "scientific_reproduction_run"
 STUDY_RUN_KIND = "scientific_study_run"
@@ -93,6 +116,15 @@ OUTCOME_WITHIN = "within_tolerance"
 OUTCOME_OUTSIDE = "outside_tolerance"
 OUTCOME_MISMATCH = "mismatch"
 OUTCOME_MISSING = "not_produced_by_reproduction"
+
+# Metric-set scopes (lineage of every emitted metric set).
+SCOPE_BASELINE_VALIDATION = "baseline_validation"
+SCOPE_FAMILY_SEARCH_CV = "family_search_cv"
+SCOPE_FEATURE_POLICY_CV = "feature_policy_cv"
+SCOPE_CANDIDATE_VALIDATION = "candidate_validation"
+SCOPE_FINAL_TEST = "scientific_final_test"
+
+THRESHOLD_NOT_APPLICABLE_REASON = "multiclass_argmax_decision"
 
 _FLOAT_EQUALITY_ABS_TOL = 1e-12
 
@@ -126,6 +158,8 @@ def _jsonable(value: Any) -> Any:
         return {str(k): _jsonable(v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
         return [_jsonable(v) for v in value]
+    if hasattr(value, "tolist") and not isinstance(value, (str, bytes)) and getattr(value, "ndim", 0) > 0:
+        return _jsonable(value.tolist())
     if hasattr(value, "item") and not isinstance(value, (str, bytes)):
         try:
             return value.item()
@@ -152,6 +186,16 @@ def _normalize_scalar(value: Any) -> Any:
     return value
 
 
+def not_applicable(reason: str) -> dict[str, Any]:
+    """Explicit not-applicable record (distinct from a missing value / null)."""
+    return {"applicable": False, "reason": reason}
+
+
+# --------------------------------------------------------------------------
+# partition membership evidence
+# --------------------------------------------------------------------------
+
+
 def _membership_keys(frame: Any, identifier_columns: Sequence[str]) -> list[str]:
     return [
         json.dumps(
@@ -168,6 +212,72 @@ def membership_sha256(frame: Any, identifier_columns: Sequence[str]) -> str:
     """SHA-256 of the sorted identifier keys of a partition (order independent)."""
     keys = sorted(_membership_keys(frame, identifier_columns))
     return _sha256_bytes("\n".join(keys).encode("utf-8"))
+
+
+def _canonical_row_scalar(value: Any) -> dict[str, Any]:
+    normalized = _normalize_scalar(value)
+    if isinstance(normalized, bool):
+        return {"type": "bool", "value": normalized}
+    if isinstance(normalized, float):
+        if not math.isfinite(normalized):
+            raise ScientificReproductionError("non_finite_membership_value",
+                                              "row-occurrence membership cannot fingerprint non-finite values")
+        return {"type": "number", "value": format(normalized, ".15g")}
+    if isinstance(normalized, int):
+        return {"type": "number", "value": str(normalized)}
+    if normalized is None:
+        return {"type": "null", "value": None}
+    return {"type": "string", "value": str(normalized)}
+
+
+def row_occurrence_membership_keys(frame: Any) -> list[str]:
+    """Technical membership tokens for sources without an identifier.
+
+    Each row gets ``row-occurrence-v1:<sha256 of canonical row>:<ordinal>``
+    where the ordinal counts earlier source rows with identical content. The
+    token is partition evidence only; it neither becomes a predictor nor
+    claims that equal rows are the same real-world entity.
+    """
+    occurrences: Counter[str] = Counter()
+    keys: list[str] = []
+    for row in frame.itertuples(index=False, name=None):
+        payload = [_canonical_row_scalar(v) for v in row]
+        digest = _sha256_bytes(json.dumps(payload, ensure_ascii=False, sort_keys=True,
+                                          separators=(",", ":"), allow_nan=False).encode("utf-8"))
+        ordinal = occurrences[digest]
+        occurrences[digest] += 1
+        keys.append(f"row-occurrence-v1:{digest}:{ordinal:08d}")
+    return keys
+
+
+def membership_spec(split: Mapping[str, Any]) -> dict[str, Any]:
+    """Normalize the membership declaration (v1 contracts imply identifier keys)."""
+    declared = split.get("membership")
+    if declared:
+        return dict(declared)
+    return {"kind": "identifier", "digest_order": "sorted_keys"}
+
+
+def source_membership_keys(frame: Any, spec: Mapping[str, Any], identifier_columns: Sequence[str]) -> list[str]:
+    if spec["kind"] == "identifier":
+        if not identifier_columns:
+            raise ScientificReproductionError("identifier_membership_without_identifier",
+                                              "identifier membership requires identifier columns")
+        return _membership_keys(frame, identifier_columns)
+    if spec["kind"] == "technical_row_occurrence":
+        return row_occurrence_membership_keys(frame)
+    raise ScientificReproductionError("unsupported_membership_kind", str(spec["kind"]))
+
+
+def membership_digest(keys: Sequence[str], digest_order: str) -> str:
+    ordered = sorted(keys) if digest_order == "sorted_keys" else list(keys)
+    return _sha256_bytes("\n".join(ordered).encode("utf-8"))
+
+
+def partition_csv_sha256(frame: Any, float_format: str | None = None) -> str:
+    buffer = io.StringIO(newline="")
+    frame.to_csv(buffer, index=False, lineterminator="\n", float_format=float_format)
+    return _sha256_bytes(buffer.getvalue().encode("utf-8"))
 
 
 # --------------------------------------------------------------------------
@@ -258,23 +368,30 @@ def apply_preparation(frame: Any, preparation: Mapping[str, Any]) -> tuple[Any, 
 # --------------------------------------------------------------------------
 
 
-def split_two_stage_stratified(frame: Any, split: Mapping[str, Any], identifier_columns: Sequence[str]) -> dict[str, Any]:
-    """Identifier-ordered two-stage stratified holdout.
+def split_two_stage_stratified_with_membership(
+    frame: Any, split: Mapping[str, Any], identifier_columns: Sequence[str]
+) -> tuple[dict[str, Any], dict[str, list[str]]]:
+    """Membership-ordered two-stage stratified holdout.
 
-    Rows are ordered by their identifier key before splitting so membership
-    does not depend on input row order; partitions are returned in source row
-    order.
+    Membership keys (identifier tuples, or technical row-occurrence tokens
+    when the source has no identifier) are computed on the whole source.
+    Rows are ordered by key before ``train_test_split`` so membership does not
+    depend on input row order; each partition is returned in source row order
+    together with the keys of its rows in that order.
     """
     from sklearn.model_selection import train_test_split
 
     fractions = split["fractions"]
     stratify_by = split["stratify_by"]
+    spec = membership_spec(split)
     working = frame.copy(deep=True)
     working["__source_position__"] = range(len(working))
+    keys: list[str] | None = None
     if split.get("order_by_identifier", True):
-        working["__membership_key__"] = _membership_keys(working, identifier_columns)
+        keys = source_membership_keys(frame, spec, identifier_columns)
+        working["__membership_key__"] = keys
         if working["__membership_key__"].duplicated().any():
-            raise ScientificReproductionError("duplicate_identifier", "identifier keys must be unique")
+            raise ScientificReproductionError("duplicate_identifier", "membership keys must be unique")
         canonical = working.sort_values("__membership_key__", kind="stable").reset_index(drop=True)
     else:
         canonical = working.reset_index(drop=True)
@@ -296,22 +413,38 @@ def split_two_stage_stratified(frame: Any, split: Mapping[str, Any], identifier_
         stratify=temporary[stratify_by],
     )
 
-    def project(selected: Sequence[int]) -> Any:
+    partitions: dict[str, Any] = {}
+    partition_keys: dict[str, list[str]] = {}
+    for name, selected in (("train", train_pos), ("validation", validation_pos), ("test", test_pos)):
         source_positions = sorted(int(v) for v in canonical.iloc[list(selected)]["__source_position__"])
-        return frame.iloc[source_positions].copy(deep=True)
-
-    return {"train": project(train_pos), "validation": project(validation_pos), "test": project(test_pos)}
-
-
-_SPLITTERS = {"two_stage_stratified_holdout": split_two_stage_stratified}
+        partitions[name] = frame.iloc[source_positions].copy(deep=True)
+        partition_keys[name] = [keys[p] for p in source_positions] if keys is not None else []
+    return partitions, partition_keys
 
 
-def csv_roundtrip(frame: Any) -> Any:
+def split_two_stage_stratified(frame: Any, split: Mapping[str, Any], identifier_columns: Sequence[str]) -> dict[str, Any]:
+    """Backward-compatible splitter returning only the partitions."""
+    return split_two_stage_stratified_with_membership(frame, split, identifier_columns)[0]
+
+
+_SPLITTERS = {"two_stage_stratified_holdout": split_two_stage_stratified_with_membership}
+
+
+def _handoff_spec(split: Mapping[str, Any]) -> dict[str, Any]:
+    declared = split.get("partition_handoff")
+    if declared is None:
+        return {"kind": "in_memory"}
+    if isinstance(declared, str):
+        return {"kind": declared}
+    return dict(declared)
+
+
+def csv_roundtrip(frame: Any, float_format: str | None = None) -> Any:
     """Serialize and re-read a partition the way a file-based study handoff does."""
     import pandas as pd
 
     buffer = io.StringIO()
-    frame.to_csv(buffer, index=False, lineterminator="\n")
+    frame.to_csv(buffer, index=False, lineterminator="\n", float_format=float_format)
     buffer.seek(0)
     return pd.read_csv(buffer)
 
@@ -321,15 +454,29 @@ def csv_roundtrip(frame: Any) -> Any:
 # --------------------------------------------------------------------------
 
 
-def build_candidate_pipeline(candidate: Mapping[str, Any], contract: Mapping[str, Any], task_type: str, extra_params: Mapping[str, Any] | None = None) -> Any:
+def build_candidate_pipeline(
+    candidate: Mapping[str, Any],
+    contract: Mapping[str, Any],
+    task_type: str,
+    extra_params: Mapping[str, Any] | None = None,
+    feature_columns: Sequence[str] | None = None,
+) -> Any:
+    """Preprocessing + registry estimator; ``feature_columns`` projects features.
+
+    A projection keeps the contract's feature order and roles; it never
+    reorders or re-types columns.
+    """
     from sklearn.compose import ColumnTransformer
     from sklearn.pipeline import Pipeline
     from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
     preprocessing = contract["preprocessing"]
     categorical_spec = preprocessing.get("categorical", {})
-    numerical = list(contract["features"]["numerical"])
-    categorical = list(contract["features"]["categorical"])
+    selected = set(feature_columns) if feature_columns is not None else None
+    numerical = [c for c in contract["features"]["numerical"] if selected is None or c in selected]
+    categorical = [c for c in contract["features"]["categorical"] if selected is None or c in selected]
+    if feature_columns is not None and len(numerical) + len(categorical) != len(set(feature_columns)):
+        raise ScientificReproductionError("unknown_projected_feature", "feature projection names unknown features")
     transformers: list[tuple[str, Any, list[str]]] = []
     if numerical:
         scaler: Any = StandardScaler() if candidate["numerical_scaling"] == "standard" else "passthrough"
@@ -373,6 +520,27 @@ def _scoring(positive_label: int) -> dict[str, Any]:
     }
 
 
+# Multiclass metric name -> (scorer key, sklearn scorer string).
+MULTICLASS_CV_SCORERS: Mapping[str, tuple[str, str]] = {
+    "macro_f1": ("macro_f1", "f1_macro"),
+    "balanced_accuracy": ("balanced_accuracy", "balanced_accuracy"),
+    "macro_recall": ("macro_recall", "recall_macro"),
+    "weighted_f1": ("weighted_f1", "f1_weighted"),
+    "accuracy": ("accuracy", "accuracy"),
+    "log_loss": ("neg_log_loss", "neg_log_loss"),
+}
+
+
+def multiclass_scoring(metrics: Sequence[str]) -> dict[str, str]:
+    scoring = {}
+    for metric in metrics:
+        if metric not in MULTICLASS_CV_SCORERS:
+            raise ScientificReproductionError("unsupported_cv_scorer", metric)
+        key, scorer = MULTICLASS_CV_SCORERS[metric]
+        scoring[key] = scorer
+    return scoring
+
+
 def _cross_validator(spec: Mapping[str, Any]) -> Any:
     from sklearn.model_selection import StratifiedKFold
 
@@ -381,16 +549,48 @@ def _cross_validator(spec: Mapping[str, Any]) -> Any:
     return StratifiedKFold(n_splits=int(spec["n_splits"]), shuffle=bool(spec["shuffle"]), random_state=spec["random_state"])
 
 
-def run_candidate_search(candidate: Mapping[str, Any], contract: Mapping[str, Any], x_train: Any, y_train: Any, *, n_jobs: int, task_type: str) -> dict[str, Any]:
+def _cv_summary(results: Mapping[str, Any], scoring: Mapping[str, Any], refit: str, index: int | None,
+                n_splits: int, z_value: float) -> dict[str, float]:
+    """Natural-orientation CV means for every scorer; std and CI for the refit metric.
+
+    ``index`` selects a row of ``cv_results_``; ``None`` reads a
+    ``cross_validate`` result (population standard deviation, as scikit-learn
+    reports for searches).
+    """
+    import numpy as np
+
+    summary: dict[str, float] = {}
+    for scorer in scoring:
+        sign = -1.0 if scorer.startswith("neg_") else 1.0
+        name = scorer.removeprefix("neg_")
+        if index is None:
+            values = np.asarray(results[f"test_{scorer}"], dtype=float)
+            mean, std = float(sign * values.mean()), float(values.std(ddof=0))
+        else:
+            mean, std = sign * float(results[f"mean_test_{scorer}"][index]), float(results[f"std_test_{scorer}"][index])
+        summary[f"{name}_mean"] = mean
+        if scorer == refit:
+            half = z_value * std / math.sqrt(n_splits)
+            summary[f"{name}_std"] = std
+            summary[f"{name}_ci_lower"] = mean - half
+            summary[f"{name}_ci_upper"] = mean + half
+    return summary
+
+
+def run_candidate_search(candidate: Mapping[str, Any], contract: Mapping[str, Any], x_train: Any, y_train: Any, *,
+                         n_jobs: int, task_type: str, scoring: Mapping[str, Any] | None = None) -> dict[str, Any]:
     from sklearn.model_selection import GridSearchCV, ParameterGrid, RandomizedSearchCV
 
     search = candidate["search"]
     space = {f"model__{name}": list(values) for name, values in search.get("space", {}).items()}
     pipeline = build_candidate_pipeline(candidate, contract, task_type)
     cv_spec = contract["cross_validation"]
+    if scoring is None:
+        target = contract["problem"]["target"]
+        scoring = _scoring(int(target["encoding"][str(target["positive_class"])]))
     common = dict(
         estimator=pipeline,
-        scoring=_scoring(int(contract["problem"]["target"]["encoding"][str(contract["problem"]["target"]["positive_class"])])),
+        scoring=dict(scoring),
         refit=contract["metrics"].get("refit", contract["metrics"]["primary"]),
         cv=_cross_validator(cv_spec),
         n_jobs=n_jobs,
@@ -405,6 +605,12 @@ def run_candidate_search(candidate: Mapping[str, Any], contract: Mapping[str, An
         expected = min(int(search["n_iter"]), len(ParameterGrid(space)))
     else:
         raise ScientificReproductionError("unsupported_search_kind", search["kind"])
+    declared = search.get("expected_candidate_count")
+    if declared is not None and int(declared) != expected:
+        raise ScientificReproductionError(
+            "declared_candidate_count_mismatch",
+            f"{candidate['model_id']}: contract declares {declared} candidates, the declared space yields {expected}",
+        )
     started = time.perf_counter()
     searcher.fit(x_train, y_train)
     duration = time.perf_counter() - started
@@ -419,11 +625,9 @@ def run_candidate_search(candidate: Mapping[str, Any], contract: Mapping[str, An
     z_value = float(contract["selection"].get("practical_tie", {}).get("cv_interval_z", 1.96))
     refit = common["refit"]
 
-    def cv_values(scorer: str, index: int) -> tuple[str, float, float]:
-        # sklearn exposes losses as negated scores; report them in their natural orientation.
+    def natural(scorer: str, index: int) -> tuple[str, float]:
         sign = -1.0 if scorer.startswith("neg_") else 1.0
-        return (scorer.removeprefix("neg_"), sign * float(results[f"mean_test_{scorer}"][index]),
-                float(results[f"std_test_{scorer}"][index]))
+        return scorer.removeprefix("neg_"), sign * float(results[f"mean_test_{scorer}"][index])
 
     summary: dict[str, Any] = {
         "candidate_count_executed": executed,
@@ -431,22 +635,18 @@ def run_candidate_search(candidate: Mapping[str, Any], contract: Mapping[str, An
         "best_index": best,
         "best_params": {name.removeprefix("model__"): _jsonable(value) for name, value in searcher.best_params_.items()},
         "refit_metric": refit,
+        "search_strategy": type(searcher).__name__,
+        "search_random_state": search.get("random_state") if search["kind"] == "randomized" else None,
         "search_duration_seconds": round(duration, 3),
+        "best_score": float(searcher.best_score_),
     }
-    for scorer in common["scoring"]:
-        name, mean, std = cv_values(scorer, best)
-        summary[f"{name}_mean"] = mean
-        if scorer == refit:
-            half = z_value * std / math.sqrt(n_splits)
-            summary[f"{name}_std"] = std
-            summary[f"{name}_ci_lower"] = mean - half
-            summary[f"{name}_ci_upper"] = mean + half
+    summary.update(_cv_summary(results, common["scoring"], refit, best, n_splits, z_value))
     table = [
         {
             "candidate_index": index,
             "params": {k.removeprefix("model__"): _jsonable(v) for k, v in params.items()},
             f"rank_{refit}": int(results[f"rank_test_{refit}"][index]),
-            **{f"mean_{cv_values(s, index)[0]}": cv_values(s, index)[1] for s in common["scoring"]},
+            **{f"mean_{natural(s, index)[0]}": natural(s, index)[1] for s in common["scoring"]},
             f"std_{refit}": float(results[f"std_test_{refit}"][index]),
         }
         for index, params in enumerate(results["params"])
@@ -496,7 +696,172 @@ def probability_metrics(y_true: Sequence[int], probabilities: Sequence[float]) -
 
 
 # --------------------------------------------------------------------------
-# step 4: selection and threshold rules
+# multiclass evaluation with explicit class-order provenance
+# --------------------------------------------------------------------------
+
+
+def align_probabilities_to_class_order(
+    raw_probabilities: Any,
+    estimator_classes: Sequence[Any],
+    target_order: Sequence[Any],
+    *,
+    expected_estimator_order: Sequence[Any] | None = None,
+) -> Any:
+    """Map probability columns to classes through ``estimator.classes_``.
+
+    Column ``j`` of ``raw_probabilities`` belongs to ``estimator_classes[j]``
+    -- never to the j-th class of any other order. The result has one column
+    per class of ``target_order``, in that order. A missing class, an extra
+    class, a shape mismatch, or (when declared) an estimator order different
+    from the contract's fails explicitly.
+    """
+    import numpy as np
+
+    matrix = np.asarray(raw_probabilities, dtype=float)
+    fitted = [str(c) for c in estimator_classes]
+    wanted = [str(c) for c in target_order]
+    if matrix.ndim != 2 or matrix.shape[1] != len(fitted):
+        raise ScientificReproductionError("probability_shape_mismatch",
+                                          f"probability matrix shape {matrix.shape} does not match {len(fitted)} estimator classes")
+    missing = [c for c in wanted if c not in fitted]
+    extra = [c for c in fitted if c not in wanted]
+    if missing or extra or len(set(fitted)) != len(fitted):
+        raise ScientificReproductionError("probability_class_mismatch",
+                                          f"estimator classes differ from the class contract (missing={missing}, extra={extra})")
+    if expected_estimator_order is not None and fitted != [str(c) for c in expected_estimator_order]:
+        raise ScientificReproductionError("estimator_class_order_mismatch",
+                                          f"fitted estimator class order {fitted} differs from the contract's "
+                                          f"{[str(c) for c in expected_estimator_order]}")
+    index = {label: position for position, label in enumerate(fitted)}
+    return matrix[:, [index[c] for c in wanted]].copy()
+
+
+def multiclass_log_loss(y_true: Sequence[Any], probabilities: Any, class_order: Sequence[Any]) -> float:
+    """Mean negative log probability of the observed class (clipped at float eps).
+
+    ``probabilities`` columns must already be in ``class_order``; the
+    observed class is located by label, never by lexicographic position.
+    """
+    import numpy as np
+
+    matrix = np.asarray(probabilities, dtype=float)
+    classes = [str(c) for c in class_order]
+    if matrix.shape != (len(y_true), len(classes)):
+        raise ScientificReproductionError("probability_shape_mismatch", "probability matrix shape differs from class contract")
+    if not np.isfinite(matrix).all() or not np.allclose(matrix.sum(axis=1), 1.0, atol=1e-8):
+        raise ScientificReproductionError("invalid_probabilities", "class probabilities must be finite and sum to one")
+    position = {label: i for i, label in enumerate(classes)}
+    observed = matrix[np.arange(len(y_true)), [position[str(label)] for label in y_true]]
+    return float(-np.mean(np.log(np.clip(observed, np.finfo(float).eps, 1.0))))
+
+
+def argmax_decisions(probabilities: Any, public_order: Sequence[Any], estimator_order: Sequence[Any],
+                     tie_resolution: str) -> tuple[list[str], int]:
+    """Argmax decision rule; returns labels and the count of exact-probability ties."""
+    import numpy as np
+
+    matrix = np.asarray(probabilities, dtype=float)
+    public = [str(c) for c in public_order]
+    order = public if tie_resolution == "first_in_public_class_order" else [str(c) for c in estimator_order]
+    permuted = matrix[:, [public.index(c) for c in order]]
+    winners = np.argmax(permuted, axis=1)
+    maxima = permuted.max(axis=1, keepdims=True)
+    ties = int(((permuted == maxima).sum(axis=1) > 1).sum())
+    return [order[i] for i in winners], ties
+
+
+def multiclass_metrics(y_true: Sequence[Any], predictions: Sequence[Any], probabilities: Any,
+                       class_order: Sequence[Any]) -> dict[str, Any]:
+    """Aggregate, per-class and fixed-order confusion evidence for a multiclass evaluation."""
+    import numpy as np
+    from sklearn.metrics import (accuracy_score, balanced_accuracy_score, confusion_matrix, f1_score,
+                                 precision_recall_fscore_support, recall_score)
+
+    classes = [str(c) for c in class_order]
+    y = [str(v) for v in y_true]
+    predicted = [str(v) for v in predictions]
+    if not set(y) <= set(classes) or not set(predicted) <= set(classes):
+        raise ScientificReproductionError("label_outside_class_contract", "observed labels differ from the class contract")
+    precision, recall, f1_values, support = precision_recall_fscore_support(y, predicted, labels=classes, zero_division=0)
+    matrix = confusion_matrix(y, predicted, labels=classes)
+    metrics = {
+        "macro_f1": float(f1_score(y, predicted, labels=classes, average="macro", zero_division=0)),
+        "balanced_accuracy": float(balanced_accuracy_score(y, predicted)),
+        "macro_recall": float(recall_score(y, predicted, labels=classes, average="macro", zero_division=0)),
+        "weighted_f1": float(f1_score(y, predicted, labels=classes, average="weighted", zero_division=0)),
+        "accuracy": float(accuracy_score(y, predicted)),
+        "minimum_per_class_recall": float(np.min(recall)),
+        "log_loss": multiclass_log_loss(y, probabilities, classes) if probabilities is not None else None,
+        "row_count": len(y),
+    }
+    per_class = {
+        _key(label): {
+            "class": label,
+            "precision": float(precision[i]),
+            "recall": float(recall[i]),
+            "f1": float(f1_values[i]),
+            "support": int(support[i]),
+        }
+        for i, label in enumerate(classes)
+    }
+    return {
+        "metrics": metrics,
+        "per_class": per_class,
+        "confusion_matrix": {"class_order": classes, "counts": matrix.astype(int).tolist()},
+    }
+
+
+def rank_confusion_pairs(confusion: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Unordered class pairs ranked by mutual errors (then row-normalized rate, then pair)."""
+    import numpy as np
+
+    classes = list(confusion["class_order"])
+    counts = np.asarray(confusion["counts"], dtype=int)
+    totals = counts.sum(axis=1, keepdims=True)
+    normalized = np.divide(counts, totals, out=np.zeros_like(counts, dtype=float), where=totals != 0)
+    pairs = []
+    for i, left in enumerate(classes):
+        for j in range(i + 1, len(classes)):
+            pairs.append({
+                "class_pair": [left, classes[j]],
+                "mutual_errors": int(counts[i, j] + counts[j, i]),
+                "_rate": float(normalized[i, j] + normalized[j, i]),
+            })
+    pairs.sort(key=lambda p: (-p["mutual_errors"], -p["_rate"], tuple(p["class_pair"])))
+    return [{"class_pair": p["class_pair"], "mutual_errors": p["mutual_errors"]} for p in pairs]
+
+
+def repeated_profile_sensitivity(reference_features: Any, test_features: Any, y_test: Sequence[Any],
+                                 predictions: Sequence[Any], probabilities: Any, class_order: Sequence[Any],
+                                 official_macro_f1: float) -> dict[str, Any]:
+    """Non-destructive sensitivity: metrics without test rows whose feature profile
+    also occurs in the final-fit rows. The official test stays complete."""
+    import numpy as np
+    import pandas as pd
+
+    reference = pd.MultiIndex.from_frame(reference_features.reset_index(drop=True))
+    test = pd.MultiIndex.from_frame(test_features.reset_index(drop=True))
+    repeated = np.asarray(test.isin(reference))
+    keep = ~repeated
+    delta = None
+    if keep.any():
+        kept = multiclass_metrics([v for v, k in zip(y_test, keep) if k], [v for v, k in zip(predictions, keep) if k],
+                                  np.asarray(probabilities)[keep], class_order)["metrics"]
+        delta = float(kept["macro_f1"] - official_macro_f1)
+    return {
+        "analysis_type": "non_destructive_repeated_feature_profile_sensitivity",
+        "official_full_test_row_count": int(len(test_features)),
+        "repeated_profile_test_row_count": int(repeated.sum()),
+        "sensitivity_row_count": int(keep.sum()),
+        "macro_f1_delta_excluding_minus_full": delta,
+        "official_test_rows_removed": 0,
+        "interpretation": "Sensitivity only: the official test remains complete; repeated feature profiles do not "
+                          "prove duplicate identity or leakage.",
+    }
+
+
+# --------------------------------------------------------------------------
+# step 4: shortlist, selection and threshold rules
 # --------------------------------------------------------------------------
 
 
@@ -505,6 +870,21 @@ LOWER_IS_BETTER_METRICS = frozenset({"log_loss", "brier_score", "mae", "rmse", "
 
 def metric_direction(metric: str) -> str:
     return "min" if metric in LOWER_IS_BETTER_METRICS else "max"
+
+
+def shortlist_top_k(summaries: Mapping[str, Mapping[str, Any]], rule: Mapping[str, Any]) -> dict[str, Any]:
+    """Top-k families by a cross-validation metric, ties broken by model_id."""
+    metric_field = f"{rule['metric']}_mean"
+    direction = rule.get("direction", metric_direction(rule["metric"]))
+    sign = -1.0 if direction == "max" else 1.0
+    ranking = sorted(summaries, key=lambda m: (sign * float(summaries[m][metric_field]), m))
+    k = int(rule["k"])
+    return {
+        "rule": dict(rule),
+        "ranking": [{"model_id": m, f"cv_{metric_field}": float(summaries[m][metric_field]),
+                     "rank": i + 1, "shortlisted": i < k} for i, m in enumerate(ranking)],
+        "model_ids": ranking[:k],
+    }
 
 
 def select_leader_anchored_practical_tie(records: Sequence[Mapping[str, Any]], baseline_value: float, rule: Mapping[str, Any]) -> dict[str, Any]:
@@ -528,7 +908,7 @@ def select_leader_anchored_practical_tie(records: Sequence[Mapping[str, Any]], b
         key=lambda r: (leader_sign * float(r[f"validation_{leader_metric}"]), r["model_id"]),
     )
     if not eligible_rows:
-        return {"eligible_model_ids": [], "practical_tie_group": [], "selected_model_id": None,
+        return {"eligible_model_ids": [], "practical_tie_group": [], "practical_tie": False, "selected_model_id": None,
                 "criteria_applied": [], "records": rows, "outcome": "no_eligible_candidate"}
     leader = eligible_rows[0]
     tie = rule["practical_tie"]
@@ -563,10 +943,13 @@ def select_leader_anchored_practical_tie(records: Sequence[Mapping[str, Any]], b
             remaining = survivors
             if len(remaining) == 1:
                 break
+    runner_up = group[1] if len(group) > 1 else (eligible_rows[1] if len(eligible_rows) > 1 else None)
     return {
         "eligible_model_ids": [r["model_id"] for r in eligible_rows],
         "practical_tie_group": [r["model_id"] for r in group],
         "practical_tie": len(group) > 1,
+        "leader_model_id": leader["model_id"],
+        "leader_minus_runner_up": (float(leader[leader_field]) - float(runner_up[leader_field])) if runner_up else None,
         "selected_model_id": remaining[0]["model_id"],
         "deciding_criterion": criteria[-1]["criterion"] if criteria else "highest_validation_metric",
         "criteria_applied": criteria,
@@ -613,6 +996,241 @@ _THRESHOLD_POLICIES = {"max_precision_subject_to_min_recall": threshold_max_prec
 
 
 # --------------------------------------------------------------------------
+# task adapters (dispatch by problem_type, never by dataset)
+# --------------------------------------------------------------------------
+
+
+@dataclass
+class Evaluation:
+    """One evaluation of a fitted pipeline on one partition."""
+
+    flat_metrics: dict[str, Any]
+    detail: dict[str, Any] = field(default_factory=dict)
+    state: dict[str, Any] = field(default_factory=dict)
+
+
+class BinaryClassificationTask:
+    """Positive-class probability, fixed default threshold and a threshold policy."""
+
+    problem_type = BINARY
+
+    def __init__(self, payload: Mapping[str, Any]) -> None:
+        self.payload = payload
+        target = payload["problem"]["target"]
+        self.encoding = {str(k): int(v) for k, v in target["encoding"].items()}
+        self.positive_label = self.encoding[str(target["positive_class"])]
+        self.default_threshold = float(payload["metrics"].get("default_threshold", 0.5))
+
+    def labels(self, frame: Any, column: str) -> Any:
+        return frame[column].map(self.encoding).astype("int64")
+
+    def scoring(self) -> dict[str, Any]:
+        return _scoring(self.positive_label)
+
+    def class_order_evidence(self) -> dict[str, Any] | None:
+        return None
+
+    def validation_threshold(self) -> dict[str, Any]:
+        return {"value": self.default_threshold, "rule": "fixed_default_threshold", "provenance": "scientific_study_contract"}
+
+    def evaluate(self, estimator: Any, x: Any, y: Any) -> Evaluation:
+        probabilities = _positive_probabilities(estimator, x, self.positive_label)
+        metrics = {**probability_metrics(y, probabilities), **threshold_metrics(y, probabilities, self.default_threshold)}
+        return Evaluation(flat_metrics=metrics, state={"probabilities": probabilities})
+
+    def decide(self, engine: "Reproduction", result: "ReproductionResult", selected_id: str,
+               validation: Evaluation, y_val: Any) -> dict[str, Any] | None:
+        policy = self.payload["threshold_policy"]
+        outcome = _THRESHOLD_POLICIES[policy["kind"]](y_val, validation.state["probabilities"], policy)
+        if not outcome["satisfied"]:
+            result.execution_notes.append("threshold policy could not be satisfied on validation")
+            return None
+        value = outcome["threshold"]
+        result.actuals["threshold"] = {"value": value,
+                                       "validation": threshold_metrics(y_val, validation.state["probabilities"], value)}
+        return {"value": value, "rule": policy["kind"], "provenance": RUN_KIND, "selected_on_partition": policy["partition"]}
+
+    def final_evaluation(self, engine: "Reproduction", result: "ReproductionResult", *, selected_id: str,
+                         pipeline: Any, x_test: Any, y_test: Any, decision: Mapping[str, Any],
+                         fit_rows: int, test_membership: str, context: Mapping[str, Any]) -> None:
+        probabilities = _positive_probabilities(pipeline, x_test, self.positive_label)
+        final = {
+            "evaluation_count": 1,
+            "fit_rows": fit_rows,
+            "probability": probability_metrics(y_test, probabilities),
+            "at_default_threshold": threshold_metrics(y_test, probabilities, self.default_threshold),
+            "at_policy_threshold": threshold_metrics(y_test, probabilities, decision["value"]),
+        }
+        result.actuals["final_test"] = final
+        for suffix, threshold in (("probability", None), ("at_default_threshold", self.validation_threshold()),
+                                  ("at_policy_threshold", dict(decision))):
+            result.metric_sets.append(engine._metric_set(
+                result, metric_set_id=f"final_test.{selected_id}.{suffix}", scope=SCOPE_FINAL_TEST,
+                partition="test", membership=test_membership, model_id=selected_id, threshold=threshold,
+                metrics=final[suffix], feature_policy=context.get("feature_policy"),
+                fit_partitions=context.get("fit_partitions"),
+            ))
+
+    def thresholds_section(self, result: "ReproductionResult") -> dict[str, Any]:
+        payload = self.payload
+        reference = next((i for i in payload["expected_evidence"]["values"] if i["quantity"] == "threshold.value"), None)
+        return {
+            "scientific_policy": {"provenance": "scientific_study_contract", "rule": payload["threshold_policy"]},
+            "scientific_reference": {
+                "provenance": STUDY_RUN_KIND,
+                "value": reference["expected"] if reference else None,
+                "source": reference["source"] if reference else None,
+            },
+            "scientific_reproduced": {
+                "provenance": RUN_KIND,
+                "run_id": result.run_id,
+                "value": result.actuals.get("threshold", {}).get("value"),
+                "rule_kind": payload["threshold_policy"]["kind"],
+                "partition": payload["threshold_policy"]["partition"],
+            },
+            "atlas_native_operational": {
+                "provenance": NATIVE_TRAINING_RUN_KIND,
+                "value": None,
+                "note": "Not part of this run. The Atlas-native operational threshold is governed by the "
+                        "native execution contract's result_semantics and is never equated with a "
+                        "scientific threshold.",
+            },
+        }
+
+
+class MulticlassClassificationTask:
+    """String labels, estimator-order -> public-order probability alignment, argmax decision."""
+
+    problem_type = MULTICLASS
+
+    def __init__(self, payload: Mapping[str, Any]) -> None:
+        self.payload = payload
+        target = payload["problem"]["target"]
+        self.classes = [str(c) for c in target["classes"]]
+        self.estimator_order = [str(c) for c in target["estimator_class_order"]]
+        self.public_order = [str(c) for c in target["public_class_order"]]
+        self.decision_rule = dict(payload["problem"]["decision_rule"])
+        self.tie_resolution = self.decision_rule.get("tie_resolution", "first_in_public_class_order")
+
+    def labels(self, frame: Any, column: str) -> Any:
+        labels = frame[column].astype(str)
+        unexpected = sorted(set(labels) - set(self.classes))
+        if unexpected:
+            raise ScientificReproductionError("label_outside_class_contract", f"unexpected target labels {unexpected}")
+        return labels
+
+    def scoring(self) -> dict[str, Any]:
+        metrics = self.payload["metrics"]
+        return multiclass_scoring(metrics.get("cv_scorers") or [m for m in metrics["evaluated"] if m in MULTICLASS_CV_SCORERS])
+
+    def class_order_evidence(self) -> dict[str, Any]:
+        return {"estimator_class_order": self.estimator_order, "public_class_order": self.public_order}
+
+    def validation_threshold(self) -> dict[str, Any]:
+        return not_applicable(THRESHOLD_NOT_APPLICABLE_REASON)
+
+    def evaluate(self, estimator: Any, x: Any, y: Any) -> Evaluation:
+        raw = estimator.predict_proba(x)
+        fitted = [str(c) for c in estimator.classes_]
+        probabilities = align_probabilities_to_class_order(raw, fitted, self.public_order,
+                                                           expected_estimator_order=self.estimator_order)
+        predictions, ties = argmax_decisions(probabilities, self.public_order, fitted, self.tie_resolution)
+        computed = multiclass_metrics(list(y), predictions, probabilities, self.public_order)
+        return Evaluation(
+            flat_metrics=computed["metrics"],
+            detail={"per_class": computed["per_class"], "confusion_matrix": computed["confusion_matrix"],
+                    "estimator_class_order": fitted, "argmax_ties": ties},
+            state={"probabilities": probabilities, "predictions": predictions},
+        )
+
+    def decide(self, engine: "Reproduction", result: "ReproductionResult", selected_id: str,
+               validation: Evaluation, y_val: Any) -> dict[str, Any]:
+        decision = {"rule": self.decision_rule["kind"], "tie_resolution": self.tie_resolution,
+                    "threshold": not_applicable(THRESHOLD_NOT_APPLICABLE_REASON), "provenance": RUN_KIND}
+        result.actuals["decision"] = {"rule": self.decision_rule["kind"], "threshold_applicable": False,
+                                      "positive_class_applicable": False}
+        return decision
+
+    def final_evaluation(self, engine: "Reproduction", result: "ReproductionResult", *, selected_id: str,
+                         pipeline: Any, x_test: Any, y_test: Any, decision: Mapping[str, Any],
+                         fit_rows: int, test_membership: str, context: Mapping[str, Any]) -> None:
+        import pandas as pd
+
+        evaluation = self.evaluate(pipeline, x_test, y_test)
+        probabilities = evaluation.state["probabilities"]
+        probability_bytes = pd.DataFrame(probabilities, columns=self.public_order).to_csv(
+            index=False, lineterminator="\n").encode("utf-8")
+        final = {
+            "evaluation_count": 1,
+            "fit_rows": fit_rows,
+            "row_count": int(len(y_test)),
+            "metrics": evaluation.flat_metrics,
+            "per_class": evaluation.detail["per_class"],
+            "confusion_matrix": evaluation.detail["confusion_matrix"],
+            "estimator_class_order": evaluation.detail["estimator_class_order"],
+            "public_class_order": list(self.public_order),
+            "argmax_ties": evaluation.detail["argmax_ties"],
+            "probability_matrix_sha256": _sha256_bytes(probability_bytes),
+        }
+        interpretive = self.payload.get("interpretive_evidence") or {}
+        pairs_spec = interpretive.get("confusion_pairs")
+        if pairs_spec:
+            ranked = rank_confusion_pairs(final["confusion_matrix"])
+            final["top_confusion_pairs"] = ranked[: int(pairs_spec["top_k"])]
+            validation_confusion = context.get("selected_validation_confusion")
+            if pairs_spec.get("focal_pairs") and validation_confusion is not None:
+                validation_ranked = rank_confusion_pairs(validation_confusion)
+
+                def mutual(rows: Sequence[Mapping[str, Any]], pair: Sequence[str]) -> int:
+                    return next(r["mutual_errors"] for r in rows if set(r["class_pair"]) == set(pair))
+
+                final["focal_confusion_pairs"] = [
+                    {"class_pair": list(pair), "test_mutual_errors": mutual(ranked, pair),
+                     "validation_mutual_errors": mutual(validation_ranked, pair)}
+                    for pair in pairs_spec["focal_pairs"]
+                ]
+        if interpretive.get("repeated_profile_sensitivity"):
+            final["repeated_profile_sensitivity"] = repeated_profile_sensitivity(
+                context["final_features"], x_test, list(y_test), evaluation.state["predictions"],
+                probabilities, self.public_order, evaluation.flat_metrics["macro_f1"],
+            )
+        result.actuals["final_test"] = final
+        result.metric_sets.append(engine._metric_set(
+            result, metric_set_id=f"final_test.{selected_id}", scope=SCOPE_FINAL_TEST, partition="test",
+            membership=test_membership, model_id=selected_id, threshold=decision["threshold"],
+            metrics={**evaluation.flat_metrics, "per_class": evaluation.detail["per_class"],
+                     "confusion_matrix": evaluation.detail["confusion_matrix"]},
+            feature_policy=context.get("feature_policy"), fit_partitions=context.get("fit_partitions"),
+        ))
+
+    def thresholds_section(self, result: "ReproductionResult") -> dict[str, Any]:
+        return {
+            "applicable": False,
+            "reason": THRESHOLD_NOT_APPLICABLE_REASON,
+            "decision_rule": dict(self.decision_rule),
+            "positive_class": not_applicable("multiclass_problem_has_no_positive_class"),
+            "scientific_policy": {"provenance": "scientific_study_contract", "rule": dict(self.payload["threshold_policy"])},
+            "atlas_native_operational": {
+                "provenance": NATIVE_TRAINING_RUN_KIND,
+                "value": None,
+                "note": "Not part of this run. The native multiclass decision is governed by the native execution "
+                        "contract's result_semantics.",
+            },
+        }
+
+
+TASK_ADAPTERS = {BINARY: BinaryClassificationTask, MULTICLASS: MulticlassClassificationTask}
+
+
+def task_adapter(payload: Mapping[str, Any]) -> Any:
+    problem_type = payload["problem"]["problem_type"]
+    adapter = TASK_ADAPTERS.get(problem_type)
+    if adapter is None:
+        raise ScientificReproductionError("unsupported_problem_type", problem_type)
+    return adapter(payload)
+
+
+# --------------------------------------------------------------------------
 # comparison and status
 # --------------------------------------------------------------------------
 
@@ -635,6 +1253,8 @@ def compare_item(item: Mapping[str, Any], actuals: Mapping[str, Any], tolerance_
         return {**base, "delta": None, "tolerance": None, "outcome": OUTCOME_MISSING}
     if item["comparison"] == "exact":
         return {**base, "delta": None, "tolerance": None, "outcome": OUTCOME_EXACT if _jsonable(actual) == expected else OUTCOME_MISMATCH}
+    if actual is None or expected is None:
+        return {**base, "delta": None, "tolerance": None, "outcome": OUTCOME_EXACT if actual == expected else OUTCOME_MISMATCH}
     delta = float(actual) - float(expected)
     if item["comparison"] == "count":
         tolerance = float(tolerance_policy["count_absolute"])
@@ -657,7 +1277,7 @@ def compare_with_expected_evidence(expected_evidence: Mapping[str, Any], actuals
     values = [compare_item(item, actuals, tolerance_policy) for item in expected_evidence["values"]]
     decisions = [compare_item(item, actuals, tolerance_policy) for item in expected_evidence["decisions"]]
     everything = values + decisions
-    return {
+    comparison = {
         "tolerance_policy": dict(tolerance_policy),
         "values": values,
         "decisions": decisions,
@@ -667,6 +1287,35 @@ def compare_with_expected_evidence(expected_evidence: Mapping[str, Any], actuals
         },
         "all_within_tolerance": all(c["outcome"] in (OUTCOME_EXACT, OUTCOME_WITHIN) for c in everything),
         "all_exact_at_reported_precision": all(c["outcome"] == OUTCOME_EXACT for c in everything),
+    }
+    runtime_items = expected_evidence.get("runtime_identity")
+    if runtime_items is not None:
+        # Byte-level runtime identity never decides scientific agreement.
+        runtime = [compare_item(item, actuals, tolerance_policy) for item in runtime_items]
+        comparison["runtime_identity"] = runtime
+        comparison["byte_identical_runtime"] = all(c["outcome"] == OUTCOME_EXACT for c in runtime) if runtime else None
+    return comparison
+
+
+def evidence_tiers(comparison: Mapping[str, Any] | None, environment_classification: str,
+                   protocol_gaps: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """Separate the kinds of agreement a reproduction can establish."""
+    if comparison is None:
+        return {"structural_exact": None, "numeric_exact_at_reported_precision": None,
+                "numeric_within_tolerance": None, "environment": environment_classification,
+                "byte_identical_runtime": None, "unsupported_capabilities": len(protocol_gaps),
+                "scientific_mismatches": None}
+    compared = comparison["values"] + comparison["decisions"]
+    structural = [c for c in compared if c["comparison"] in ("exact", "count")]
+    numeric = [c for c in compared if c["comparison"] == "numeric"]
+    return {
+        "structural_exact": all(c["outcome"] == OUTCOME_EXACT for c in structural),
+        "numeric_exact_at_reported_precision": all(c["outcome"] == OUTCOME_EXACT for c in numeric),
+        "numeric_within_tolerance": all(c["outcome"] in (OUTCOME_EXACT, OUTCOME_WITHIN) for c in numeric),
+        "environment": environment_classification,
+        "byte_identical_runtime": comparison.get("byte_identical_runtime"),
+        "unsupported_capabilities": len(protocol_gaps),
+        "scientific_mismatches": sum(1 for c in compared if c["outcome"] in (OUTCOME_OUTSIDE, OUTCOME_MISMATCH)),
     }
 
 
@@ -678,6 +1327,7 @@ def compute_reproduction_status(
     executed: bool,
     comparison: Mapping[str, Any] | None,
     evidence_gaps: Sequence[Mapping[str, Any]],
+    gate_failures: Sequence[Mapping[str, Any]] = (),
 ) -> dict[str, Any]:
     """Map run facts to exactly one reproduction status (divergence is never masked)."""
     reasons: list[str] = []
@@ -689,6 +1339,9 @@ def compute_reproduction_status(
     if environment_classification == scientific_environment.INCOMPATIBLE:
         return {"status": STATUS_ENVIRONMENT_INCOMPATIBLE,
                 "reasons": ["the reproduction runtime crosses a declared environment compatibility boundary"]}
+    if gate_failures:
+        return {"status": STATUS_DIVERGENT,
+                "reasons": [f"protocol gate failed: {g['gate']}: {g['detail']}" for g in gate_failures]}
     if not executed or comparison is None:
         return {"status": STATUS_INSUFFICIENT_EVIDENCE, "reasons": ["the reproduction did not execute"]}
     diverging = [c["quantity"] for c in comparison["values"] + comparison["decisions"] if c["outcome"] in (OUTCOME_OUTSIDE, OUTCOME_MISMATCH)]
@@ -702,12 +1355,19 @@ def compute_reproduction_status(
         if not comparison["values"]:
             reasons.append("the study contract declares no expected numeric evidence")
         return {"status": STATUS_INSUFFICIENT_EVIDENCE, "reasons": reasons}
-    if environment_classification == scientific_environment.EXACT and comparison["all_exact_at_reported_precision"]:
+    runtime_note = None
+    if comparison.get("byte_identical_runtime") is False:
+        runtime_note = ("runtime byte identity differs (e.g. probability-matrix bytes); the scientific protocol "
+                        "agreement is unaffected")
+    if (environment_classification == scientific_environment.EXACT and comparison["all_exact_at_reported_precision"]
+            and comparison.get("byte_identical_runtime") is not False):
         return {"status": STATUS_REPRODUCED_EXACT, "reasons": []}
     if environment_classification != scientific_environment.EXACT:
         reasons.append(f"environment classified as {environment_classification}")
     if not comparison["all_exact_at_reported_precision"]:
         reasons.append("some quantities differ beyond reported precision but within the declared tolerance")
+    if runtime_note:
+        reasons.append(runtime_note)
     return {"status": STATUS_REPRODUCED_WITHIN_TOLERANCE, "reasons": reasons}
 
 
@@ -718,6 +1378,10 @@ def compute_reproduction_status(
 
 def _task_type(problem_type: str) -> str:
     return model_families.CLASSIFICATION if problem_type.endswith("classification") else model_families.REGRESSION
+
+
+def _class_counts(series: Any) -> dict[str, int]:
+    return {_key(k): int(v) for k, v in series.value_counts().items()}
 
 
 @dataclass
@@ -732,6 +1396,9 @@ class ReproductionResult:
     search_results: dict[str, Any] = field(default_factory=dict)
     candidate_models_executed: list[str] = field(default_factory=list)
     execution_notes: list[str] = field(default_factory=list)
+    gate_failures: list[dict[str, Any]] = field(default_factory=list)
+    gate_checks: list[dict[str, Any]] = field(default_factory=list)
+    stages: dict[str, Any] = field(default_factory=dict)
 
     def compare_with_reference(self) -> dict[str, Any] | None:
         if not self.executed:
@@ -750,11 +1417,17 @@ class ReproductionResult:
             executed=self.executed,
             comparison=comparison,
             evidence_gaps=payload["evidence_gaps"],
+            gate_failures=self.gate_failures,
         )
-        reference_threshold = next(
-            (i for i in payload["expected_evidence"]["values"] if i["quantity"] == "threshold.value"), None
-        )
+        status["evidence_tiers"] = evidence_tiers(comparison, self.plan.environment["classification"], self.plan.protocol_gaps)
+        problem = payload["problem"]
+        try:
+            task = task_adapter(payload)
+        except ScientificReproductionError:
+            task = None
         candidates_expected = [c["model_id"] for c in payload["candidates"]]
+        split = payload["split"]
+        membership = membership_spec(split)
         report = {
             "schema_version": REPORT_SCHEMA_VERSION,
             "artifact_kind": "scientific_reproduction_report",
@@ -773,6 +1446,7 @@ class ReproductionResult:
                     "source_repository": payload["source_repository"]["url"],
                     "study_revision": contract.study_revision,
                     "study_contract": contract.reference(),
+                    "canonical_run": payload.get("canonical_run"),
                 },
                 RUN_KIND: {"role": "independent_atlas_reproduction", "run_id": self.run_id},
                 NATIVE_TRAINING_RUN_KIND: {
@@ -800,12 +1474,34 @@ class ReproductionResult:
                 },
                 "reproduction_runtime": self.plan.runtime,
                 "compatibility": self.plan.environment,
+                "interpretation": ("'same scientific protocol' is established by the comparison; 'byte-identical "
+                                   "runtime' only by an exact environment and matching runtime-identity evidence."),
             },
             "protocol_support": {
                 "status": "fully_supported" if not self.plan.protocol_gaps else "unsupported_elements_present",
                 "gaps": self.plan.protocol_gaps,
             },
             "source_verification": self.plan.source_verification,
+            "problem": {
+                "problem_type": problem["problem_type"],
+                "target_column": problem["target"]["column"],
+                "classes": problem["target"].get("classes"),
+                "positive_class": problem["target"].get("positive_class"),
+                "decision_rule": problem.get("decision_rule") or {"kind": "probability_threshold"},
+                "class_order": ({**task.class_order_evidence(),
+                                 "fitted_estimator_class_order": self.actuals.get("final_test", {}).get("estimator_class_order")}
+                                if task is not None and task.class_order_evidence() else None),
+            },
+            "split": {
+                "kind": split["kind"],
+                "algorithm": "sklearn.model_selection.train_test_split (two stages, stratified)",
+                "fractions": split["fractions"],
+                "stratify_by": split["stratify_by"],
+                "seeds_used": dict(split["seeds"]),
+                "membership": membership,
+                "observed": self.actuals.get("partitions"),
+                "gate": self.stages.get("membership_gate"),
+            },
             "candidate_models": {
                 "expected": candidates_expected,
                 "executed": list(self.candidate_models_executed),
@@ -823,39 +1519,22 @@ class ReproductionResult:
                     for c in payload["candidates"]
                 },
             },
+            "family_search": self.stages.get("family_search", []),
+            "family_shortlist": self.stages.get("family_shortlist"),
+            "feature_policy_stage": self.stages.get("feature_policy_stage"),
             "selection": {
                 "rule": payload["selection"],
+                "candidate_space": self.stages.get("selection_candidate_space"),
                 "executed": self.actuals.get("selection_trace"),
             },
-            "thresholds": {
-                "scientific_policy": {
-                    "provenance": "scientific_study_contract",
-                    "rule": payload["threshold_policy"],
-                },
-                "scientific_reference": {
-                    "provenance": STUDY_RUN_KIND,
-                    "value": reference_threshold["expected"] if reference_threshold else None,
-                    "source": reference_threshold["source"] if reference_threshold else None,
-                },
-                "scientific_reproduced": {
-                    "provenance": RUN_KIND,
-                    "run_id": self.run_id,
-                    "value": self.actuals.get("threshold", {}).get("value"),
-                    "rule_kind": payload["threshold_policy"]["kind"],
-                    "partition": payload["threshold_policy"]["partition"],
-                },
-                "atlas_native_operational": {
-                    "provenance": NATIVE_TRAINING_RUN_KIND,
-                    "value": None,
-                    "note": "Not part of this run. The Atlas-native operational threshold is governed by the "
-                            "native execution contract's result_semantics and is never equated with a "
-                            "scientific threshold.",
-                },
-            },
+            "final_fit": self.stages.get("final_fit"),
+            "thresholds": task.thresholds_section(self) if task is not None else None,
             "metric_sets": self.metric_sets,
             "comparison": comparison,
+            "gate_checks": self.gate_checks,
             "evidence_gaps": payload["evidence_gaps"],
             "study_observations": payload.get("study_observations", []),
+            "protocol_integrity": payload.get("protocol_integrity"),
             "execution_notes": self.execution_notes,
             "limitations": payload["limitations"],
             "reproduction_status": status,
@@ -892,16 +1571,23 @@ class Reproduction:
         if self.environment["classification"] == scientific_environment.INCOMPATIBLE and not allow_incompatible_environment:
             result.execution_notes.append("not executed: incompatible environment")
             return result
-        self._execute(result, n_jobs=n_jobs)
-        result.executed = True
+        completed = self._execute(result, n_jobs=n_jobs)
+        result.executed = bool(completed)
         return result
 
-    def _metric_set(self, result: ReproductionResult, *, metric_set_id: str, partition: str, membership: str | None, model_id: str, threshold: Mapping[str, Any] | None, metrics: Mapping[str, Any]) -> dict[str, Any]:
+    def _metric_set(self, result: ReproductionResult, *, metric_set_id: str, partition: str, membership: str | None,
+                    model_id: str, threshold: Mapping[str, Any] | None, metrics: Mapping[str, Any],
+                    scope: str | None = None, feature_policy: str | None = None,
+                    fit_partitions: Sequence[str] | None = None) -> dict[str, Any]:
         payload = self.contract.payload
+        task = task_adapter(payload)
+        class_order = task.class_order_evidence()
         return {
             "metric_set_id": metric_set_id,
             "provenance": {
                 "producer_lineage": RUN_KIND,
+                "metric_scope": scope,
+                "problem_type": payload["problem"]["problem_type"],
                 "run_id": result.run_id,
                 "study_revision": self.contract.study_revision,
                 "study_contract_sha256": self.contract.sha256,
@@ -909,113 +1595,216 @@ class Reproduction:
                 "partition": partition,
                 "partition_membership_sha256": membership,
                 "model_id": model_id,
+                "feature_policy": feature_policy,
+                "fit_partitions": list(fit_partitions) if fit_partitions else None,
                 "threshold": dict(threshold) if threshold else None,
+                "class_order": class_order["public_class_order"] if class_order else None,
                 "protocol_kind": payload["study_identity"]["protocol_kind"],
             },
             "metrics": _jsonable(dict(metrics)),
         }
 
-    def _execute(self, result: ReproductionResult, *, n_jobs: int | None) -> None:
+    def _gate(self, result: ReproductionResult, gate: str, expected: Any, observed: Any, source: Any = None) -> bool:
+        passed = _jsonable(expected) == _jsonable(observed)
+        check = {"gate": gate, "expected": _jsonable(expected), "observed": _jsonable(observed), "passed": passed,
+                 "expected_provenance": "reference evidence used as a protocol precondition", "source": source}
+        result.gate_checks.append(check)
+        if not passed:
+            result.gate_failures.append({"gate": gate, "detail": f"expected {expected!r}, observed {observed!r}"})
+            result.execution_notes.append(f"stopped: protocol gate {gate} failed; no later stage was executed")
+        return passed
+
+    def _execute(self, result: ReproductionResult, *, n_jobs: int | None) -> bool:
         import pandas as pd
 
         payload = self.contract.payload
+        task = task_adapter(payload)
         task_type = _task_type(payload["problem"]["problem_type"])
-        target = payload["problem"]["target"]
-        encoding = {str(k): int(v) for k, v in target["encoding"].items()}
-        positive_label = encoding[str(target["positive_class"])]
+        target_column = payload["problem"]["target"]["column"]
         identifiers = payload["problem"]["identifier_columns"]
-        features = payload["features"]["feature_columns"]
-        jobs = n_jobs if n_jobs is not None else int(payload.get("search_execution", {}).get("n_jobs", 1))
-        if n_jobs is not None and n_jobs != payload.get("search_execution", {}).get("n_jobs"):
+        features = list(payload["features"]["feature_columns"])
+        search_execution = payload.get("search_execution", {})
+        jobs = n_jobs if n_jobs is not None else int(search_execution.get("n_jobs", 1))
+        if n_jobs is not None and n_jobs != search_execution.get("n_jobs"):
             result.execution_notes.append(
-                f"search n_jobs={n_jobs} (study used {payload.get('search_execution', {}).get('n_jobs')}); "
+                f"search n_jobs={n_jobs} (study used {search_execution.get('n_jobs')}); "
                 "parallelism does not change search results"
             )
         actuals = result.actuals
+        scoring = task.scoring()
 
         raw = load_dataset(self.dataset_path, payload["dataset_identity"])
+        actuals["dataset"] = {"sha256": result.dataset_verification["observed_sha256"],
+                              "rows": int(raw.shape[0]), "columns": int(raw.shape[1])}
         prepared, preparation_evidence = apply_preparation(raw, payload["preparation"])
         actuals["preparation"] = preparation_evidence
 
-        splitter = _SPLITTERS[payload["split"]["kind"]]
-        partitions = splitter(prepared, payload["split"], identifiers)
-        if payload["split"].get("partition_handoff") == "csv_roundtrip":
-            partitions = {name: csv_roundtrip(frame) for name, frame in partitions.items()}
-        memberships = {name: membership_sha256(frame, identifiers) for name, frame in partitions.items()}
+        # Split, membership evidence, and the membership gate.
+        split = payload["split"]
+        spec = membership_spec(split)
+        partitions, partition_keys = _SPLITTERS[split["kind"]](prepared, split, identifiers)
+        fingerprint = split.get("partition_fingerprint")
+        partition_hashes = ({name: partition_csv_sha256(frame, fingerprint.get("float_format"))
+                             for name, frame in partitions.items()} if fingerprint else {})
+        handoff = _handoff_spec(split)
+        if handoff["kind"] == "csv_roundtrip":
+            partitions = {name: csv_roundtrip(frame, handoff.get("float_format")) for name, frame in partitions.items()}
+        if spec["kind"] == "identifier" and "membership" not in split:
+            # v1 behaviour: digest of sorted identifier keys of the handed-off partition.
+            memberships = {name: membership_sha256(frame, identifiers) for name, frame in partitions.items()}
+        else:
+            memberships = {name: membership_digest(partition_keys[name], spec["digest_order"]) for name in partitions}
         actuals["partitions"] = {
             name: {
                 "rows": len(frame),
-                "class_counts": {_key(k): int(v) for k, v in frame[target["column"]].value_counts().items()},
+                "class_counts": _class_counts(frame[target_column]),
                 "membership_sha256": memberships[name],
+                **({"partition_sha256": partition_hashes[name]} if partition_hashes else {}),
             }
             for name, frame in partitions.items()
         }
+        gate = split.get("membership_gate")
+        if gate and gate.get("required", True):
+            passed = self._gate(result, "split.membership_sha256", gate["expected_membership_sha256"],
+                                {name: memberships[name] for name in ("train", "validation", "test")}, gate["source"])
+            result.stages["membership_gate"] = {"required": True, "passed": passed}
+            if not passed:
+                return False
 
-        def xy(frame: Any) -> tuple[Any, Any]:
-            return frame.loc[:, features].copy(deep=True), frame[target["column"]].map(encoding).astype("int64")
+        def xy(frame: Any, columns: Sequence[str] = features) -> tuple[Any, Any]:
+            return frame.loc[:, list(columns)].copy(deep=True), task.labels(frame, target_column)
 
         x_train, y_train = xy(partitions["train"])
         x_val, y_val = xy(partitions["validation"])
-        x_test, y_test = xy(partitions["test"])
-        default_threshold = float(payload["metrics"].get("default_threshold", 0.5))
 
         # Baseline (reference only, never selectable).
         baseline = payload.get("baseline")
         baseline_value = None
         if baseline:
             base_pipeline = build_candidate_pipeline(baseline, payload, task_type).fit(x_train, y_train)
-            base_prob = _positive_probabilities(base_pipeline, x_val, positive_label)
-            base_metrics = {**probability_metrics(y_val, base_prob), **threshold_metrics(y_val, base_prob, default_threshold)}
-            actuals["baseline"] = {"validation": base_metrics}
-            baseline_value = base_metrics[payload["selection"]["eligibility"]["metric"]]
+            base_eval = task.evaluate(base_pipeline, x_val, y_val)
+            actuals["baseline"] = {"validation": base_eval.flat_metrics}
+            baseline_value = base_eval.flat_metrics[payload["selection"]["eligibility"]["metric"]]
             result.metric_sets.append(self._metric_set(
                 result, metric_set_id=f"validation.{baseline['model_id']}", partition="validation",
-                membership=memberships["validation"], model_id=baseline["model_id"],
-                threshold={"value": default_threshold, "rule": "fixed_default_threshold", "provenance": "scientific_study_contract"},
-                metrics=base_metrics,
+                scope=SCOPE_BASELINE_VALIDATION, membership=memberships["validation"], model_id=baseline["model_id"],
+                threshold=task.validation_threshold(), metrics=base_eval.flat_metrics,
             ))
 
-        # Candidate searches on train only, one validation evaluation each.
+        # Family search on train only.
         actuals["search"], actuals["cv"], actuals["validation"] = {}, {}, {}
-        best_estimators: dict[str, Any] = {}
-        validation_probabilities: dict[str, list[float]] = {}
-        records = []
         simplicity = payload["selection"].get("simplicity_order", [])
+        candidates = {c["model_id"]: c for c in payload["candidates"]}
+        search_outcomes: dict[str, Any] = {}
+        family_stage = []
         for candidate in payload["candidates"]:
             model_id = candidate["model_id"]
-            outcome = run_candidate_search(candidate, payload, x_train, y_train, n_jobs=jobs, task_type=task_type)
+            outcome = run_candidate_search(candidate, payload, x_train, y_train, n_jobs=jobs,
+                                           task_type=task_type, scoring=scoring)
             result.candidate_models_executed.append(model_id)
             summary = outcome["summary"]
+            search_outcomes[model_id] = outcome
             actuals["search"][model_id] = {
                 "candidate_count_expected": summary["candidate_count_expected"],
                 "candidate_count_executed": summary["candidate_count_executed"],
                 "best_params": summary["best_params"],
+                "search_strategy": summary["search_strategy"],
+                "search_random_state": summary["search_random_state"],
                 "search_duration_seconds": summary["search_duration_seconds"],
             }
             actuals["cv"][model_id] = {
                 k: v for k, v in summary.items() if k.endswith(("_mean", "_std", "_ci_lower", "_ci_upper"))
             }
             result.search_results[model_id] = outcome["table"]
-            best_estimators[model_id] = outcome["best_estimator"]
-            probabilities = _positive_probabilities(outcome["best_estimator"], x_val, positive_label)
-            validation_probabilities[model_id] = probabilities
-            metrics = {**probability_metrics(y_val, probabilities), **threshold_metrics(y_val, probabilities, default_threshold)}
-            actuals["validation"][model_id] = metrics
             result.metric_sets.append(self._metric_set(
                 result, metric_set_id=f"cross_validation.{model_id}", partition="train_cross_validation",
-                membership=memberships["train"], model_id=model_id, threshold=None, metrics=actuals["cv"][model_id],
+                scope=SCOPE_FAMILY_SEARCH_CV, membership=memberships["train"], model_id=model_id, threshold=None,
+                metrics=actuals["cv"][model_id], feature_policy=None,
             ))
+            family_stage.append({
+                "model_id": model_id,
+                "family": candidate["family"],
+                "study_estimator_class": candidate.get("study_estimator_class"),
+                "search_strategy": summary["search_strategy"],
+                "declared_search_space": candidate["search"].get("space", {}),
+                "fixed_params": candidate["fixed_params"],
+                "candidate_count_expected": summary["candidate_count_expected"],
+                "candidate_count_executed": summary["candidate_count_executed"],
+                "random_seed": summary["search_random_state"],
+                "best_params": summary["best_params"],
+                "best_score": {"metric": summary["refit_metric"], "value": summary["best_score"]},
+                "cv_metrics": actuals["cv"][model_id],
+                "fit_partition": "train",
+            })
+        result.stages["family_search"] = family_stage
+
+        # Candidate variants evaluated on validation: either the searched
+        # families themselves, or shortlist x feature policies.
+        variants: list[dict[str, Any]] = []
+        policies_spec = payload.get("feature_policies")
+        if policies_spec:
+            shortlist = shortlist_top_k(actuals["cv"], payload["family_shortlist"])
+            actuals["shortlist"] = {"model_ids": shortlist["model_ids"]}
+            result.stages["family_shortlist"] = shortlist
+            actuals["feature_policy"] = {}
+            for base_id in shortlist["model_ids"]:
+                for policy in policies_spec["policies"]:
+                    columns = [c for c in features if c not in set(policy["exclude"])]
+                    variant_id = policies_spec["candidate_id_pattern"].format(model_id=base_id, policy_id=policy["policy_id"])
+                    variants.append({"model_id": variant_id, "base_model_id": base_id,
+                                     "feature_policy": policy["policy_id"], "feature_columns": columns})
+            result.stages["selection_candidate_space"] = "family_shortlist_x_feature_policies"
+        else:
+            for model_id in candidates:
+                variants.append({"model_id": model_id, "base_model_id": model_id, "feature_policy": None,
+                                 "feature_columns": features})
+            result.stages["selection_candidate_space"] = "searched_families"
+
+        cv_folds = _cross_validator(payload["cross_validation"])
+        refit = payload["metrics"].get("refit", payload["metrics"]["primary"])
+        z_value = float(payload["selection"].get("practical_tie", {}).get("cv_interval_z", 1.96))
+        validation_evals: dict[str, Evaluation] = {}
+        variant_cv: dict[str, dict[str, float]] = {}
+        records = []
+        for variant in variants:
+            model_id, base_id = variant["model_id"], variant["base_model_id"]
+            candidate = candidates[base_id]
+            best_params = actuals["search"][base_id]["best_params"]
+            if variant["feature_policy"] is None:
+                fitted = search_outcomes[base_id]["best_estimator"]
+                cv_summary = actuals["cv"][base_id]
+            else:
+                from sklearn.base import clone
+                from sklearn.model_selection import cross_validate
+
+                columns = variant["feature_columns"]
+                pipeline = build_candidate_pipeline(candidate, payload, task_type, extra_params=best_params,
+                                                    feature_columns=columns)
+                cv_results = cross_validate(clone(pipeline), x_train.loc[:, columns].copy(deep=True), y_train.copy(deep=True),
+                                            scoring=dict(scoring), cv=cv_folds, n_jobs=jobs,
+                                            return_train_score=False, error_score="raise")
+                cv_summary = _cv_summary(cv_results, scoring, refit, None, int(payload["cross_validation"]["n_splits"]), z_value)
+                fitted = pipeline.fit(x_train.loc[:, columns], y_train)
+                result.metric_sets.append(self._metric_set(
+                    result, metric_set_id=f"cross_validation.{model_id}", partition="train_cross_validation",
+                    scope=SCOPE_FEATURE_POLICY_CV, membership=memberships["train"], model_id=model_id, threshold=None,
+                    metrics=cv_summary, feature_policy=variant["feature_policy"],
+                ))
+            variant_cv[model_id] = cv_summary
+            evaluation = task.evaluate(fitted, x_val.loc[:, variant["feature_columns"]], y_val)
+            validation_evals[model_id] = evaluation
+            actuals["validation"][model_id] = evaluation.flat_metrics
             result.metric_sets.append(self._metric_set(
                 result, metric_set_id=f"validation.{model_id}", partition="validation",
-                membership=memberships["validation"], model_id=model_id,
-                threshold={"value": default_threshold, "rule": "fixed_default_threshold", "provenance": "scientific_study_contract"},
-                metrics=metrics,
+                scope=SCOPE_CANDIDATE_VALIDATION, membership=memberships["validation"], model_id=model_id,
+                threshold=task.validation_threshold(), metrics=evaluation.flat_metrics,
+                feature_policy=variant["feature_policy"],
             ))
             records.append({
                 "model_id": model_id,
                 "family": candidate["family"],
-                **{f"validation_{k}": v for k, v in metrics.items() if isinstance(v, float)},
-                **{f"cv_{k}": v for k, v in actuals["cv"][model_id].items()},
+                **{f"validation_{k}": v for k, v in evaluation.flat_metrics.items() if isinstance(v, float)},
+                **{f"cv_{k}": v for k, v in cv_summary.items()},
                 "simplicity_rank": simplicity.index(candidate["family"]) if candidate["family"] in simplicity else len(simplicity),
             })
 
@@ -1023,63 +1812,96 @@ class Reproduction:
         selection_rule = _SELECTION_RULES[payload["selection"]["kind"]]
         selection = selection_rule(records, float(baseline_value) if baseline_value is not None else 0.0, payload["selection"])
         actuals["selection_trace"] = _jsonable(selection)
+        eligibility = {r["model_id"]: r["eligible"] for r in selection["records"]}
+        if policies_spec:
+            stage_rows = []
+            for variant in variants:
+                model_id = variant["model_id"]
+                cv_summary = variant_cv[model_id]
+                row = {
+                    "model_id": model_id,
+                    "base_model_id": variant["base_model_id"],
+                    "family": candidates[variant["base_model_id"]]["family"],
+                    "feature_policy": variant["feature_policy"],
+                    "feature_count": len(variant["feature_columns"]),
+                    "feature_columns": list(variant["feature_columns"]),
+                    "frozen_params": actuals["search"][variant["base_model_id"]]["best_params"],
+                    "cv_reference": f"cross_validation.{model_id}",
+                    "cv": cv_summary,
+                    "validation_metrics": actuals["validation"][model_id],
+                    "selection_eligible": eligibility.get(model_id),
+                }
+                stage_rows.append(row)
+                actuals["feature_policy"][model_id] = {
+                    "base_model_id": row["base_model_id"],
+                    "feature_policy": row["feature_policy"],
+                    "feature_count": row["feature_count"],
+                    "feature_columns": row["feature_columns"],
+                    "cv": cv_summary,
+                    "eligible": row["selection_eligible"],
+                }
+            result.stages["feature_policy_stage"] = {
+                "policies": policies_spec["policies"],
+                "applies_to": shortlist["model_ids"],
+                "candidates": stage_rows,
+            }
         actuals["selection"] = {
             "eligible_model_ids": selection["eligible_model_ids"],
             "practical_tie_group": selection["practical_tie_group"],
+            "practical_tie": selection.get("practical_tie", False),
             "selected_model_id": selection["selected_model_id"],
             "deciding_criterion": selection.get("deciding_criterion"),
         }
         selected_id = selection["selected_model_id"]
         if selected_id is None:
             result.execution_notes.append("no candidate satisfied the eligibility rule")
-            return
-        actuals["selection"]["selected_best_params"] = actuals["search"][selected_id]["best_params"]
+            return True
+        selected_variant = next(v for v in variants if v["model_id"] == selected_id)
+        base_id = selected_variant["base_model_id"]
+        selected_candidate = candidates[base_id]
+        actuals["selection"]["selected_best_params"] = actuals["search"][base_id]["best_params"]
+        actuals["selection"]["selected_base_model_id"] = base_id
+        actuals["selection"]["selected_family"] = selected_candidate["family"]
+        actuals["selection"]["selected_feature_policy"] = selected_variant["feature_policy"]
+        actuals["selection"]["selected_feature_columns"] = list(selected_variant["feature_columns"])
+        selected_eval = validation_evals[selected_id]
+        actuals["selected_validation"] = {"metrics": selected_eval.flat_metrics,
+                                          **({"per_class": selected_eval.detail["per_class"],
+                                              "confusion_matrix": selected_eval.detail["confusion_matrix"]}
+                                             if selected_eval.detail else {})}
 
-        # Threshold policy on validation only.
-        policy = payload["threshold_policy"]
-        threshold_outcome = _THRESHOLD_POLICIES[policy["kind"]](y_val, validation_probabilities[selected_id], policy)
-        if not threshold_outcome["satisfied"]:
-            result.execution_notes.append("threshold policy could not be satisfied on validation")
-            return
-        policy_threshold = threshold_outcome["threshold"]
-        actuals["threshold"] = {
-            "value": policy_threshold,
-            "validation": threshold_metrics(y_val, validation_probabilities[selected_id], policy_threshold),
-        }
-        reproduced_threshold = {"value": policy_threshold, "rule": policy["kind"], "provenance": RUN_KIND,
-                                 "selected_on_partition": policy["partition"]}
+        # Decision stage (binary threshold policy, or explicit N/A for argmax).
+        decision = task.decide(self, result, selected_id, selected_eval, y_val)
+        if decision is None:
+            return True
 
-        # Final fit on train + validation and a single test evaluation.
-        selected = next(c for c in payload["candidates"] if c["model_id"] == selected_id)
-        final_pipeline = build_candidate_pipeline(selected, payload, task_type, extra_params=actuals["search"][selected_id]["best_params"])
-        final_x = pd.concat([x_train, x_val], axis=0, ignore_index=True)
-        final_y = pd.concat([y_train, y_val], axis=0, ignore_index=True)
+        # Final fit on train + validation (declared order) and a single test evaluation.
+        columns = selected_variant["feature_columns"]
+        fit_partitions = list(payload["final_evaluation"].get("fit_partitions", ["train", "validation"]))
+        final_x = pd.concat([partitions[p].loc[:, columns] for p in fit_partitions], axis=0, ignore_index=True)
+        final_y = pd.concat([task.labels(partitions[p], target_column) for p in fit_partitions], axis=0, ignore_index=True)
+        result.stages["final_fit"] = {"partitions": fit_partitions, "rows": len(final_x),
+                                      "class_counts": _class_counts(final_y), "feature_policy": selected_variant["feature_policy"],
+                                      "feature_count": len(columns)}
+        actuals["final_fit"] = {"rows": len(final_x), "class_counts": _class_counts(final_y), "partitions": fit_partitions}
+        row_gate = payload["final_evaluation"].get("fit_row_count_gate")
+        if row_gate and not self._gate(result, "final_evaluation.fit_row_count", row_gate["expected_rows"], len(final_x),
+                                       row_gate["source"]):
+            return False
+        final_pipeline = build_candidate_pipeline(selected_candidate, payload, task_type,
+                                                  extra_params=actuals["search"][base_id]["best_params"],
+                                                  feature_columns=columns if policies_spec else None)
         final_pipeline.fit(final_x, final_y)
-        test_probabilities = _positive_probabilities(final_pipeline, x_test, positive_label)
-        actuals["final_test"] = {
-            "evaluation_count": 1,
-            "fit_rows": len(final_x),
-            "probability": probability_metrics(y_test, test_probabilities),
-            "at_default_threshold": threshold_metrics(y_test, test_probabilities, default_threshold),
-            "at_policy_threshold": threshold_metrics(y_test, test_probabilities, policy_threshold),
-        }
-        final_membership = memberships["test"]
-        result.metric_sets.append(self._metric_set(
-            result, metric_set_id=f"final_test.{selected_id}.probability", partition="test",
-            membership=final_membership, model_id=selected_id, threshold=None,
-            metrics=actuals["final_test"]["probability"],
-        ))
-        result.metric_sets.append(self._metric_set(
-            result, metric_set_id=f"final_test.{selected_id}.at_default_threshold", partition="test",
-            membership=final_membership, model_id=selected_id,
-            threshold={"value": default_threshold, "rule": "fixed_default_threshold", "provenance": "scientific_study_contract"},
-            metrics=actuals["final_test"]["at_default_threshold"],
-        ))
-        result.metric_sets.append(self._metric_set(
-            result, metric_set_id=f"final_test.{selected_id}.at_policy_threshold", partition="test",
-            membership=final_membership, model_id=selected_id, threshold=reproduced_threshold,
-            metrics=actuals["final_test"]["at_policy_threshold"],
-        ))
+        actuals["selection"]["selected_estimator_class"] = type(final_pipeline.named_steps["model"]).__name__
+        x_test, y_test = xy(partitions["test"], columns)
+        task.final_evaluation(
+            self, result, selected_id=selected_id, pipeline=final_pipeline, x_test=x_test, y_test=y_test,
+            decision=decision, fit_rows=len(final_x), test_membership=memberships["test"],
+            context={"feature_policy": selected_variant["feature_policy"], "fit_partitions": fit_partitions,
+                     "final_features": final_x,
+                     "selected_validation_confusion": selected_eval.detail.get("confusion_matrix")},
+        )
+        return True
 
 
 def build_reproduction(
@@ -1117,9 +1939,14 @@ def build_reproduction(
 
 
 def validate_report_schema(report: Mapping[str, Any]) -> list[str]:
+    """Validate a report against the schema of its own declared version."""
     import jsonschema
 
-    schema = json.loads(REPORT_SCHEMA_PATH.read_text(encoding="utf-8"))
+    version = report.get("schema_version") if isinstance(report, Mapping) else None
+    path = REPORT_SCHEMA_PATHS.get(version)
+    if path is None:
+        return [f"schema_version: unsupported reproduction report version {version!r}"]
+    schema = json.loads(path.read_text(encoding="utf-8"))
     validator = jsonschema.Draft202012Validator(schema)
     return sorted(
         f"{'/'.join(str(p) for p in error.absolute_path) or '<root>'}: {error.message}"
@@ -1166,6 +1993,15 @@ def write_reproduction_report(report: Mapping[str, Any], *, repo_root: Path, sea
     return {"run_directory": relative_dir, "report_path": f"{relative_dir}/{REPORT_FILENAME}", "report_sha256": _sha256_bytes(report_bytes)}
 
 
+def _comparison_lookup(report: Mapping[str, Any], quantity: str) -> Mapping[str, Any] | None:
+    comparison = report.get("comparison") or {}
+    for group in ("values", "decisions", "runtime_identity"):
+        for item in comparison.get(group, []) or []:
+            if item["quantity"] == quantity:
+                return item
+    return None
+
+
 def answer_reproduction_questions(report: Mapping[str, Any]) -> dict[str, Any]:
     """Answer the reproduction success-criterion questions from a report.
 
@@ -1178,13 +2014,23 @@ def answer_reproduction_questions(report: Mapping[str, Any]) -> dict[str, Any]:
         {"gap_id": g["gap_id"], "description": g["description"]} for g in report.get("evidence_gaps", [])
     ]
     study = report["evidence_lineage"][STUDY_RUN_KIND]
-    return {
+    thresholds = report.get("thresholds") or {}
+    if "applicable" in thresholds and thresholds["applicable"] is False:
+        threshold_answer = {"applicable": False, "reason": thresholds["reason"]}
+        threshold_rule = None
+    else:
+        reproduced = thresholds.get("scientific_reproduced", {})
+        threshold_rule = reproduced.get("rule_kind") if reproduced.get("value") is not None else None
+        threshold_answer = {"applicable": True, "value": reproduced.get("value")}
+    answers = {
         "which_scientific_revision_was_reproduced": study["study_revision"],
+        "which_canonical_run_artifact_was_used": study.get("canonical_run"),
         "which_dataset_revision_was_used": {
             "sha256": report["dataset"].get("observed_sha256"),
             "matches_pinned_identity": report["dataset"]["verified"],
         },
         "which_scientific_environment_produced_the_reference": report["environment"]["scientific_reference"],
+        "did_the_environment_match": report["environment"]["compatibility"]["classification"],
         "which_models_were_expected": report["candidate_models"]["expected"],
         "which_models_were_executed": report["candidate_models"]["executed"],
         "which_search_spaces_were_reproduced": {
@@ -1192,21 +2038,77 @@ def answer_reproduction_questions(report: Mapping[str, Any]) -> dict[str, Any]:
             for model_id, s in report["candidate_models"]["search_spaces"].items()
         },
         "which_selection_rule_was_executed": report["selection"]["rule"]["kind"] if report["selection"]["executed"] else None,
-        "which_threshold_rule_was_executed": report["thresholds"]["scientific_reproduced"]["rule_kind"]
-        if report["thresholds"]["scientific_reproduced"]["value"] is not None else None,
+        "which_threshold_rule_was_executed": threshold_rule,
+        "threshold": threshold_answer,
         "scientific_expected_metrics": {c["quantity"]: c["expected"] for c in compared},
         "atlas_reproduced_metrics": {c["quantity"]: c["actual"] for c in compared},
         "deltas": {c["quantity"]: c["delta"] for c in compared if c.get("delta") is not None},
+        "matched": [c["quantity"] for c in compared if c["outcome"] == OUTCOME_EXACT],
+        "within_tolerance_only": [c["quantity"] for c in compared if c["outcome"] == OUTCOME_WITHIN],
+        "exceeded_tolerance_or_mismatched": [c["quantity"] for c in compared if c["outcome"] in (OUTCOME_OUTSIDE, OUTCOME_MISMATCH)],
+        "not_produced": [c["quantity"] for c in compared if c["outcome"] == OUTCOME_MISSING],
         "all_within_tolerance": comparison.get("all_within_tolerance"),
         "unsupported": report["protocol_support"]["gaps"],
         "final_reproduction_status": report["reproduction_status"]["status"],
         "unanswered": unanswered,
     }
+    if report.get("schema_version") == REPORT_SCHEMA_VERSION:
+        answers.update(_answer_v2_questions(report))
+    return answers
 
 
-# Canonical metric identities: the native binary vocabulary names Average
-# Precision "pr_auc" (it is computed with average_precision_score).
-NATIVE_METRIC_ALIASES = {"pr_auc": "average_precision"}
+def _answer_v2_questions(report: Mapping[str, Any]) -> dict[str, Any]:
+    split = report.get("split") or {}
+    observed = split.get("observed") or {}
+    gate = split.get("gate") or {}
+    selection = (report.get("selection") or {}).get("executed") or {}
+    final_fit = report.get("final_fit") or {}
+    problem = report.get("problem") or {}
+    class_order = problem.get("class_order") or {}
+
+    def expected_match(quantity: str) -> bool | None:
+        item = _comparison_lookup(report, quantity)
+        return None if item is None else item["outcome"] == OUTCOME_EXACT
+
+    confusion = _comparison_lookup(report, "final_test.confusion_matrix")
+    per_class = [c for c in (report.get("comparison") or {}).get("values", []) if c["quantity"].startswith("final_test.per_class.")]
+    return {
+        "did_partition_memberships_match": gate.get("passed") if gate else None,
+        "partition_row_counts": {name: part.get("rows") for name, part in observed.items()} or None,
+        "which_split_seeds_were_used": split.get("seeds_used"),
+        "cross_validation": (report.get("selection") or {}).get("rule", {}).get("partition"),
+        "which_families_were_searched": [row["model_id"] for row in report.get("family_search", [])],
+        "which_search_strategy_per_family": {row["model_id"]: row["search_strategy"] for row in report.get("family_search", [])},
+        "how_many_candidates_per_family": {row["model_id"]: row["candidate_count_executed"] for row in report.get("family_search", [])},
+        "which_best_params_emerged": {row["model_id"]: row["best_params"] for row in report.get("family_search", [])},
+        "which_families_entered_the_shortlist": (report.get("family_shortlist") or {}).get("model_ids"),
+        "which_feature_policy_candidates_were_evaluated": [
+            row["model_id"] for row in ((report.get("feature_policy_stage") or {}).get("candidates") or [])],
+        "was_there_a_practical_tie": selection.get("practical_tie"),
+        "which_tie_break_rules_executed": [c["criterion"] for c in selection.get("criteria_applied", [])],
+        "which_model_was_selected": selection.get("selected_model_id"),
+        "final_fit_partitions_and_rows": {"partitions": final_fit.get("partitions"), "rows": final_fit.get("rows")},
+        "decision_rule": problem.get("decision_rule"),
+        "class_order_preserved": (class_order.get("fitted_estimator_class_order") == class_order.get("estimator_class_order")
+                                  if class_order else None),
+        "did_confusion_matrix_match": None if confusion is None else confusion["outcome"] == OUTCOME_EXACT,
+        "did_per_class_metrics_match": (all(c["outcome"] in (OUTCOME_EXACT, OUTCOME_WITHIN) for c in per_class)
+                                        if per_class else None),
+        "did_dataset_sha_match": expected_match("dataset.sha256"),
+        "evidence_tiers": report["reproduction_status"].get("evidence_tiers"),
+        "historical_test_exposure": (report.get("protocol_integrity") or {}).get("historical_test_exposure"),
+    }
+
+
+# Canonical metric identities: native Atlas metric names mapped to the
+# scientific vocabulary (binary "pr_auc" is computed with
+# average_precision_score; multiclass native names use sklearn's suffix style).
+NATIVE_METRIC_ALIASES = {
+    "pr_auc": "average_precision",
+    "f1_macro": "macro_f1",
+    "f1_weighted": "weighted_f1",
+    "recall_macro": "macro_recall",
+}
 
 
 def describe_lineage_separation(report: Mapping[str, Any], *, repo_root: Path) -> dict[str, Any]:
@@ -1230,19 +2132,16 @@ def describe_lineage_separation(report: Mapping[str, Any], *, repo_root: Path) -
             release_metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
 
     selected = (report.get("selection", {}).get("executed") or {}).get("selected_model_id")
-    reproduced_sets = {
-        suffix: next((m for m in report["metric_sets"] if m["metric_set_id"] == f"final_test.{selected}.{suffix}"), None)
-        for suffix in ("probability", "at_default_threshold")
-    }
+    # Final-test metric sets of the reproduction; threshold-free sets first so a
+    # threshold-dependent metric is taken from the default-threshold set.
+    final_sets = [m for m in report["metric_sets"]
+                  if m["metric_set_id"] == f"final_test.{selected}"
+                  or m["metric_set_id"] in (f"final_test.{selected}.probability", f"final_test.{selected}.at_default_threshold")]
     rows = []
     if release_metrics is not None:
         for metric in release_metrics.get("final_test_evaluation", {}).get("metrics", []):
             canonical = NATIVE_METRIC_ALIASES.get(metric["name"], metric["name"])
-            # Threshold-free metrics come from the probability set; threshold-dependent
-            # ones from the default-threshold set, whose threshold is reported with them.
-            reproduced_set = next(
-                (s for s in reproduced_sets.values() if s is not None and canonical in s["metrics"]), None
-            )
+            reproduced_set = next((s for s in final_sets if canonical in s["metrics"]), None)
             rows.append({
                 "canonical_metric": canonical,
                 "partition": "test",
@@ -1253,6 +2152,7 @@ def describe_lineage_separation(report: Mapping[str, Any], *, repo_root: Path) -
                         "lineage": RELEASE_KIND,
                         "release_id": entry["active_release"],
                         "training_run_id": release_metrics.get("training_run_identity", {}).get("run_id"),
+                        "test_row_count": release_metrics.get("final_test_evaluation", {}).get("row_count"),
                         "decision_threshold": ((native_contract or {}).get("result_semantics") or {})
                         .get("decision", {}).get("threshold"),
                         "decision_threshold_provenance": "native execution contract result_semantics",
@@ -1266,6 +2166,7 @@ def describe_lineage_separation(report: Mapping[str, Any], *, repo_root: Path) -
                         "model_id": selected,
                         "metric_set_id": reproduced_set["metric_set_id"] if reproduced_set else None,
                         "threshold": reproduced_set["provenance"]["threshold"] if reproduced_set else None,
+                        "test_row_count": ((report.get("split") or {}).get("observed") or {}).get("test", {}).get("rows"),
                     },
                 },
                 "directly_comparable": False,
@@ -1273,22 +2174,34 @@ def describe_lineage_separation(report: Mapping[str, Any], *, repo_root: Path) -
 
     differences = []
     if native_contract is not None:
-        scientific_split = "two_stage_stratified_holdout (identifier-ordered, seeds from the study contract)"
+        membership = (report.get("split") or {}).get("membership") or {"kind": "identifier"}
+        seeds = (report.get("split") or {}).get("seeds_used")
+        scientific_split = (f"two_stage_stratified_holdout ({membership.get('kind')}-ordered, seeds "
+                            f"{seeds if seeds else 'from the study contract'})")
         differences.append({
             "fact": "split",
             "atlas_native": f"{native_contract.get('split_policy', {}).get('strategy')} with random_seed="
                             f"{native_contract.get('random_seed')}",
             "scientific_reproduction": scientific_split,
         })
+        observed = ((report.get("split") or {}).get("observed") or {})
+        if observed and release_metrics is not None:
+            differences.append({
+                "fact": "test_partition_rows",
+                "atlas_native": release_metrics.get("final_test_evaluation", {}).get("row_count"),
+                "scientific_reproduction": observed.get("test", {}).get("rows"),
+            })
         differences.append({
             "fact": "primary_metric",
             "atlas_native": native_contract.get("primary_metric"),
             "scientific_reproduction": report["selection"]["rule"].get("eligibility", {}).get("metric"),
         })
+        thresholds = report.get("thresholds") or {}
         differences.append({
             "fact": "decision_threshold",
             "atlas_native": (native_contract.get("result_semantics") or {}).get("decision", {}).get("threshold"),
-            "scientific_reproduction": report["thresholds"]["scientific_reproduced"]["value"],
+            "scientific_reproduction": (not_applicable(thresholds["reason"]) if thresholds.get("applicable") is False
+                                        else thresholds.get("scientific_reproduced", {}).get("value")),
         })
         differences.append({
             "fact": "model_selection",
@@ -1302,7 +2215,7 @@ def describe_lineage_separation(report: Mapping[str, Any], *, repo_root: Path) -
         "rows": rows,
         "protocol_differences": differences,
         "interpretation": (
-            "The two lineages use different partitions, seeds, selection procedures, and thresholds. "
+            "The two lineages use different partitions, seeds, selection procedures, and decision rules. "
             "Their metrics describe different experiments and are shown side by side only with their own "
             "provenance; neither replaces the other."
         ),
@@ -1329,7 +2242,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     result = reproduction.run(run_id=args.run_id, n_jobs=args.n_jobs, allow_incompatible_environment=args.allow_incompatible_environment)
     written = write_reproduction_report(result.build_report(), repo_root=root, search_results=result.search_results or None)
     report = json.loads((root / written["report_path"]).read_text(encoding="utf-8"))
-    print(json.dumps({"report": written, "status": report["reproduction_status"]}, indent=2))
+    print(json.dumps({"report": written, "status": report["reproduction_status"]["status"],
+                      "reasons": report["reproduction_status"]["reasons"]}, indent=2))
     return 0
 
 

@@ -62,7 +62,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from pipeline import metric_identity, model_families, scientific_environment
+from pipeline import metric_identity, model_families, preparation_rules, scientific_environment
 from pipeline.scientific_study_contract import (
     BINARY,
     MULTICLASS,
@@ -346,7 +346,7 @@ def _apply_conditional_blank_numeric_fill(frame: Any, rule: Mapping[str, Any]) -
     return prepared, int(fill.sum())
 
 
-_PREPARATION_RULES = {"conditional_blank_numeric_fill": _apply_conditional_blank_numeric_fill}
+_PREPARATION_RULES = {preparation_rules.CONDITIONAL_BLANK_NUMERIC_FILL: _apply_conditional_blank_numeric_fill}
 
 
 def apply_preparation(frame: Any, preparation: Mapping[str, Any]) -> tuple[Any, dict[str, Any]]:

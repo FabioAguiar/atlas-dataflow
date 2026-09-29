@@ -557,16 +557,20 @@ def _is_blank_value(value: str | None) -> bool:
     return value is None or str(value).strip() == ""
 
 
-def verify_and_apply_conditional_fill(
+def apply_conditional_blank_numeric_fill(
     rows: list[dict[str, str]],
     column: str,
-    verification_column: str,
-    verification_value: str,
-    fill_value: str,
+    condition_column: str,
+    condition_value: str,
+    replacement: str,
 ) -> tuple[list[dict[str, str]] | None, bool, int]:
-    """Fill blank/whitespace-only `column` values with `fill_value`, but only
-    when every row with a blank `column` value has `verification_column`
-    numerically equal to `verification_value`.
+    """Native row-level implementation of the canonical preparation rule
+    `conditional_blank_numeric_fill` (pipeline/preparation_rules.py), the
+    same capability scientific reproduction applies to a data frame.
+
+    Fill blank/whitespace-only `column` values with `replacement`, but only
+    when every row with a blank `column` value has `condition_column`
+    numerically equal to `condition_value`.
 
     This never drops rows, never applies a broad imputation strategy (mean,
     median, mode, or model-based), and never creates a missing-value
@@ -577,16 +581,16 @@ def verify_and_apply_conditional_fill(
     Returns `(filled_rows, True, 0)` when verification passes for every
     blank row, or `(None, False, failing_row_count)` when at least one blank
     row fails verification (a non-matching or non-numeric
-    `verification_column` value). The caller must treat a failed
-    verification as a block: no candidate rows, no partial fill.
+    `condition_column` value). The caller must treat a failed verification
+    as a block: no candidate rows, no partial fill.
     """
     failing_row_count = 0
     for row in rows:
         if not _is_blank_value(row.get(column)):
             continue
-        verify_cell = row.get(verification_column)
+        verify_cell = row.get(condition_column)
         try:
-            verify_ok = verify_cell is not None and float(verify_cell) == float(verification_value)
+            verify_ok = verify_cell is not None and float(verify_cell) == float(condition_value)
         except (TypeError, ValueError):
             verify_ok = False
         if not verify_ok:
@@ -599,11 +603,26 @@ def verify_and_apply_conditional_fill(
     for row in rows:
         row = dict(row)
         if _is_blank_value(row.get(column)):
-            row[column] = str(float(fill_value))
+            row[column] = str(float(replacement))
         else:
             row[column] = str(float(row[column]))
         filled_rows.append(row)
     return filled_rows, True, 0
+
+
+def verify_and_apply_conditional_fill(
+    rows: list[dict[str, str]],
+    column: str,
+    verification_column: str,
+    verification_value: str,
+    fill_value: str,
+) -> tuple[list[dict[str, str]] | None, bool, int]:
+    """Deprecated name of `apply_conditional_blank_numeric_fill`, kept as a
+    thin compatibility alias with its original parameter names; delegates
+    entirely to the canonical implementation."""
+    return apply_conditional_blank_numeric_fill(
+        rows, column, verification_column, verification_value, fill_value
+    )
 
 
 def build_verified_conditional_fill_preparation_recipe(
@@ -654,12 +673,12 @@ def build_verified_conditional_fill_preparation_recipe(
     row_count_before = len(rows)
     col_count_before = len(columns)
 
-    filled_rows, verification_passed, failing_row_count = verify_and_apply_conditional_fill(
+    filled_rows, verification_passed, failing_row_count = apply_conditional_blank_numeric_fill(
         rows,
         column=column,
-        verification_column=verification_column,
-        verification_value=verification_value,
-        fill_value=fill_value,
+        condition_column=verification_column,
+        condition_value=verification_value,
+        replacement=fill_value,
     )
 
     transformation = _normalize_transformation_record({

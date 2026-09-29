@@ -1,0 +1,3702 @@
+{
+  "schema_version": "scientific-study-contract.v2",
+  "artifact_kind": "scientific_study_contract",
+  "study_identity": {
+    "study_id": "dataset-study-dry-bean",
+    "dataset_slug": "dry-bean",
+    "protocol_kind": "tabular_holdout_model_selection.v2",
+    "study_revision_label": "study-e3e697c1b60f",
+    "title": "Dry Bean — Dataset Study"
+  },
+  "source_repository": {
+    "url": "https://github.com/FabioAguiar/dataset-study-dry-bean",
+    "revision": "e3e697c1b60f7b11f4ccb7e82447a6680bc2bfaf",
+    "revision_committed_at": "2026-09-28T08:41:51+00:00",
+    "pinned_files": [
+      {
+        "path": "reproducibility/canonical-run.json",
+        "role": "canonical_run_structured_reference_evidence",
+        "sha256": "6e3db6a6951ad76d2b3bcc9c7f5455bb1e5704815924604e581c9613cebd45cb"
+      },
+      {
+        "path": "README.md",
+        "role": "published_results_and_protocol_narrative",
+        "sha256": "cba093bfef16bd01aefe7ec9f6759932b2cfab3376c096a71304e9d0d9777df1"
+      },
+      {
+        "path": ".python-version",
+        "role": "scientific_interpreter_contract",
+        "sha256": "56c16a411e41fec3219e828087f312d9891641e3b29093c69d08a05ec1e5d693"
+      },
+      {
+        "path": "pyproject.toml",
+        "role": "declared_dependency_contract",
+        "sha256": "5b352cbd3885692d7028faaa3024914cfd9e8ff9bcdad95e29c291c42e626618"
+      },
+      {
+        "path": "pylock.toml",
+        "role": "scientific_environment_lock",
+        "sha256": "aea869f05a6268350e09a2e275f335fc636e120b083918eeea78efc85be56ffd"
+      },
+      {
+        "path": "scripts/prepare_data.py",
+        "role": "split_membership_and_partition_fingerprint_implementation",
+        "sha256": "a8b75b2b8b3b152960c14bd24ce11bc718a74a8aa68ca409ad08a761087f587c"
+      },
+      {
+        "path": "scripts/select_models.py",
+        "role": "search_shortlist_feature_policy_selection_implementation",
+        "sha256": "ca3b8c3a8bd4c2e6ff028feb646b3b71f3345e9ae2e2031b1e69c56a1039d893"
+      },
+      {
+        "path": "scripts/finalize_model.py",
+        "role": "final_fit_and_test_evaluation_implementation",
+        "sha256": "6554eb2c64b38173b624eed43a9a5f9b46447572c0fea366c931a1659d6d1836"
+      },
+      {
+        "path": "scripts/canonical_run.py",
+        "role": "canonical_run_builder_and_verifier",
+        "sha256": "b4f646355215d479c21ae009285f942a2c80e31d7a34956a14bfc9d631016838"
+      },
+      {
+        "path": "scripts/build_exploration_handoff.py",
+        "role": "train_only_feature_evidence_summary",
+        "sha256": "e23280258f20c5c4c8611b5589c3637f78814858398e69353c08339b22dd142d"
+      },
+      {
+        "path": "scripts/analyze_leakage.py",
+        "role": "derived_dependency_confirmation_implementation",
+        "sha256": "315b91104f60cc09c81062428f99e30a75f44639abbd6b151447e266974cd13c"
+      },
+      {
+        "path": "notebooks/01_data_understanding_and_exploration.ipynb",
+        "role": "split_freeze_and_train_only_exploration_protocol",
+        "sha256": "2cc451760d6122edfe3dd2acf0f18782af6600351dfd61fbaa7f996e620aceea"
+      },
+      {
+        "path": "notebooks/02_data_preparation.ipynb",
+        "role": "preparation_and_partition_handoff_protocol",
+        "sha256": "95029986ab2d791de6317397829bc2c2e37381800d6a84402cb6e2ffa6b7a7f8"
+      },
+      {
+        "path": "notebooks/03_model_selection_and_evaluation.ipynb",
+        "role": "candidate_space_shortlist_feature_policy_and_selection_protocol",
+        "sha256": "5b8126d5f60f1c9010e9386b1cd852c87b5f292e7518b84600ad52d69a42da62"
+      },
+      {
+        "path": "notebooks/04_final_model_and_bundle.ipynb",
+        "role": "final_fit_and_single_test_evaluation_protocol",
+        "sha256": "c99f825b2781bcb32d0a992a07aa991b6cdd3fb22acd3997cc444075e089e846"
+      },
+      {
+        "path": "docs/images/final_test_confusion_matrix.png",
+        "role": "published_figure_final_test_confusion_matrix",
+        "sha256": "a4cf765d2772c7e883a527e819493ebe343bcc3ecb0339c4ec4842a30a2ae22d"
+      },
+      {
+        "path": "docs/images/model_validation_comparison.png",
+        "role": "published_figure_validation_comparison",
+        "sha256": "8e20ff9accabb5fa913b2e7c3dea5e8da283c533e877143d7248a227a473e7b6"
+      },
+      {
+        "path": "docs/images/feature_policy_sensitivity.png",
+        "role": "published_figure_feature_policy_sensitivity",
+        "sha256": "3781223db69e0ee43008f1915ba6e9226a9217f20341fb8fb93db64ccf3cd40e"
+      },
+      {
+        "path": "docs/images/validation_vs_test_metrics.png",
+        "role": "published_figure_validation_vs_test_metrics",
+        "sha256": "2b44b17a8c5f4129ae6901b400f43e5e9a9562879a7c838145abc8da0e40689d"
+      }
+    ]
+  },
+  "canonical_run": {
+    "path": "reproducibility/canonical-run.json",
+    "schema_version": "canonical-run.v1",
+    "artifact_type": "canonical_reference_run",
+    "sha256": "6e3db6a6951ad76d2b3bcc9c7f5455bb1e5704815924604e581c9613cebd45cb"
+  },
+  "dataset_identity": {
+    "source_provider": "uci",
+    "source_reference": "UCI Machine Learning Repository dataset 602 (Dry Bean), doi 10.24432/C50S4B",
+    "file_name": "dataset.csv",
+    "sha256": "1330e4ccc5c54a925e43daf60d1409ac62dad2a21de9a25213765bee4b655787",
+    "size_bytes": 2471169,
+    "row_count": 13611,
+    "column_count": 17,
+    "read_format": "csv",
+    "read_options": {},
+    "atlas_local_path": "data/scientific-studies/dry-bean/dataset.csv",
+    "acquisition_note": "The study materializes dataset.csv as pandas to_csv(index=False) of the ucimlrepo frame. The file is gitignored in Atlas; the engine executes only when SHA-256 and size match."
+  },
+  "scientific_environment": {
+    "python": "3.13.13",
+    "implementation": "CPython",
+    "platform": "linux-aarch64",
+    "core_packages": {
+      "scikit-learn": "1.9.0",
+      "pandas": "3.0.5",
+      "numpy": "2.5.3",
+      "scipy": "1.18.1",
+      "joblib": "1.5.3"
+    },
+    "lock": {
+      "path": "pylock.toml",
+      "format": "pep751",
+      "python_version_file": ".python-version",
+      "sha256": "aea869f05a6268350e09a2e275f335fc636e120b083918eeea78efc85be56ffd",
+      "python_version_file_sha256": "56c16a411e41fec3219e828087f312d9891641e3b29093c69d08a05ec1e5d693"
+    },
+    "compatibility_policy": {
+      "python": "same_minor",
+      "core_packages": "same_minor",
+      "platform": "difference_is_compatible",
+      "rationale": "The protocol depends on scikit-learn search, CV, estimator and metric semantics and on pandas CSV parsing, stable within a minor release line. A different interpreter patch or CPU architecture is recorded as a compatible difference; its numerical consequences are bounded by the tolerance policy and byte-level identity is reported separately as runtime identity."
+    }
+  },
+  "problem": {
+    "problem_type": "multiclass_classification",
+    "target": {
+      "column": "Class",
+      "classes": [
+        "SEKER",
+        "BARBUNYA",
+        "BOMBAY",
+        "CALI",
+        "DERMASON",
+        "HOROZ",
+        "SIRA"
+      ],
+      "semantics": "nominal_unordered",
+      "label_representation": "string_labels",
+      "positive_class": {
+        "applicable": false,
+        "reason": "multiclass_problem_has_no_positive_class"
+      },
+      "estimator_class_order": [
+        "BARBUNYA",
+        "BOMBAY",
+        "CALI",
+        "DERMASON",
+        "HOROZ",
+        "SEKER",
+        "SIRA"
+      ],
+      "public_class_order": [
+        "SEKER",
+        "BARBUNYA",
+        "BOMBAY",
+        "CALI",
+        "DERMASON",
+        "HOROZ",
+        "SIRA"
+      ]
+    },
+    "decision_rule": {
+      "kind": "argmax_class_probability",
+      "study_label": "argmax_class_score_or_probability",
+      "tie_resolution": "first_in_public_class_order",
+      "rationale": "The study's final evaluation takes the argmax over probabilities realigned from estimator order to public order; exact ties are counted in the evidence."
+    },
+    "identifier_columns": []
+  },
+  "features": {
+    "feature_columns": [
+      "Area",
+      "Perimeter",
+      "MajorAxisLength",
+      "MinorAxisLength",
+      "AspectRatio",
+      "Eccentricity",
+      "ConvexArea",
+      "EquivDiameter",
+      "Extent",
+      "Solidity",
+      "Roundness",
+      "Compactness",
+      "ShapeFactor1",
+      "ShapeFactor2",
+      "ShapeFactor3",
+      "ShapeFactor4"
+    ],
+    "numerical": [
+      "Area",
+      "Perimeter",
+      "MajorAxisLength",
+      "MinorAxisLength",
+      "AspectRatio",
+      "Eccentricity",
+      "ConvexArea",
+      "EquivDiameter",
+      "Extent",
+      "Solidity",
+      "Roundness",
+      "Compactness",
+      "ShapeFactor1",
+      "ShapeFactor2",
+      "ShapeFactor3",
+      "ShapeFactor4"
+    ],
+    "categorical": [],
+    "excluded_columns": []
+  },
+  "preparation": {
+    "rules": [],
+    "row_removal": "none"
+  },
+  "split": {
+    "kind": "two_stage_stratified_holdout",
+    "protocol_decision_id": "split_frozen_before_distribution_aware_eda",
+    "membership": {
+      "kind": "technical_row_occurrence",
+      "digest_order": "source_position",
+      "semantics": "source-order-bound full-row hash plus occurrence ordinal; technical partition evidence only, not entity identity"
+    },
+    "order_by_identifier": true,
+    "fractions": {
+      "train": 0.7,
+      "validation": 0.15,
+      "test": 0.15
+    },
+    "stratify_by": "Class",
+    "shuffle": true,
+    "seeds": {
+      "train_vs_temporary": 42,
+      "validation_vs_test": 43
+    },
+    "partition_handoff": {
+      "kind": "csv_roundtrip",
+      "float_format": "%.15g"
+    },
+    "partition_fingerprint": {
+      "kind": "csv_bytes_sha256",
+      "float_format": "%.15g"
+    },
+    "membership_gate": {
+      "required": true,
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/split/membership_sha256",
+        "rendered_text": "{\"test\": \"534ff2e449106531a9f5f8bea14e5785b113ba821cde5e26bad5362fad5d2e5a\", \"train\": \"34e9cb09dc42d27a53ced3ef811868b9b926a8f435999ab16e817b50a612609e\", \"validation\": \"f2d74e5b98f7dca1df8268e135e7903c738578b10e2846bd9f38d27f666a5547\"}"
+      },
+      "expected_membership_sha256": {
+        "test": "534ff2e449106531a9f5f8bea14e5785b113ba821cde5e26bad5362fad5d2e5a",
+        "train": "34e9cb09dc42d27a53ced3ef811868b9b926a8f435999ab16e817b50a612609e",
+        "validation": "f2d74e5b98f7dca1df8268e135e7903c738578b10e2846bd9f38d27f666a5547"
+      }
+    }
+  },
+  "preprocessing": {
+    "kind": "column_transformer_onehot_plus_numeric",
+    "numerical": {
+      "scaling": "per_candidate"
+    },
+    "categorical": {
+      "applicable": false,
+      "reason": "no categorical features"
+    },
+    "fit_scope": "inside_training_fold_or_final_training_only"
+  },
+  "cross_validation": {
+    "kind": "stratified_k_fold",
+    "n_splits": 5,
+    "shuffle": true,
+    "random_state": 42,
+    "partition": "train"
+  },
+  "metrics": {
+    "primary": "macro_f1",
+    "refit": "macro_f1",
+    "evaluated": [
+      "macro_f1",
+      "balanced_accuracy",
+      "macro_recall",
+      "weighted_f1",
+      "accuracy",
+      "minimum_per_class_recall",
+      "log_loss"
+    ],
+    "cv_scorers": [
+      "macro_f1",
+      "balanced_accuracy",
+      "macro_recall",
+      "weighted_f1",
+      "accuracy",
+      "log_loss"
+    ],
+    "definitions": {
+      "log_loss": "mean negative natural log of the probability assigned to the observed class, probabilities clipped at float eps; columns mapped to classes through estimator.classes_",
+      "minimum_per_class_recall": "minimum over classes of per-class recall",
+      "cv_log_loss": "scikit-learn neg_log_loss scorer, reported in natural orientation"
+    }
+  },
+  "baseline": {
+    "model_id": "dummy_prior",
+    "family": "dummy_prior",
+    "study_estimator_class": "DummyClassifier",
+    "fixed_params": {
+      "strategy": "prior"
+    },
+    "numerical_scaling": "passthrough",
+    "search": {
+      "kind": "none"
+    },
+    "eligible_for_selection": false
+  },
+  "candidates": [
+    {
+      "model_id": "logistic_regression",
+      "family": "logistic_regression",
+      "study_estimator_class": "LogisticRegression",
+      "fixed_params": {
+        "solver": "lbfgs",
+        "max_iter": 2000,
+        "random_state": 42
+      },
+      "numerical_scaling": "standard",
+      "search": {
+        "kind": "grid",
+        "space": {
+          "C": [
+            0.1,
+            1.0
+          ],
+          "class_weight": [
+            null,
+            "balanced"
+          ]
+        },
+        "expected_candidate_count": 4
+      },
+      "eligible_for_selection": true
+    },
+    {
+      "model_id": "decision_tree",
+      "family": "decision_tree",
+      "study_estimator_class": "DecisionTreeClassifier",
+      "fixed_params": {
+        "random_state": 42
+      },
+      "numerical_scaling": "passthrough",
+      "search": {
+        "kind": "grid",
+        "space": {
+          "max_depth": [
+            8,
+            null
+          ],
+          "min_samples_leaf": [
+            1,
+            5
+          ],
+          "class_weight": [
+            null,
+            "balanced"
+          ]
+        },
+        "expected_candidate_count": 8
+      },
+      "eligible_for_selection": true
+    },
+    {
+      "model_id": "random_forest",
+      "family": "random_forest",
+      "study_estimator_class": "RandomForestClassifier",
+      "fixed_params": {
+        "random_state": 42,
+        "n_jobs": 1
+      },
+      "numerical_scaling": "passthrough",
+      "search": {
+        "kind": "randomized",
+        "n_iter": 8,
+        "random_state": 42,
+        "space": {
+          "n_estimators": [
+            120,
+            240
+          ],
+          "max_depth": [
+            null,
+            16
+          ],
+          "min_samples_leaf": [
+            1,
+            3
+          ],
+          "class_weight": [
+            null,
+            "balanced",
+            "balanced_subsample"
+          ]
+        },
+        "expected_candidate_count": 8
+      },
+      "eligible_for_selection": true
+    },
+    {
+      "model_id": "hist_gradient_boosting",
+      "family": "hist_gradient_boosting",
+      "study_estimator_class": "HistGradientBoostingClassifier",
+      "fixed_params": {
+        "random_state": 42
+      },
+      "numerical_scaling": "passthrough",
+      "search": {
+        "kind": "randomized",
+        "n_iter": 8,
+        "random_state": 42,
+        "space": {
+          "learning_rate": [
+            0.05,
+            0.1
+          ],
+          "max_iter": [
+            150,
+            250
+          ],
+          "max_leaf_nodes": [
+            15,
+            31
+          ],
+          "min_samples_leaf": [
+            20,
+            40
+          ],
+          "l2_regularization": [
+            0.0,
+            1.0
+          ],
+          "class_weight": [
+            null,
+            "balanced"
+          ]
+        },
+        "expected_candidate_count": 8
+      },
+      "eligible_for_selection": true
+    }
+  ],
+  "search_execution": {
+    "n_jobs": 1,
+    "estimator_n_jobs": 1,
+    "error_score": "raise",
+    "search_partition": "train",
+    "validation_in_search": false,
+    "test_in_search": false
+  },
+  "family_shortlist": {
+    "kind": "top_k_by_cv_metric",
+    "metric": "macro_f1",
+    "k": 2,
+    "direction": "max",
+    "tie_order": "model_id",
+    "source_partition": "train_cross_validation"
+  },
+  "feature_policies": {
+    "kind": "frozen_family_params_feature_projection",
+    "candidate_id_pattern": "{model_id}__{policy_id}",
+    "applies_to": "family_shortlist",
+    "evaluation": {
+      "cross_validation": "train only, same folds as the family search",
+      "validation": "fit on train, evaluate once on validation"
+    },
+    "evidence_scope": "training_partition_exploration_only",
+    "policies": [
+      {
+        "policy_id": "all_features",
+        "exclude": [],
+        "derivation": "all 16 predictors"
+      },
+      {
+        "policy_id": "without_shape_factor_2",
+        "exclude": [
+          "ShapeFactor2"
+        ],
+        "derivation": "train-only exploration: ShapeFactor2 has a declared dependency that could not be confirmed (unresolved provenance)"
+      },
+      {
+        "policy_id": "without_confirmed_derived",
+        "exclude": [
+          "AspectRatio",
+          "Eccentricity",
+          "EquivDiameter",
+          "Solidity",
+          "Roundness",
+          "Compactness",
+          "ShapeFactor1",
+          "ShapeFactor3",
+          "ShapeFactor4"
+        ],
+        "derivation": "train-only exploration: the nine derived features whose dependency was confirmed from retained columns"
+      }
+    ]
+  },
+  "selection": {
+    "kind": "leader_anchored_practical_tie",
+    "partition": "validation",
+    "candidate_space": "family_shortlist_x_feature_policies",
+    "eligibility": {
+      "metric": "macro_f1",
+      "margin": 0.02,
+      "strict": true,
+      "baseline_model_id": "dummy_prior"
+    },
+    "leader": {
+      "metric": "macro_f1",
+      "direction": "max",
+      "tie_order": "model_id"
+    },
+    "practical_tie": {
+      "metric": "macro_f1",
+      "tolerance": 0.002,
+      "requires_cv_interval_overlap": false
+    },
+    "tie_breakers": [
+      {
+        "criterion": "higher_validation_balanced_accuracy",
+        "field": "validation_balanced_accuracy",
+        "direction": "max"
+      },
+      {
+        "criterion": "higher_minimum_per_class_recall",
+        "field": "validation_minimum_per_class_recall",
+        "direction": "max"
+      },
+      {
+        "criterion": "lower_cv_macro_f1_std",
+        "field": "cv_macro_f1_std",
+        "direction": "min"
+      },
+      {
+        "criterion": "lower_validation_log_loss_when_comparable",
+        "field": "validation_log_loss",
+        "direction": "min"
+      },
+      {
+        "criterion": "simpler_pipeline_or_model",
+        "field": "simplicity_rank",
+        "direction": "min"
+      },
+      {
+        "criterion": "stable_model_id",
+        "field": "model_id",
+        "direction": "min"
+      }
+    ],
+    "simplicity_order": [
+      "logistic_regression",
+      "decision_tree",
+      "random_forest",
+      "hist_gradient_boosting"
+    ],
+    "study_rule_reference": "scripts/select_models.py::select_multiclass_candidate_model (lexicographic minimum of the ordered key over the tie group; equivalent to applying the breakers in order)"
+  },
+  "threshold_policy": {
+    "kind": "not_applicable",
+    "applicable": false,
+    "reason": "multiclass_argmax_decision"
+  },
+  "final_evaluation": {
+    "kind": "refit_on_train_plus_validation_single_test_evaluation",
+    "fit_partitions": [
+      "train",
+      "validation"
+    ],
+    "fit_row_order": "train rows then validation rows, each in source order (pandas concat, ignore_index)",
+    "evaluation_partition": "test",
+    "evaluation_count": 1,
+    "fit_row_count_gate": {
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/final_model/fit_row_count",
+        "rendered_text": "11569"
+      },
+      "expected_rows": 11569
+    }
+  },
+  "interpretive_evidence": {
+    "confusion_pairs": {
+      "top_k": 3,
+      "focal_pairs": [
+        [
+          "DERMASON",
+          "SIRA"
+        ],
+        [
+          "BARBUNYA",
+          "CALI"
+        ]
+      ],
+      "focal_pairs_provenance": "focal pairs frozen before test access (validation confusion and train-only overlap evidence); descriptive only"
+    },
+    "repeated_profile_sensitivity": {
+      "kind": "non_destructive_repeated_feature_profile_sensitivity",
+      "reference_partitions": [
+        "train",
+        "validation"
+      ],
+      "interpretation": "Sensitivity only: the official test artifact remains complete; Repeated-profile evidence does not prove duplicate identity or leakage."
+    }
+  },
+  "tolerance_policy": {
+    "numeric_absolute": 1e-06,
+    "count_absolute": 0,
+    "declared_before_first_reproduction": true,
+    "exact_elements": [
+      "dataset SHA-256",
+      "partition memberships and partition bytes",
+      "split seeds",
+      "class orders",
+      "feature order and feature policies",
+      "candidate spaces and counts",
+      "best hyperparameters",
+      "shortlist",
+      "practical-tie group",
+      "deciding criterion",
+      "selected model and policy",
+      "final-fit rows and class counts",
+      "confusion matrix with its class order",
+      "confusion pairs"
+    ],
+    "rationale": "Reference values are recorded at full float precision. The reference run used CPython 3.13.13 on linux-aarch64 with the locked scikit-learn 1.9.0 / pandas 3.0.5 / numpy 2.5.3 / scipy 1.18.1 / joblib 1.5.3; an Atlas run may differ in architecture or patch level, where floating-point reduction order can perturb probabilities in the last digits. 1e-6 is three orders of magnitude below the study's own practical-tie tolerance (0.002) and far below one prediction change on 2,042 rows (~5e-4 in accuracy), so no difference inside it can change a scientific conclusion, while any changed prediction still fails through the exact confusion-matrix, per-class support and count comparisons."
+  },
+  "expected_evidence": {
+    "values": [
+      {
+        "quantity": "dataset.sha256",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/dataset/source_sha256",
+          "rendered_text": "\"1330e4ccc5c54a925e43daf60d1409ac62dad2a21de9a25213765bee4b655787\""
+        },
+        "expected": "1330e4ccc5c54a925e43daf60d1409ac62dad2a21de9a25213765bee4b655787",
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "dataset.rows",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/dataset/source_row_count",
+          "rendered_text": "13611"
+        },
+        "expected": 13611,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "dataset.columns",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/dataset/source_column_count",
+          "rendered_text": "17"
+        },
+        "expected": 17,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "partitions.train.rows",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/split/row_counts/train",
+          "rendered_text": "9527"
+        },
+        "expected": 9527,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "partitions.train.class_counts.seker",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/split/class_counts/train/SEKER",
+          "rendered_text": "1419"
+        },
+        "expected": 1419,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "partitions.train.class_counts.barbunya",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/split/class_counts/train/BARBUNYA",
+          "rendered_text": "925"
+        },
+        "expected": 925,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "partitions.train.class_counts.bombay",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/split/class_counts/train/BOMBAY",
+          "rendered_text": "365"
+        },
+        "expected": 365,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "partitions.train.class_counts.cali",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/split/class_counts/train/CALI",
+          "rendered_text": "1141"
+        },
+        "expected": 1141,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "partitions.train.class_counts.dermason",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/split/class_counts/train/DERMASON",
+          "rendered_text": "2482"
+        },
+        "expected": 2482,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "partitions.train.class_counts.horoz",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/split/class_counts/train/HOROZ",
+          "rendered_text": "1350"
+        },
+        "expected": 1350,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "partitions.train.class_counts.sira",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/split/class_counts/train/SIRA",
+          "rendered_text": "1845"
+        },
+        "expected": 1845,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "partitions.train.membership_sha256",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/split/membership_sha256/train",
+          "rendered_text": "\"34e9cb09dc42d27a53ced3ef811868b9b926a8f435999ab16e817b50a612609e\""
+        },
+        "expected": "34e9cb09dc42d27a53ced3ef811868b9b926a8f435999ab16e817b50a612609e",
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "partitions.train.partition_sha256",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/split/partition_sha256/train",
+          "rendered_text": "\"485594b308ad5e6bb36bfe6a7758ded01c061ed5062995cc89a3a13fc962e536\""
+        },
+        "expected": "485594b308ad5e6bb36bfe6a7758ded01c061ed5062995cc89a3a13fc962e536",
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "partitions.validation.rows",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/split/row_counts/validation",
+          "rendered_text": "2042"
+        },
+        "expected": 2042,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "partitions.validation.class_counts.seker",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/split/class_counts/validation/SEKER",
+          "rendered_text": "304"
+        },
+        "expected": 304,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "partitions.validation.class_counts.barbunya",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/split/class_counts/validation/BARBUNYA",
+          "rendered_text": "198"
+        },
+        "expected": 198,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "partitions.validation.class_counts.bombay",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/split/class_counts/validation/BOMBAY",
+          "rendered_text": "79"
+        },
+        "expected": 79,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "partitions.validation.class_counts.cali",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/split/class_counts/validation/CALI",
+          "rendered_text": "245"
+        },
+        "expected": 245,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "partitions.validation.class_counts.dermason",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/split/class_counts/validation/DERMASON",
+          "rendered_text": "532"
+        },
+        "expected": 532,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "partitions.validation.class_counts.horoz",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/split/class_counts/validation/HOROZ",
+          "rendered_text": "289"
+        },
+        "expected": 289,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "partitions.validation.class_counts.sira",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/split/class_counts/validation/SIRA",
+          "rendered_text": "395"
+        },
+        "expected": 395,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "partitions.validation.membership_sha256",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/split/membership_sha256/validation",
+          "rendered_text": "\"f2d74e5b98f7dca1df8268e135e7903c738578b10e2846bd9f38d27f666a5547\""
+        },
+        "expected": "f2d74e5b98f7dca1df8268e135e7903c738578b10e2846bd9f38d27f666a5547",
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "partitions.validation.partition_sha256",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/split/partition_sha256/validation",
+          "rendered_text": "\"f379db8842c3de49d70c7fe4dd449cdc3220052f9d7bdd85d3051b927fb8fd94\""
+        },
+        "expected": "f379db8842c3de49d70c7fe4dd449cdc3220052f9d7bdd85d3051b927fb8fd94",
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "partitions.test.rows",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/split/row_counts/test",
+          "rendered_text": "2042"
+        },
+        "expected": 2042,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "partitions.test.class_counts.seker",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/split/class_counts/test/SEKER",
+          "rendered_text": "304"
+        },
+        "expected": 304,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "partitions.test.class_counts.barbunya",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/split/class_counts/test/BARBUNYA",
+          "rendered_text": "199"
+        },
+        "expected": 199,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "partitions.test.class_counts.bombay",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/split/class_counts/test/BOMBAY",
+          "rendered_text": "78"
+        },
+        "expected": 78,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "partitions.test.class_counts.cali",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/split/class_counts/test/CALI",
+          "rendered_text": "244"
+        },
+        "expected": 244,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "partitions.test.class_counts.dermason",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/split/class_counts/test/DERMASON",
+          "rendered_text": "532"
+        },
+        "expected": 532,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "partitions.test.class_counts.horoz",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/split/class_counts/test/HOROZ",
+          "rendered_text": "289"
+        },
+        "expected": 289,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "partitions.test.class_counts.sira",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/split/class_counts/test/SIRA",
+          "rendered_text": "396"
+        },
+        "expected": 396,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "partitions.test.membership_sha256",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/split/membership_sha256/test",
+          "rendered_text": "\"534ff2e449106531a9f5f8bea14e5785b113ba821cde5e26bad5362fad5d2e5a\""
+        },
+        "expected": "534ff2e449106531a9f5f8bea14e5785b113ba821cde5e26bad5362fad5d2e5a",
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "partitions.test.partition_sha256",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/split/partition_sha256/test",
+          "rendered_text": "\"5e17c1346e67cb4a786ebd11162b7e45099ded342b9de9755ab4f18f4068c175\""
+        },
+        "expected": "5e17c1346e67cb4a786ebd11162b7e45099ded342b9de9755ab4f18f4068c175",
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "baseline.validation.macro_f1",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/dummy_validation_macro_f1",
+          "rendered_text": "0.059052059052059055"
+        },
+        "expected": 0.059052059052059055,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "search.hist_gradient_boosting.search_strategy",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/0/search_strategy",
+          "rendered_text": "\"RandomizedSearchCV\""
+        },
+        "expected": "RandomizedSearchCV",
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "search.hist_gradient_boosting.candidate_count_executed",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/0/candidate_count",
+          "rendered_text": "8"
+        },
+        "expected": 8,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "search.hist_gradient_boosting.best_params.class_weight",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/0/best_parameters/model__class_weight",
+          "rendered_text": "null"
+        },
+        "expected": null,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "search.hist_gradient_boosting.best_params.l2_regularization",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/0/best_parameters/model__l2_regularization",
+          "rendered_text": "0.0"
+        },
+        "expected": 0.0,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "search.hist_gradient_boosting.best_params.learning_rate",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/0/best_parameters/model__learning_rate",
+          "rendered_text": "0.05"
+        },
+        "expected": 0.05,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "search.hist_gradient_boosting.best_params.max_iter",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/0/best_parameters/model__max_iter",
+          "rendered_text": "250"
+        },
+        "expected": 250,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "search.hist_gradient_boosting.best_params.max_leaf_nodes",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/0/best_parameters/model__max_leaf_nodes",
+          "rendered_text": "15"
+        },
+        "expected": 15,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "search.hist_gradient_boosting.best_params.min_samples_leaf",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/0/best_parameters/model__min_samples_leaf",
+          "rendered_text": "40"
+        },
+        "expected": 40,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "cv.hist_gradient_boosting.macro_f1_mean",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/0/cv_macro_f1_mean",
+          "rendered_text": "0.9370121385632876"
+        },
+        "expected": 0.9370121385632876,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "cv.hist_gradient_boosting.macro_f1_std",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/0/cv_macro_f1_std",
+          "rendered_text": "0.0038247869053157375"
+        },
+        "expected": 0.0038247869053157375,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "search.logistic_regression.search_strategy",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/1/search_strategy",
+          "rendered_text": "\"GridSearchCV\""
+        },
+        "expected": "GridSearchCV",
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "search.logistic_regression.candidate_count_executed",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/1/candidate_count",
+          "rendered_text": "4"
+        },
+        "expected": 4,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "search.logistic_regression.best_params.C",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/1/best_parameters/model__C",
+          "rendered_text": "1.0"
+        },
+        "expected": 1.0,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "search.logistic_regression.best_params.class_weight",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/1/best_parameters/model__class_weight",
+          "rendered_text": "null"
+        },
+        "expected": null,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "cv.logistic_regression.macro_f1_mean",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/1/cv_macro_f1_mean",
+          "rendered_text": "0.9350306225351419"
+        },
+        "expected": 0.9350306225351419,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "cv.logistic_regression.macro_f1_std",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/1/cv_macro_f1_std",
+          "rendered_text": "0.000995590911334026"
+        },
+        "expected": 0.000995590911334026,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "search.random_forest.search_strategy",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/2/search_strategy",
+          "rendered_text": "\"RandomizedSearchCV\""
+        },
+        "expected": "RandomizedSearchCV",
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "search.random_forest.candidate_count_executed",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/2/candidate_count",
+          "rendered_text": "8"
+        },
+        "expected": 8,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "search.random_forest.best_params.class_weight",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/2/best_parameters/model__class_weight",
+          "rendered_text": "null"
+        },
+        "expected": null,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "search.random_forest.best_params.max_depth",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/2/best_parameters/model__max_depth",
+          "rendered_text": "null"
+        },
+        "expected": null,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "search.random_forest.best_params.min_samples_leaf",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/2/best_parameters/model__min_samples_leaf",
+          "rendered_text": "1"
+        },
+        "expected": 1,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "search.random_forest.best_params.n_estimators",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/2/best_parameters/model__n_estimators",
+          "rendered_text": "120"
+        },
+        "expected": 120,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "cv.random_forest.macro_f1_mean",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/2/cv_macro_f1_mean",
+          "rendered_text": "0.9333427904259789"
+        },
+        "expected": 0.9333427904259789,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "cv.random_forest.macro_f1_std",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/2/cv_macro_f1_std",
+          "rendered_text": "0.003635304042879892"
+        },
+        "expected": 0.003635304042879892,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "search.decision_tree.search_strategy",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/3/search_strategy",
+          "rendered_text": "\"GridSearchCV\""
+        },
+        "expected": "GridSearchCV",
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "search.decision_tree.candidate_count_executed",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/3/candidate_count",
+          "rendered_text": "8"
+        },
+        "expected": 8,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "search.decision_tree.best_params.class_weight",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/3/best_parameters/model__class_weight",
+          "rendered_text": "\"balanced\""
+        },
+        "expected": "balanced",
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "search.decision_tree.best_params.max_depth",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/3/best_parameters/model__max_depth",
+          "rendered_text": "8"
+        },
+        "expected": 8,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "search.decision_tree.best_params.min_samples_leaf",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/3/best_parameters/model__min_samples_leaf",
+          "rendered_text": "5"
+        },
+        "expected": 5,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "cv.decision_tree.macro_f1_mean",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/3/cv_macro_f1_mean",
+          "rendered_text": "0.9199041282260645"
+        },
+        "expected": 0.9199041282260645,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "cv.decision_tree.macro_f1_std",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/3/cv_macro_f1_std",
+          "rendered_text": "0.009697815535415896"
+        },
+        "expected": 0.009697815535415896,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "feature_policy.hist_gradient_boosting__all_features.feature_count",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/feature_policy_candidates/0/feature_count",
+          "rendered_text": "16"
+        },
+        "expected": 16,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "feature_policy.hist_gradient_boosting__all_features.cv.macro_f1_mean",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/feature_policy_candidates/0/cv_macro_f1_mean",
+          "rendered_text": "0.9370121385632876"
+        },
+        "expected": 0.9370121385632876,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "feature_policy.hist_gradient_boosting__all_features.cv.macro_f1_std",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/feature_policy_candidates/0/cv_macro_f1_std",
+          "rendered_text": "0.0038247869053157375"
+        },
+        "expected": 0.0038247869053157375,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "validation.hist_gradient_boosting__all_features.macro_f1",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/feature_policy_candidates/0/validation_metrics/macro_f1",
+          "rendered_text": "0.9378814348554879"
+        },
+        "expected": 0.9378814348554879,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "validation.hist_gradient_boosting__all_features.balanced_accuracy",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/feature_policy_candidates/0/validation_metrics/balanced_accuracy",
+          "rendered_text": "0.9391308599307318"
+        },
+        "expected": 0.9391308599307318,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "validation.hist_gradient_boosting__all_features.macro_recall",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/feature_policy_candidates/0/validation_metrics/macro_recall",
+          "rendered_text": "0.9391308599307318"
+        },
+        "expected": 0.9391308599307318,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "validation.hist_gradient_boosting__all_features.weighted_f1",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/feature_policy_candidates/0/validation_metrics/weighted_f1",
+          "rendered_text": "0.9268991730331414"
+        },
+        "expected": 0.9268991730331414,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "validation.hist_gradient_boosting__all_features.accuracy",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/feature_policy_candidates/0/validation_metrics/accuracy",
+          "rendered_text": "0.9270323212536729"
+        },
+        "expected": 0.9270323212536729,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "validation.hist_gradient_boosting__all_features.minimum_per_class_recall",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/feature_policy_candidates/0/validation_metrics/minimum_per_class_recall",
+          "rendered_text": "0.8708860759493671"
+        },
+        "expected": 0.8708860759493671,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "validation.hist_gradient_boosting__all_features.log_loss",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/feature_policy_candidates/0/validation_metrics/log_loss",
+          "rendered_text": "0.22517215001326799"
+        },
+        "expected": 0.22517215001326799,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "feature_policy.hist_gradient_boosting__without_confirmed_derived.feature_count",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/feature_policy_candidates/1/feature_count",
+          "rendered_text": "7"
+        },
+        "expected": 7,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "feature_policy.hist_gradient_boosting__without_confirmed_derived.cv.macro_f1_mean",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/feature_policy_candidates/1/cv_macro_f1_mean",
+          "rendered_text": "0.9183019179406531"
+        },
+        "expected": 0.9183019179406531,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "feature_policy.hist_gradient_boosting__without_confirmed_derived.cv.macro_f1_std",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/feature_policy_candidates/1/cv_macro_f1_std",
+          "rendered_text": "0.004924224202905914"
+        },
+        "expected": 0.004924224202905914,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "validation.hist_gradient_boosting__without_confirmed_derived.macro_f1",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/feature_policy_candidates/1/validation_metrics/macro_f1",
+          "rendered_text": "0.9199560441564535"
+        },
+        "expected": 0.9199560441564535,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "validation.hist_gradient_boosting__without_confirmed_derived.balanced_accuracy",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/feature_policy_candidates/1/validation_metrics/balanced_accuracy",
+          "rendered_text": "0.9209089382588139"
+        },
+        "expected": 0.9209089382588139,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "validation.hist_gradient_boosting__without_confirmed_derived.macro_recall",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/feature_policy_candidates/1/validation_metrics/macro_recall",
+          "rendered_text": "0.9209089382588139"
+        },
+        "expected": 0.9209089382588139,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "validation.hist_gradient_boosting__without_confirmed_derived.weighted_f1",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/feature_policy_candidates/1/validation_metrics/weighted_f1",
+          "rendered_text": "0.909667122332165"
+        },
+        "expected": 0.909667122332165,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "validation.hist_gradient_boosting__without_confirmed_derived.accuracy",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/feature_policy_candidates/1/validation_metrics/accuracy",
+          "rendered_text": "0.9098922624877571"
+        },
+        "expected": 0.9098922624877571,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "validation.hist_gradient_boosting__without_confirmed_derived.minimum_per_class_recall",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/feature_policy_candidates/1/validation_metrics/minimum_per_class_recall",
+          "rendered_text": "0.8585858585858586"
+        },
+        "expected": 0.8585858585858586,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "validation.hist_gradient_boosting__without_confirmed_derived.log_loss",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/feature_policy_candidates/1/validation_metrics/log_loss",
+          "rendered_text": "0.278822692701108"
+        },
+        "expected": 0.278822692701108,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "feature_policy.hist_gradient_boosting__without_shape_factor_2.feature_count",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/feature_policy_candidates/2/feature_count",
+          "rendered_text": "15"
+        },
+        "expected": 15,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "feature_policy.hist_gradient_boosting__without_shape_factor_2.cv.macro_f1_mean",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/feature_policy_candidates/2/cv_macro_f1_mean",
+          "rendered_text": "0.9361673662790764"
+        },
+        "expected": 0.9361673662790764,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "feature_policy.hist_gradient_boosting__without_shape_factor_2.cv.macro_f1_std",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/feature_policy_candidates/2/cv_macro_f1_std",
+          "rendered_text": "0.004014395771272498"
+        },
+        "expected": 0.004014395771272498,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "validation.hist_gradient_boosting__without_shape_factor_2.macro_f1",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/feature_policy_candidates/2/validation_metrics/macro_f1",
+          "rendered_text": "0.936677022246986"
+        },
+        "expected": 0.936677022246986,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "validation.hist_gradient_boosting__without_shape_factor_2.balanced_accuracy",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/feature_policy_candidates/2/validation_metrics/balanced_accuracy",
+          "rendered_text": "0.9381462280952386"
+        },
+        "expected": 0.9381462280952386,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "validation.hist_gradient_boosting__without_shape_factor_2.macro_recall",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/feature_policy_candidates/2/validation_metrics/macro_recall",
+          "rendered_text": "0.9381462280952385"
+        },
+        "expected": 0.9381462280952385,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "validation.hist_gradient_boosting__without_shape_factor_2.weighted_f1",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/feature_policy_candidates/2/validation_metrics/weighted_f1",
+          "rendered_text": "0.9239346411877809"
+        },
+        "expected": 0.9239346411877809,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "validation.hist_gradient_boosting__without_shape_factor_2.accuracy",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/feature_policy_candidates/2/validation_metrics/accuracy",
+          "rendered_text": "0.9240940254652301"
+        },
+        "expected": 0.9240940254652301,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "validation.hist_gradient_boosting__without_shape_factor_2.minimum_per_class_recall",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/feature_policy_candidates/2/validation_metrics/minimum_per_class_recall",
+          "rendered_text": "0.8632911392405064"
+        },
+        "expected": 0.8632911392405064,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "validation.hist_gradient_boosting__without_shape_factor_2.log_loss",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/feature_policy_candidates/2/validation_metrics/log_loss",
+          "rendered_text": "0.2295804935338458"
+        },
+        "expected": 0.2295804935338458,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "feature_policy.logistic_regression__all_features.feature_count",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/feature_policy_candidates/3/feature_count",
+          "rendered_text": "16"
+        },
+        "expected": 16,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "feature_policy.logistic_regression__all_features.cv.macro_f1_mean",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/feature_policy_candidates/3/cv_macro_f1_mean",
+          "rendered_text": "0.9350306225351419"
+        },
+        "expected": 0.9350306225351419,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "feature_policy.logistic_regression__all_features.cv.macro_f1_std",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/feature_policy_candidates/3/cv_macro_f1_std",
+          "rendered_text": "0.000995590911334026"
+        },
+        "expected": 0.000995590911334026,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "validation.logistic_regression__all_features.macro_f1",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/feature_policy_candidates/3/validation_metrics/macro_f1",
+          "rendered_text": "0.9289726887818729"
+        },
+        "expected": 0.9289726887818729,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "validation.logistic_regression__all_features.balanced_accuracy",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/feature_policy_candidates/3/validation_metrics/balanced_accuracy",
+          "rendered_text": "0.9309075506559733"
+        },
+        "expected": 0.9309075506559733,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "validation.logistic_regression__all_features.macro_recall",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/feature_policy_candidates/3/validation_metrics/macro_recall",
+          "rendered_text": "0.9309075506559733"
+        },
+        "expected": 0.9309075506559733,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "validation.logistic_regression__all_features.weighted_f1",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/feature_policy_candidates/3/validation_metrics/weighted_f1",
+          "rendered_text": "0.9161988315389281"
+        },
+        "expected": 0.9161988315389281,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "validation.logistic_regression__all_features.accuracy",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/feature_policy_candidates/3/validation_metrics/accuracy",
+          "rendered_text": "0.9162585700293829"
+        },
+        "expected": 0.9162585700293829,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "validation.logistic_regression__all_features.minimum_per_class_recall",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/feature_policy_candidates/3/validation_metrics/minimum_per_class_recall",
+          "rendered_text": "0.8632911392405064"
+        },
+        "expected": 0.8632911392405064,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "validation.logistic_regression__all_features.log_loss",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/feature_policy_candidates/3/validation_metrics/log_loss",
+          "rendered_text": "0.22251148646462465"
+        },
+        "expected": 0.22251148646462465,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "feature_policy.logistic_regression__without_confirmed_derived.feature_count",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/feature_policy_candidates/4/feature_count",
+          "rendered_text": "7"
+        },
+        "expected": 7,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "feature_policy.logistic_regression__without_confirmed_derived.cv.macro_f1_mean",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/feature_policy_candidates/4/cv_macro_f1_mean",
+          "rendered_text": "0.9199408569203312"
+        },
+        "expected": 0.9199408569203312,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "feature_policy.logistic_regression__without_confirmed_derived.cv.macro_f1_std",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/feature_policy_candidates/4/cv_macro_f1_std",
+          "rendered_text": "0.002834555538225011"
+        },
+        "expected": 0.002834555538225011,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "validation.logistic_regression__without_confirmed_derived.macro_f1",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/feature_policy_candidates/4/validation_metrics/macro_f1",
+          "rendered_text": "0.9154058922135254"
+        },
+        "expected": 0.9154058922135254,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "validation.logistic_regression__without_confirmed_derived.balanced_accuracy",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/feature_policy_candidates/4/validation_metrics/balanced_accuracy",
+          "rendered_text": "0.9147902609270313"
+        },
+        "expected": 0.9147902609270313,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "validation.logistic_regression__without_confirmed_derived.macro_recall",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/feature_policy_candidates/4/validation_metrics/macro_recall",
+          "rendered_text": "0.9147902609270313"
+        },
+        "expected": 0.9147902609270313,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "validation.logistic_regression__without_confirmed_derived.weighted_f1",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/feature_policy_candidates/4/validation_metrics/weighted_f1",
+          "rendered_text": "0.902683700472381"
+        },
+        "expected": 0.902683700472381,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "validation.logistic_regression__without_confirmed_derived.accuracy",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/feature_policy_candidates/4/validation_metrics/accuracy",
+          "rendered_text": "0.9025465230166504"
+        },
+        "expected": 0.9025465230166504,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "validation.logistic_regression__without_confirmed_derived.minimum_per_class_recall",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/feature_policy_candidates/4/validation_metrics/minimum_per_class_recall",
+          "rendered_text": "0.8383838383838383"
+        },
+        "expected": 0.8383838383838383,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "validation.logistic_regression__without_confirmed_derived.log_loss",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/feature_policy_candidates/4/validation_metrics/log_loss",
+          "rendered_text": "0.2719613967309885"
+        },
+        "expected": 0.2719613967309885,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "feature_policy.logistic_regression__without_shape_factor_2.feature_count",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/feature_policy_candidates/5/feature_count",
+          "rendered_text": "15"
+        },
+        "expected": 15,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "feature_policy.logistic_regression__without_shape_factor_2.cv.macro_f1_mean",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/feature_policy_candidates/5/cv_macro_f1_mean",
+          "rendered_text": "0.9348602281671351"
+        },
+        "expected": 0.9348602281671351,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "feature_policy.logistic_regression__without_shape_factor_2.cv.macro_f1_std",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/feature_policy_candidates/5/cv_macro_f1_std",
+          "rendered_text": "0.0014216194856729845"
+        },
+        "expected": 0.0014216194856729845,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "validation.logistic_regression__without_shape_factor_2.macro_f1",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/feature_policy_candidates/5/validation_metrics/macro_f1",
+          "rendered_text": "0.9289169346846183"
+        },
+        "expected": 0.9289169346846183,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "validation.logistic_regression__without_shape_factor_2.balanced_accuracy",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/feature_policy_candidates/5/validation_metrics/balanced_accuracy",
+          "rendered_text": "0.9308144154671876"
+        },
+        "expected": 0.9308144154671876,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "validation.logistic_regression__without_shape_factor_2.macro_recall",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/feature_policy_candidates/5/validation_metrics/macro_recall",
+          "rendered_text": "0.9308144154671876"
+        },
+        "expected": 0.9308144154671876,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "validation.logistic_regression__without_shape_factor_2.weighted_f1",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/feature_policy_candidates/5/validation_metrics/weighted_f1",
+          "rendered_text": "0.9161935995673909"
+        },
+        "expected": 0.9161935995673909,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "validation.logistic_regression__without_shape_factor_2.accuracy",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/feature_policy_candidates/5/validation_metrics/accuracy",
+          "rendered_text": "0.9162585700293829"
+        },
+        "expected": 0.9162585700293829,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "validation.logistic_regression__without_shape_factor_2.minimum_per_class_recall",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/feature_policy_candidates/5/validation_metrics/minimum_per_class_recall",
+          "rendered_text": "0.8607594936708861"
+        },
+        "expected": 0.8607594936708861,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "validation.logistic_regression__without_shape_factor_2.log_loss",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/feature_policy_candidates/5/validation_metrics/log_loss",
+          "rendered_text": "0.22344498121156411"
+        },
+        "expected": 0.22344498121156411,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "feature_policy.hist_gradient_boosting__all_features.cv.balanced_accuracy_mean",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/selected_cv_metrics/cv_balanced_accuracy_mean",
+          "rendered_text": "0.9354242745920734"
+        },
+        "expected": 0.9354242745920734,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "feature_policy.hist_gradient_boosting__all_features.cv.log_loss_mean",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/selected_cv_metrics/cv_log_loss_mean",
+          "rendered_text": "0.2581143487298275"
+        },
+        "expected": 0.2581143487298275,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "feature_policy.hist_gradient_boosting__all_features.cv.weighted_f1_mean",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/selected_cv_metrics/cv_weighted_f1_mean",
+          "rendered_text": "0.924310373008779"
+        },
+        "expected": 0.924310373008779,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "selected_validation.metrics.macro_f1",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/validation_metrics/macro_f1",
+          "rendered_text": "0.9378814348554879"
+        },
+        "expected": 0.9378814348554879,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "selected_validation.metrics.balanced_accuracy",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/validation_metrics/balanced_accuracy",
+          "rendered_text": "0.9391308599307318"
+        },
+        "expected": 0.9391308599307318,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "selected_validation.metrics.macro_recall",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/validation_metrics/macro_recall",
+          "rendered_text": "0.9391308599307318"
+        },
+        "expected": 0.9391308599307318,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "selected_validation.metrics.weighted_f1",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/validation_metrics/weighted_f1",
+          "rendered_text": "0.9268991730331414"
+        },
+        "expected": 0.9268991730331414,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "selected_validation.metrics.accuracy",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/validation_metrics/accuracy",
+          "rendered_text": "0.9270323212536729"
+        },
+        "expected": 0.9270323212536729,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "selected_validation.metrics.minimum_per_class_recall",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/validation_metrics/minimum_per_class_recall",
+          "rendered_text": "0.8708860759493671"
+        },
+        "expected": 0.8708860759493671,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "selected_validation.metrics.log_loss",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/validation_metrics/log_loss",
+          "rendered_text": "0.22517215001326799"
+        },
+        "expected": 0.22517215001326799,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "selected_validation.per_class.seker.precision",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/validation_per_class/0/precision",
+          "rendered_text": "0.9423076923076923"
+        },
+        "expected": 0.9423076923076923,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "selected_validation.per_class.seker.recall",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/validation_per_class/0/recall",
+          "rendered_text": "0.9671052631578947"
+        },
+        "expected": 0.9671052631578947,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "selected_validation.per_class.seker.f1",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/validation_per_class/0/f1",
+          "rendered_text": "0.9545454545454546"
+        },
+        "expected": 0.9545454545454546,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "selected_validation.per_class.seker.support",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/validation_per_class/0/support",
+          "rendered_text": "304"
+        },
+        "expected": 304,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "selected_validation.per_class.barbunya.precision",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/validation_per_class/1/precision",
+          "rendered_text": "0.9430051813471503"
+        },
+        "expected": 0.9430051813471503,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "selected_validation.per_class.barbunya.recall",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/validation_per_class/1/recall",
+          "rendered_text": "0.9191919191919192"
+        },
+        "expected": 0.9191919191919192,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "selected_validation.per_class.barbunya.f1",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/validation_per_class/1/f1",
+          "rendered_text": "0.9309462915601023"
+        },
+        "expected": 0.9309462915601023,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "selected_validation.per_class.barbunya.support",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/validation_per_class/1/support",
+          "rendered_text": "198"
+        },
+        "expected": 198,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "selected_validation.per_class.bombay.precision",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/validation_per_class/2/precision",
+          "rendered_text": "0.9875"
+        },
+        "expected": 0.9875,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "selected_validation.per_class.bombay.recall",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/validation_per_class/2/recall",
+          "rendered_text": "1.0"
+        },
+        "expected": 1.0,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "selected_validation.per_class.bombay.f1",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/validation_per_class/2/f1",
+          "rendered_text": "0.9937106918238994"
+        },
+        "expected": 0.9937106918238994,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "selected_validation.per_class.bombay.support",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/validation_per_class/2/support",
+          "rendered_text": "79"
+        },
+        "expected": 79,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "selected_validation.per_class.cali.precision",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/validation_per_class/3/precision",
+          "rendered_text": "0.924901185770751"
+        },
+        "expected": 0.924901185770751,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "selected_validation.per_class.cali.recall",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/validation_per_class/3/recall",
+          "rendered_text": "0.9551020408163265"
+        },
+        "expected": 0.9551020408163265,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "selected_validation.per_class.cali.f1",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/validation_per_class/3/f1",
+          "rendered_text": "0.9397590361445783"
+        },
+        "expected": 0.9397590361445783,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "selected_validation.per_class.cali.support",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/validation_per_class/3/support",
+          "rendered_text": "245"
+        },
+        "expected": 245,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "selected_validation.per_class.dermason.precision",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/validation_per_class/4/precision",
+          "rendered_text": "0.9222011385199241"
+        },
+        "expected": 0.9222011385199241,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "selected_validation.per_class.dermason.recall",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/validation_per_class/4/recall",
+          "rendered_text": "0.9135338345864662"
+        },
+        "expected": 0.9135338345864662,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "selected_validation.per_class.dermason.f1",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/validation_per_class/4/f1",
+          "rendered_text": "0.9178470254957507"
+        },
+        "expected": 0.9178470254957507,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "selected_validation.per_class.dermason.support",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/validation_per_class/4/support",
+          "rendered_text": "532"
+        },
+        "expected": 532,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "selected_validation.per_class.horoz.precision",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/validation_per_class/5/precision",
+          "rendered_text": "0.958041958041958"
+        },
+        "expected": 0.958041958041958,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "selected_validation.per_class.horoz.recall",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/validation_per_class/5/recall",
+          "rendered_text": "0.9480968858131488"
+        },
+        "expected": 0.9480968858131488,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "selected_validation.per_class.horoz.f1",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/validation_per_class/5/f1",
+          "rendered_text": "0.9530434782608695"
+        },
+        "expected": 0.9530434782608695,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "selected_validation.per_class.horoz.support",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/validation_per_class/5/support",
+          "rendered_text": "289"
+        },
+        "expected": 289,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "selected_validation.per_class.sira.precision",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/validation_per_class/6/precision",
+          "rendered_text": "0.8797953964194374"
+        },
+        "expected": 0.8797953964194374,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "selected_validation.per_class.sira.recall",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/validation_per_class/6/recall",
+          "rendered_text": "0.8708860759493671"
+        },
+        "expected": 0.8708860759493671,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "selected_validation.per_class.sira.f1",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/validation_per_class/6/f1",
+          "rendered_text": "0.8753180661577609"
+        },
+        "expected": 0.8753180661577609,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "selected_validation.per_class.sira.support",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/validation_per_class/6/support",
+          "rendered_text": "395"
+        },
+        "expected": 395,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "final_fit.rows",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_model/fit_row_count",
+          "rendered_text": "11569"
+        },
+        "expected": 11569,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "final_fit.class_counts.barbunya",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_model/fit_class_counts/BARBUNYA",
+          "rendered_text": "1123"
+        },
+        "expected": 1123,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "final_fit.class_counts.bombay",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_model/fit_class_counts/BOMBAY",
+          "rendered_text": "444"
+        },
+        "expected": 444,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "final_fit.class_counts.cali",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_model/fit_class_counts/CALI",
+          "rendered_text": "1386"
+        },
+        "expected": 1386,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "final_fit.class_counts.dermason",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_model/fit_class_counts/DERMASON",
+          "rendered_text": "3014"
+        },
+        "expected": 3014,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "final_fit.class_counts.horoz",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_model/fit_class_counts/HOROZ",
+          "rendered_text": "1639"
+        },
+        "expected": 1639,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "final_fit.class_counts.seker",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_model/fit_class_counts/SEKER",
+          "rendered_text": "1723"
+        },
+        "expected": 1723,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "final_fit.class_counts.sira",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_model/fit_class_counts/SIRA",
+          "rendered_text": "2240"
+        },
+        "expected": 2240,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "final_test.evaluation_count",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/protocol/test_evaluation_count",
+          "rendered_text": "1"
+        },
+        "expected": 1,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "final_test.row_count",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_test/row_count",
+          "rendered_text": "2042"
+        },
+        "expected": 2042,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "final_test.metrics.macro_f1",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_test/metrics/macro_f1",
+          "rendered_text": "0.9418353636024855"
+        },
+        "expected": 0.9418353636024855,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "final_test.metrics.balanced_accuracy",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_test/metrics/balanced_accuracy",
+          "rendered_text": "0.9398971908347276"
+        },
+        "expected": 0.9398971908347276,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "final_test.metrics.macro_recall",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_test/metrics/macro_recall",
+          "rendered_text": "0.9398971908347276"
+        },
+        "expected": 0.9398971908347276,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "final_test.metrics.weighted_f1",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_test/metrics/weighted_f1",
+          "rendered_text": "0.9321874638643965"
+        },
+        "expected": 0.9321874638643965,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "final_test.metrics.accuracy",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_test/metrics/accuracy",
+          "rendered_text": "0.9324191968658179"
+        },
+        "expected": 0.9324191968658179,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "final_test.metrics.minimum_per_class_recall",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_test/metrics/minimum_per_class_recall",
+          "rendered_text": "0.8686868686868687"
+        },
+        "expected": 0.8686868686868687,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "final_test.metrics.log_loss",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_test/metrics/log_loss",
+          "rendered_text": "0.18102390031373491"
+        },
+        "expected": 0.18102390031373491,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "final_test.per_class.seker.precision",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_test/per_class/0/precision",
+          "rendered_text": "0.9356913183279743"
+        },
+        "expected": 0.9356913183279743,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "final_test.per_class.seker.recall",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_test/per_class/0/recall",
+          "rendered_text": "0.9572368421052632"
+        },
+        "expected": 0.9572368421052632,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "final_test.per_class.seker.f1",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_test/per_class/0/f1",
+          "rendered_text": "0.9463414634146341"
+        },
+        "expected": 0.9463414634146341,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "final_test.per_class.seker.support",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_test/per_class/0/support",
+          "rendered_text": "304"
+        },
+        "expected": 304,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "final_test.per_class.barbunya.precision",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_test/per_class/1/precision",
+          "rendered_text": "0.9518716577540107"
+        },
+        "expected": 0.9518716577540107,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "final_test.per_class.barbunya.recall",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_test/per_class/1/recall",
+          "rendered_text": "0.8944723618090452"
+        },
+        "expected": 0.8944723618090452,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "final_test.per_class.barbunya.f1",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_test/per_class/1/f1",
+          "rendered_text": "0.9222797927461139"
+        },
+        "expected": 0.9222797927461139,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "final_test.per_class.barbunya.support",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_test/per_class/1/support",
+          "rendered_text": "199"
+        },
+        "expected": 199,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "final_test.per_class.bombay.precision",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_test/per_class/2/precision",
+          "rendered_text": "1.0"
+        },
+        "expected": 1.0,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "final_test.per_class.bombay.recall",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_test/per_class/2/recall",
+          "rendered_text": "1.0"
+        },
+        "expected": 1.0,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "final_test.per_class.bombay.f1",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_test/per_class/2/f1",
+          "rendered_text": "1.0"
+        },
+        "expected": 1.0,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "final_test.per_class.bombay.support",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_test/per_class/2/support",
+          "rendered_text": "78"
+        },
+        "expected": 78,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "final_test.per_class.cali.precision",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_test/per_class/3/precision",
+          "rendered_text": "0.9395161290322581"
+        },
+        "expected": 0.9395161290322581,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "final_test.per_class.cali.recall",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_test/per_class/3/recall",
+          "rendered_text": "0.9549180327868853"
+        },
+        "expected": 0.9549180327868853,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "final_test.per_class.cali.f1",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_test/per_class/3/f1",
+          "rendered_text": "0.9471544715447154"
+        },
+        "expected": 0.9471544715447154,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "final_test.per_class.cali.support",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_test/per_class/3/support",
+          "rendered_text": "244"
+        },
+        "expected": 244,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "final_test.per_class.dermason.precision",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_test/per_class/4/precision",
+          "rendered_text": "0.9112318840579711"
+        },
+        "expected": 0.9112318840579711,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "final_test.per_class.dermason.recall",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_test/per_class/4/recall",
+          "rendered_text": "0.9454887218045113"
+        },
+        "expected": 0.9454887218045113,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "final_test.per_class.dermason.f1",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_test/per_class/4/f1",
+          "rendered_text": "0.9280442804428044"
+        },
+        "expected": 0.9280442804428044,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "final_test.per_class.dermason.support",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_test/per_class/4/support",
+          "rendered_text": "532"
+        },
+        "expected": 532,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "final_test.per_class.horoz.precision",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_test/per_class/5/precision",
+          "rendered_text": "0.9618055555555556"
+        },
+        "expected": 0.9618055555555556,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "final_test.per_class.horoz.recall",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_test/per_class/5/recall",
+          "rendered_text": "0.9584775086505191"
+        },
+        "expected": 0.9584775086505191,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "final_test.per_class.horoz.f1",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_test/per_class/5/f1",
+          "rendered_text": "0.9601386481802426"
+        },
+        "expected": 0.9601386481802426,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "final_test.per_class.horoz.support",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_test/per_class/5/support",
+          "rendered_text": "289"
+        },
+        "expected": 289,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "final_test.per_class.sira.precision",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_test/per_class/6/precision",
+          "rendered_text": "0.91005291005291"
+        },
+        "expected": 0.91005291005291,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "final_test.per_class.sira.recall",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_test/per_class/6/recall",
+          "rendered_text": "0.8686868686868687"
+        },
+        "expected": 0.8686868686868687,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "final_test.per_class.sira.f1",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_test/per_class/6/f1",
+          "rendered_text": "0.8888888888888888"
+        },
+        "expected": 0.8888888888888888,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "final_test.per_class.sira.support",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_test/per_class/6/support",
+          "rendered_text": "396"
+        },
+        "expected": 396,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "final_test.repeated_profile_sensitivity.official_full_test_row_count",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_test/repeated_profile_sensitivity/official_full_test_row_count",
+          "rendered_text": "2042.0"
+        },
+        "expected": 2042.0,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "final_test.repeated_profile_sensitivity.repeated_profile_test_row_count",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_test/repeated_profile_sensitivity/repeated_profile_test_row_count",
+          "rendered_text": "15.0"
+        },
+        "expected": 15.0,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "final_test.repeated_profile_sensitivity.sensitivity_row_count",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_test/repeated_profile_sensitivity/sensitivity_row_count",
+          "rendered_text": "2027.0"
+        },
+        "expected": 2027.0,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "final_test.repeated_profile_sensitivity.macro_f1_delta_excluding_minus_full",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_test/repeated_profile_sensitivity/macro_f1_delta_excluding_minus_full",
+          "rendered_text": "-0.00031231145327581533"
+        },
+        "expected": -0.00031231145327581533,
+        "reported_decimal_places": null
+      }
+    ],
+    "decisions": [
+      {
+        "quantity": "shortlist.model_ids",
+        "expected": [
+          "hist_gradient_boosting",
+          "logistic_regression"
+        ],
+        "comparison": "exact",
+        "source": {
+          "path": "README.md",
+          "locator": "file_text",
+          "rendered_text": "HistGradientBoostingClassifier and LogisticRegression form the CV shortlist"
+        },
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "selection.practical_tie",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/practical_tie",
+          "rendered_text": "true"
+        },
+        "expected": true,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "selection.practical_tie_group",
+        "expected": [
+          "hist_gradient_boosting__all_features",
+          "hist_gradient_boosting__without_shape_factor_2"
+        ],
+        "comparison": "exact",
+        "source": {
+          "path": "README.md",
+          "locator": "file_text",
+          "rendered_text": "The two HistGradientBoosting candidates with and without `ShapeFactor2` form a practical validation tie"
+        },
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "selection.deciding_criterion",
+        "expected": "higher_validation_balanced_accuracy",
+        "comparison": "exact",
+        "source": {
+          "path": "README.md",
+          "locator": "file_text",
+          "rendered_text": "The tie is resolved by the first predefined criterion, higher validation balanced accuracy, in favour of `all_features`."
+        },
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "selection.selected_model_id",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/selected_model_id",
+          "rendered_text": "\"hist_gradient_boosting__all_features\""
+        },
+        "expected": "hist_gradient_boosting__all_features",
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "selection.selected_feature_policy",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/selected_feature_policy",
+          "rendered_text": "\"all_features\""
+        },
+        "expected": "all_features",
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "selection.selected_estimator_class",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/selected_model_family",
+          "rendered_text": "\"HistGradientBoostingClassifier\""
+        },
+        "expected": "HistGradientBoostingClassifier",
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "selection.selected_feature_columns",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/selected_preprocessing/feature_projection",
+          "rendered_text": "[\"Area\", \"Perimeter\", \"MajorAxisLength\", \"MinorAxisLength\", \"AspectRatio\", \"Eccentricity\", \"ConvexArea\", \"EquivDiameter\", \"Extent\", \"Solidity\", \"Roundness\", \"Compactness\", \"ShapeFactor1\", \"ShapeFactor2\", \"ShapeFactor3\", \"ShapeFactor4\"]"
+        },
+        "expected": [
+          "Area",
+          "Perimeter",
+          "MajorAxisLength",
+          "MinorAxisLength",
+          "AspectRatio",
+          "Eccentricity",
+          "ConvexArea",
+          "EquivDiameter",
+          "Extent",
+          "Solidity",
+          "Roundness",
+          "Compactness",
+          "ShapeFactor1",
+          "ShapeFactor2",
+          "ShapeFactor3",
+          "ShapeFactor4"
+        ],
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "selection.selected_best_params.class_weight",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/selected_hyperparameters/model__class_weight",
+          "rendered_text": "null"
+        },
+        "expected": null,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "selection.selected_best_params.l2_regularization",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/selected_hyperparameters/model__l2_regularization",
+          "rendered_text": "0.0"
+        },
+        "expected": 0.0,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "selection.selected_best_params.learning_rate",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/selected_hyperparameters/model__learning_rate",
+          "rendered_text": "0.05"
+        },
+        "expected": 0.05,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "selection.selected_best_params.max_iter",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/selected_hyperparameters/model__max_iter",
+          "rendered_text": "250"
+        },
+        "expected": 250,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "selection.selected_best_params.max_leaf_nodes",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/selected_hyperparameters/model__max_leaf_nodes",
+          "rendered_text": "15"
+        },
+        "expected": 15,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "selection.selected_best_params.min_samples_leaf",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/selected_hyperparameters/model__min_samples_leaf",
+          "rendered_text": "40"
+        },
+        "expected": 40,
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "final_test.estimator_class_order",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/target/estimator_class_order",
+          "rendered_text": "[\"BARBUNYA\", \"BOMBAY\", \"CALI\", \"DERMASON\", \"HOROZ\", \"SEKER\", \"SIRA\"]"
+        },
+        "expected": [
+          "BARBUNYA",
+          "BOMBAY",
+          "CALI",
+          "DERMASON",
+          "HOROZ",
+          "SEKER",
+          "SIRA"
+        ],
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "final_test.confusion_matrix",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_test/confusion_matrix",
+          "rendered_text": "{\"class_order\": [\"SEKER\", \"BARBUNYA\", \"BOMBAY\", \"CALI\", \"DERMASON\", \"HOROZ\", \"SIRA\"], \"counts\": [[291, 0, 0, 0, 8, 0, 5], [3, 178, 0, 12, 0, 2, 4], [0, 0, 78, 0, 0, 0, 0], [1, 7, 0, 233, 0, 3, 0], [9, 0, 0, 0, 503, 2, 18], [0, 1, 0, 3, 1, 277, 7], [7, 1, 0, 0, 40, 4, 344]]}"
+        },
+        "expected": {
+          "class_order": [
+            "SEKER",
+            "BARBUNYA",
+            "BOMBAY",
+            "CALI",
+            "DERMASON",
+            "HOROZ",
+            "SIRA"
+          ],
+          "counts": [
+            [
+              291,
+              0,
+              0,
+              0,
+              8,
+              0,
+              5
+            ],
+            [
+              3,
+              178,
+              0,
+              12,
+              0,
+              2,
+              4
+            ],
+            [
+              0,
+              0,
+              78,
+              0,
+              0,
+              0,
+              0
+            ],
+            [
+              1,
+              7,
+              0,
+              233,
+              0,
+              3,
+              0
+            ],
+            [
+              9,
+              0,
+              0,
+              0,
+              503,
+              2,
+              18
+            ],
+            [
+              0,
+              1,
+              0,
+              3,
+              1,
+              277,
+              7
+            ],
+            [
+              7,
+              1,
+              0,
+              0,
+              40,
+              4,
+              344
+            ]
+          ]
+        },
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "final_test.top_confusion_pairs",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_test/top_test_confusion_pairs",
+          "rendered_text": "[{\"class_pair\": [\"DERMASON\", \"SIRA\"], \"mutual_errors\": 58}, {\"class_pair\": [\"BARBUNYA\", \"CALI\"], \"mutual_errors\": 19}, {\"class_pair\": [\"SEKER\", \"DERMASON\"], \"mutual_errors\": 17}]"
+        },
+        "expected": [
+          {
+            "class_pair": [
+              "DERMASON",
+              "SIRA"
+            ],
+            "mutual_errors": 58
+          },
+          {
+            "class_pair": [
+              "BARBUNYA",
+              "CALI"
+            ],
+            "mutual_errors": 19
+          },
+          {
+            "class_pair": [
+              "SEKER",
+              "DERMASON"
+            ],
+            "mutual_errors": 17
+          }
+        ],
+        "reported_decimal_places": null
+      },
+      {
+        "quantity": "final_test.focal_confusion_pairs",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_test/focal_confusion_pairs",
+          "rendered_text": "[{\"class_pair\": [\"DERMASON\", \"SIRA\"], \"test_mutual_errors\": 58, \"validation_mutual_errors\": 68}, {\"class_pair\": [\"BARBUNYA\", \"CALI\"], \"test_mutual_errors\": 19, \"validation_mutual_errors\": 21}]"
+        },
+        "expected": [
+          {
+            "class_pair": [
+              "DERMASON",
+              "SIRA"
+            ],
+            "test_mutual_errors": 58,
+            "validation_mutual_errors": 68
+          },
+          {
+            "class_pair": [
+              "BARBUNYA",
+              "CALI"
+            ],
+            "test_mutual_errors": 19,
+            "validation_mutual_errors": 21
+          }
+        ],
+        "reported_decimal_places": null
+      }
+    ],
+    "runtime_identity": [
+      {
+        "quantity": "final_test.probability_matrix_sha256",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_test/probability_matrix_sha256",
+          "rendered_text": "\"257d67524492fa0bab04fd8ab2599dfe8325ebdb119f972e1ef8216cf2d94e5a\""
+        },
+        "expected": "257d67524492fa0bab04fd8ab2599dfe8325ebdb119f972e1ef8216cf2d94e5a",
+        "reported_decimal_places": null
+      }
+    ]
+  },
+  "protocol_parameter_sources": [
+    {
+      "contract_pointer": "/dataset_identity/sha256",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/dataset/source_sha256",
+        "rendered_text": "\"1330e4ccc5c54a925e43daf60d1409ac62dad2a21de9a25213765bee4b655787\""
+      }
+    },
+    {
+      "contract_pointer": "/dataset_identity/row_count",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/dataset/source_row_count",
+        "rendered_text": "13611"
+      }
+    },
+    {
+      "contract_pointer": "/dataset_identity/column_count",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/dataset/source_column_count",
+        "rendered_text": "17"
+      }
+    },
+    {
+      "contract_pointer": "/features/feature_columns",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/features/ordered_columns",
+        "rendered_text": "[\"Area\", \"Perimeter\", \"MajorAxisLength\", \"MinorAxisLength\", \"AspectRatio\", \"Eccentricity\", \"ConvexArea\", \"EquivDiameter\", \"Extent\", \"Solidity\", \"Roundness\", \"Compactness\", \"ShapeFactor1\", \"ShapeFactor2\", \"ShapeFactor3\", \"ShapeFactor4\"]"
+      }
+    },
+    {
+      "contract_pointer": "/features/numerical",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/features/numerical",
+        "rendered_text": "[\"Area\", \"Perimeter\", \"MajorAxisLength\", \"MinorAxisLength\", \"AspectRatio\", \"Eccentricity\", \"ConvexArea\", \"EquivDiameter\", \"Extent\", \"Solidity\", \"Roundness\", \"Compactness\", \"ShapeFactor1\", \"ShapeFactor2\", \"ShapeFactor3\", \"ShapeFactor4\"]"
+      }
+    },
+    {
+      "contract_pointer": "/features/categorical",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/features/categorical",
+        "rendered_text": "[]"
+      }
+    },
+    {
+      "contract_pointer": "/problem/target/column",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/target/column",
+        "rendered_text": "\"Class\""
+      }
+    },
+    {
+      "contract_pointer": "/problem/problem_type",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/target/problem_type",
+        "rendered_text": "\"multiclass_classification\""
+      }
+    },
+    {
+      "contract_pointer": "/problem/target/estimator_class_order",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/target/estimator_class_order",
+        "rendered_text": "[\"BARBUNYA\", \"BOMBAY\", \"CALI\", \"DERMASON\", \"HOROZ\", \"SEKER\", \"SIRA\"]"
+      }
+    },
+    {
+      "contract_pointer": "/problem/target/public_class_order",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/target/public_class_order",
+        "rendered_text": "[\"SEKER\", \"BARBUNYA\", \"BOMBAY\", \"CALI\", \"DERMASON\", \"HOROZ\", \"SIRA\"]"
+      }
+    },
+    {
+      "contract_pointer": "/problem/decision_rule/study_label",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/target/decision_rule",
+        "rendered_text": "\"argmax_class_score_or_probability\""
+      }
+    },
+    {
+      "contract_pointer": "/split/seeds/train_vs_temporary",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/seeds/split_first_stage",
+        "rendered_text": "42"
+      }
+    },
+    {
+      "contract_pointer": "/split/seeds/validation_vs_test",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/seeds/split_second_stage",
+        "rendered_text": "43"
+      }
+    },
+    {
+      "contract_pointer": "/split/fractions/train",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/split/policy/train_fraction",
+        "rendered_text": "0.7"
+      }
+    },
+    {
+      "contract_pointer": "/split/fractions/validation",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/split/policy/validation_fraction",
+        "rendered_text": "0.15"
+      }
+    },
+    {
+      "contract_pointer": "/split/fractions/test",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/split/policy/test_fraction",
+        "rendered_text": "0.15"
+      }
+    },
+    {
+      "contract_pointer": "/split/stratify_by",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/split/policy/stratify_by",
+        "rendered_text": "\"Class\""
+      }
+    },
+    {
+      "contract_pointer": "/split/membership/kind",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/split/membership_kind",
+        "rendered_text": "\"technical_row_occurrence\""
+      }
+    },
+    {
+      "contract_pointer": "/cross_validation/n_splits",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/cross_validation/n_splits",
+        "rendered_text": "5"
+      }
+    },
+    {
+      "contract_pointer": "/cross_validation/shuffle",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/cross_validation/shuffle",
+        "rendered_text": "true"
+      }
+    },
+    {
+      "contract_pointer": "/cross_validation/random_state",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/seeds/cross_validation",
+        "rendered_text": "42"
+      }
+    },
+    {
+      "contract_pointer": "/candidates/2/search/random_state",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/seeds/randomized_search",
+        "rendered_text": "42"
+      }
+    },
+    {
+      "contract_pointer": "/candidates/3/search/random_state",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/seeds/randomized_search",
+        "rendered_text": "42"
+      }
+    },
+    {
+      "contract_pointer": "/candidates/3/fixed_params/random_state",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/seeds/estimators",
+        "rendered_text": "42"
+      }
+    },
+    {
+      "contract_pointer": "/metrics/primary",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/model_selection/primary_metric",
+        "rendered_text": "\"macro_f1\""
+      }
+    },
+    {
+      "contract_pointer": "/selection/practical_tie/tolerance",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/model_selection/practical_tie_tolerance",
+        "rendered_text": "0.002"
+      }
+    },
+    {
+      "contract_pointer": "/selection/eligibility/margin",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/model_selection/dummy_macro_f1_margin",
+        "rendered_text": "0.02"
+      }
+    },
+    {
+      "contract_pointer": "/final_evaluation/fit_partitions",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/protocol/final_fit_partitions",
+        "rendered_text": "[\"train\", \"validation\"]"
+      }
+    },
+    {
+      "contract_pointer": "/final_evaluation/evaluation_count",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/protocol/test_evaluation_count",
+        "rendered_text": "1"
+      }
+    },
+    {
+      "contract_pointer": "/scientific_environment/python",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/runtime/python",
+        "rendered_text": "\"3.13.13\""
+      }
+    },
+    {
+      "contract_pointer": "/scientific_environment/core_packages/scikit-learn",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/runtime/packages/scikit-learn",
+        "rendered_text": "\"1.9.0\""
+      }
+    },
+    {
+      "contract_pointer": "/scientific_environment/core_packages/pandas",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/runtime/packages/pandas",
+        "rendered_text": "\"3.0.5\""
+      }
+    },
+    {
+      "contract_pointer": "/scientific_environment/core_packages/numpy",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/runtime/packages/numpy",
+        "rendered_text": "\"2.5.3\""
+      }
+    },
+    {
+      "contract_pointer": "/scientific_environment/core_packages/scipy",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/runtime/packages/scipy",
+        "rendered_text": "\"1.18.1\""
+      }
+    },
+    {
+      "contract_pointer": "/scientific_environment/core_packages/joblib",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/runtime/packages/joblib",
+        "rendered_text": "\"1.5.3\""
+      }
+    }
+  ],
+  "evidence_gaps": [
+    {
+      "gap_id": "GAP-FEATURE-POLICY-DEFINITIONS-UNVERSIONED",
+      "severity": "informational",
+      "description": "The feature-policy column lists come from the study's train-only exploration handoff, a gitignored artifact. canonical-run.json pins only the feature counts (16/15/7) and the selected projection. Atlas declares the lists in this contract (re-derived by executing the study's official notebooks at the pinned revision) and checks their counts against canonical-run.json; Atlas does not re-execute the study's exploration."
+    },
+    {
+      "gap_id": "GAP-SHORTLIST-AND-DECIDING-CRITERION-NARRATIVE-ONLY",
+      "severity": "informational",
+      "description": "canonical-run.json does not record the family shortlist, the practical-tie group or the deciding tie-break criterion as structured fields; they are compared against README text at the pinned revision."
+    },
+    {
+      "gap_id": "GAP-NON-SELECTED-SECONDARY-CV",
+      "severity": "informational",
+      "description": "canonical-run.json records CV macro-F1 mean/std for every family and candidate but secondary CV metrics only for the selected candidate; other secondary CV values are reported by Atlas without a reference."
+    },
+    {
+      "gap_id": "GAP-MODEL-STATE-FINGERPRINT",
+      "severity": "informational",
+      "description": "The study's final-model artifact SHA-256 and model-state fingerprint are joblib/pickle and runtime specific; Atlas does not serialize or compare model bytes. Byte-level runtime identity is represented by the probability-matrix SHA-256 in the runtime_identity group."
+    }
+  ],
+  "protocol_integrity": {
+    "test_procedurally_isolated_in_canonical_run": true,
+    "historical_test_exposure": {
+      "exposed": true,
+      "description": "The seed-42 test partition was also evaluated once by the superseded pre-correction execution. The corrected run re-derived every development decision from training-only evidence with the pre-declared seed, candidate space, metric, and tie rules; none of them was changed after that historical test result.",
+      "superseded_reference_status": "superseded_not_canonical",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/protocol/test_partition_prior_exposure",
+        "rendered_text": "The seed-42 test partition was also evaluated once by the superseded pre-correction execution. The corrected run re-derived every development decision from training-only evidence with the pre-declared seed, candidate space, metric, and tie rules; none of them was changed after that historical test result."
+      }
+    },
+    "statement": "The corrected canonical protocol isolates the test partition procedurally: the split is frozen first, exploration uses train only, the test is not used for adjustment, and it is opened once after selection and final fit are frozen. The same seed-42 test partition was nevertheless evaluated once by the superseded pre-correction execution, whose full-source exploration also informed the feature-policy design; it must not be described as never seen."
+  },
+  "study_observations": [
+    {
+      "observation_id": "OBS-STUDY-SELF-REEXECUTION",
+      "affects_reproduction": false,
+      "description": "Executing the study's official notebooks at the pinned revision in the Atlas session (CPython 3.13.13, locked packages, linux-x86_64) reproduced every canonical-run metric within 1e-9 and the model artifact / model-state fingerprints, while probability_matrix_sha256 differed; the study's own verifier therefore reports a runtime-dependent byte difference, not a scientific difference."
+    },
+    {
+      "observation_id": "OBS-VALIDATION-PREDICT-VS-FINAL-ARGMAX",
+      "affects_reproduction": false,
+      "description": "Notebook 03 evaluates validation candidates with estimator.predict (argmax in estimator class order) while the final evaluation takes the argmax over probabilities realigned to public order. The two coincide unless two class probabilities are exactly equal; Atlas applies one declared argmax rule and reports the number of exact ties."
+    }
+  ],
+  "limitations": [
+    "Educational stratified random-snapshot benchmark; no temporal, prospective or operational validity.",
+    "The seed-42 test partition had historical exposure in the superseded pre-correction execution; the corrected run isolates it only procedurally.",
+    "ShapeFactor2 provenance is unresolved; only predictive sensitivity was evaluated.",
+    "Repeated feature profiles are a sensitivity analysis only; they do not prove duplicate identity or leakage, and the official test stays complete.",
+    "Class probabilities are not established as calibrated measures of biological certainty."
+  ],
+  "authoring": {
+    "authored_by": "Atlas scientific reproduction contract authoring",
+    "authored_at": "2026-09-29T00:00:00Z",
+    "method": "Protocol declarations transcribed from the pinned study code and notebooks; every json_pointer expected value, protocol gate, and pinned hash was materialized by pipeline.scientific_study_contract.author_contract_from_draft from the pinned checkout, and every declared protocol parameter listed in protocol_parameter_sources is re-checked against canonical-run.json.",
+    "draft_path": "pipeline/scientific-studies/dry-bean/study-e3e697c1b60f/authoring/contract-draft.json",
+    "notes": "Pinned revision e3e697c1b60f7b11f4ccb7e82447a6680bc2bfaf. The study repository is read-only for Atlas; a changed study revision requires a new contract directory."
+  }
+}

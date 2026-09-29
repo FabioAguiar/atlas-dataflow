@@ -83,9 +83,9 @@ _FAKE_REGISTRY = {
             "public_metadata": {
                 "title": "Fixture Dataset",
                 "summary": "Fixture for fallback generator tests.",
-                "domain": "telco",
+                "domain": "telecommunications",
                 "visibility": "public",
-                "tags": ["telco"],
+                "tags": ["churn"],
             },
         },
         # Fixture datasets below exercise the generalized icon-derivation

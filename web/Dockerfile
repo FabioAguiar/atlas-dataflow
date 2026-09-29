@@ -24,7 +24,11 @@ FROM nginx:alpine AS serve
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /app/dist /usr/share/nginx/html
 
-RUN addgroup -S -g 10001 atlas \
+# The base image writes its pid to root-owned /run (/var/run is only a
+# symlink, so chowning it does not help); move it to /tmp for the non-root
+# user and drop the master-only "user" directive.
+RUN sed -i -e 's#^pid .*#pid /tmp/nginx.pid;#' -e '/^user /d' /etc/nginx/nginx.conf \
+    && addgroup -S -g 10001 atlas \
     && adduser -S -D -H -u 10001 -G atlas atlas \
     && chown -R atlas:atlas /var/cache/nginx /var/run /var/log/nginx /etc/nginx/conf.d
 

@@ -373,6 +373,14 @@ class TestNativeMulticlassTrainingRun:
         )
         assert split_sizes["final_fit_rows"] == split_sizes["training_rows"] + split_sizes["validation_rows"]
 
+    def test_permutation_importance_is_scored_by_the_contract_primary_metric(self, dry_bean_native_run):
+        record = json.loads(
+            (dry_bean_native_run["tmp_repo"] / dry_bean_native_run["result"].training_parameter_record_path).read_text()
+        )
+        assert record["training_parameters"]["primary_metric"] == "f1_macro"
+        assert record["training_parameters"]["permutation_importance_metric"] == "f1_macro"
+        assert record["training_parameters"]["permutation_importance_scorer"] == "f1_macro"
+
     def test_training_metrics_v2_validates_and_separates_validation_from_final_test(
         self, dry_bean_native_run
     ):

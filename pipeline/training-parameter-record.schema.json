@@ -677,6 +677,14 @@
             },
             "random_seed": { "type": ["integer", "null"] },
             "primary_metric": { "$ref": "#/$defs/multiclass_metric_name_v2" },
+            "permutation_importance_metric": {
+              "$ref": "#/$defs/multiclass_metric_name_v2",
+              "description": "Optional (records written before permutation scoring was contract-driven omit it): the execution contract primary_metric that scored permutation Feature Importance."
+            },
+            "permutation_importance_scorer": {
+              "enum": ["f1_macro", "f1_weighted", "precision_macro", "recall_macro", "accuracy", "balanced_accuracy", "neg_log_loss"],
+              "description": "Optional: the scikit-learn scorer resolved from permutation_importance_metric through the canonical metric identity registry (contracts/metric-identity-registry.json)."
+            },
             "secondary_metrics": {
               "type": "array",
               "items": { "$ref": "#/$defs/multiclass_metric_name_v2" }
@@ -1000,6 +1008,14 @@
             },
             "random_seed": { "type": ["integer", "null"] },
             "primary_metric": { "$ref": "#/$defs/continuous_regression_metric_name_v3" },
+            "permutation_importance_metric": {
+              "$ref": "#/$defs/continuous_regression_metric_name_v3",
+              "description": "Optional (records written before permutation scoring was contract-driven omit it): the execution contract primary_metric that scored permutation Feature Importance."
+            },
+            "permutation_importance_scorer": {
+              "enum": ["neg_mean_absolute_error", "neg_root_mean_squared_error", "r2"],
+              "description": "Optional: the scikit-learn scorer resolved from permutation_importance_metric through the canonical metric identity registry (contracts/metric-identity-registry.json)."
+            },
             "secondary_metrics": {
               "type": "array",
               "items": { "$ref": "#/$defs/continuous_regression_metric_name_v3" }
@@ -1642,6 +1658,14 @@
             },
             "random_seed": { "type": ["integer", "null"] },
             "primary_metric": { "$ref": "#/$defs/binary_metric_name_v5" },
+            "permutation_importance_metric": {
+              "$ref": "#/$defs/binary_metric_name_v5",
+              "description": "Optional (records written before permutation scoring was contract-driven omit it): the execution contract primary_metric that scored permutation Feature Importance."
+            },
+            "permutation_importance_scorer": {
+              "enum": ["roc_auc", "f1", "accuracy", "neg_log_loss", "average_precision"],
+              "description": "Optional: the scikit-learn scorer resolved from permutation_importance_metric through the canonical metric identity registry (contracts/metric-identity-registry.json)."
+            },
             "secondary_metrics": {
               "type": "array",
               "items": { "$ref": "#/$defs/binary_metric_name_v5" }

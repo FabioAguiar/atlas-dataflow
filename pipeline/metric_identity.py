@@ -47,6 +47,7 @@ class MetricIdentity:
     direction: str
     problem_types: frozenset[str]
     sklearn_scorer: str | None
+    positive_class_sensitive: bool
     display_label: str
     training_aliases: tuple[str, ...]
     scientific_aliases: tuple[str, ...]
@@ -82,6 +83,7 @@ def metric_identities() -> Mapping[str, MetricIdentity]:
             direction=entry["direction"],
             problem_types=frozenset(entry["problem_types"]),
             sklearn_scorer=entry["sklearn_scorer"],
+            positive_class_sensitive=bool(entry["positive_class_sensitive"]),
             display_label=entry["display_label"],
             training_aliases=tuple(aliases["training"]),
             scientific_aliases=tuple(aliases["scientific"]),

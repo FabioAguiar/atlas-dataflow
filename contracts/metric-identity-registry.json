@@ -1,6 +1,6 @@
 {
   "schema_version": "metric-identity-registry.v1",
-  "description": "Canonical Atlas metric identity authority. metric_id is the canonical identifier used by execution contracts (primary_metric/secondary_metrics). Every layer resolves metric names through this registry: native training (aliases.training), scientific reproduction (aliases.scientific), and the public API projection (aliases.public is the published key; aliases.public_input lists additional raw names the public projection accepts). direction states whether a higher or lower value is better; sklearn_scorer is the scikit-learn scorer string used when a metric drives estimator scoring (null when no built-in scorer exists). Adding a metric is a change to this file only; historical artifacts keep the names they were written with.",
+  "description": "Canonical Atlas metric identity authority. metric_id is the canonical identifier used by execution contracts (primary_metric/secondary_metrics). Every layer resolves metric names through this registry: native training (aliases.training), scientific reproduction (aliases.scientific), and the public API projection (aliases.public is the published key; aliases.public_input lists additional raw names the public projection accepts). direction states whether a higher or lower value is better; sklearn_scorer is the scikit-learn scorer string used when a metric drives estimator scoring (null when no built-in scorer exists); positive_class_sensitive marks binary metrics whose value depends on which class is positive, so a scorer must be bound to the governed positive class. Adding a metric is a change to this file only; historical artifacts keep the names they were written with.",
   "metrics": [
     {
       "metric_id": "roc_auc",
@@ -9,6 +9,7 @@
         "binary_classification"
       ],
       "sklearn_scorer": "roc_auc",
+      "positive_class_sensitive": false,
       "display_label": "ROC AUC",
       "aliases": {
         "training": [
@@ -31,6 +32,7 @@
         "binary_classification"
       ],
       "sklearn_scorer": "average_precision",
+      "positive_class_sensitive": true,
       "display_label": "PR AUC",
       "aliases": {
         "training": [
@@ -51,6 +53,7 @@
         "binary_classification"
       ],
       "sklearn_scorer": "f1",
+      "positive_class_sensitive": true,
       "display_label": "F1 Score",
       "aliases": {
         "training": [
@@ -72,6 +75,7 @@
         "binary_classification"
       ],
       "sklearn_scorer": null,
+      "positive_class_sensitive": true,
       "display_label": "F2 Score",
       "aliases": {
         "training": [
@@ -91,6 +95,7 @@
         "binary_classification"
       ],
       "sklearn_scorer": "precision",
+      "positive_class_sensitive": true,
       "display_label": "Precision",
       "aliases": {
         "training": [
@@ -110,6 +115,7 @@
         "binary_classification"
       ],
       "sklearn_scorer": "recall",
+      "positive_class_sensitive": true,
       "display_label": "Recall",
       "aliases": {
         "training": [
@@ -129,6 +135,7 @@
         "binary_classification"
       ],
       "sklearn_scorer": "neg_brier_score",
+      "positive_class_sensitive": false,
       "display_label": "Brier Score",
       "aliases": {
         "training": [
@@ -149,6 +156,7 @@
         "multiclass_classification"
       ],
       "sklearn_scorer": "accuracy",
+      "positive_class_sensitive": false,
       "display_label": "Accuracy",
       "aliases": {
         "training": [
@@ -169,6 +177,7 @@
         "multiclass_classification"
       ],
       "sklearn_scorer": "balanced_accuracy",
+      "positive_class_sensitive": false,
       "display_label": "Balanced Accuracy",
       "aliases": {
         "training": [
@@ -189,6 +198,7 @@
         "multiclass_classification"
       ],
       "sklearn_scorer": "neg_log_loss",
+      "positive_class_sensitive": false,
       "display_label": "Log Loss",
       "aliases": {
         "training": [
@@ -208,6 +218,7 @@
         "multiclass_classification"
       ],
       "sklearn_scorer": "f1_macro",
+      "positive_class_sensitive": false,
       "display_label": "Macro F1",
       "aliases": {
         "training": [
@@ -227,6 +238,7 @@
         "multiclass_classification"
       ],
       "sklearn_scorer": "f1_weighted",
+      "positive_class_sensitive": false,
       "display_label": "Weighted F1",
       "aliases": {
         "training": [
@@ -246,6 +258,7 @@
         "multiclass_classification"
       ],
       "sklearn_scorer": "precision_macro",
+      "positive_class_sensitive": false,
       "display_label": "Macro Precision",
       "aliases": {
         "training": [
@@ -263,6 +276,7 @@
         "multiclass_classification"
       ],
       "sklearn_scorer": "recall_macro",
+      "positive_class_sensitive": false,
       "display_label": "Macro Recall",
       "aliases": {
         "training": [
@@ -282,6 +296,7 @@
         "multiclass_classification"
       ],
       "sklearn_scorer": null,
+      "positive_class_sensitive": false,
       "display_label": "Minimum Per-Class Recall",
       "aliases": {
         "training": [],
@@ -300,6 +315,7 @@
         "univariate_forecasting"
       ],
       "sklearn_scorer": "neg_mean_absolute_error",
+      "positive_class_sensitive": false,
       "display_label": "MAE",
       "aliases": {
         "training": [
@@ -318,6 +334,7 @@
         "univariate_forecasting"
       ],
       "sklearn_scorer": "neg_root_mean_squared_error",
+      "positive_class_sensitive": false,
       "display_label": "RMSE",
       "aliases": {
         "training": [
@@ -335,6 +352,7 @@
         "continuous_regression"
       ],
       "sklearn_scorer": "r2",
+      "positive_class_sensitive": false,
       "display_label": "R²",
       "aliases": {
         "training": [
@@ -352,6 +370,7 @@
         "univariate_forecasting"
       ],
       "sklearn_scorer": null,
+      "positive_class_sensitive": false,
       "display_label": "Seasonal MASE",
       "aliases": {
         "training": [

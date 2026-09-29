@@ -29,7 +29,6 @@ from pipeline.training import (
     METRICS_ARTIFACT_FILENAME,
     NATIVE_BINARY_FIXED_ANALYTICAL_VISUALIZATIONS_VERSION,
     NATIVE_BINARY_FIXED_HGB_PERMUTATION_IMPORTANCE_N_REPEATS,
-    NATIVE_BINARY_FIXED_HGB_PERMUTATION_IMPORTANCE_SCORING,
     NATIVE_BINARY_FIXED_METRIC_NAMES,
     NATIVE_BINARY_FIXED_RESULT_SEMANTICS_SCHEMA_VERSION,
     NATIVE_BINARY_FIXED_TRAINING_METRICS_VERSION,
@@ -345,7 +344,7 @@ def test_visual_feature_importance_declares_hgb_permutation_importance_never_fin
     assert method["model_family"] == "hist_gradient_boosting"
     assert method["method"] == "permutation_importance"
     assert method["population_kind"] == "finalized_fit_population"
-    assert method["scoring"] == NATIVE_BINARY_FIXED_HGB_PERMUTATION_IMPORTANCE_SCORING
+    # Scored by the fixture contract's own primary metric (roc_auc).
     assert method["scoring"] == "roc_auc"
     assert method["n_repeats"] == NATIVE_BINARY_FIXED_HGB_PERMUTATION_IMPORTANCE_N_REPEATS
     assert method["n_repeats"] == 5
@@ -662,3 +661,24 @@ def test_legacy_binary_evaluate_allowed_families_path_remains_callable(
     # The legacy path never emits training-parameter-record.v5/training-metrics.v5.
     parameter_record = json.loads((output_directory / TRAINING_PARAMETER_RECORD_FILENAME).read_text())
     assert parameter_record["schema_version"] == "training-parameter-record.v1"
+
+
+@pytest.mark.parametrize(
+    ("primary_metric", "expected_scorer"),
+    [("roc_auc", "roc_auc"), ("pr_auc", "average_precision"), ("f1", "f1"), ("log_loss", "neg_log_loss")],
+)
+def test_permutation_scorer_derives_from_contract_primary_metric(
+    fixed_training_environment: Path, tmp_path: Path, primary_metric: str, expected_scorer: str,
+) -> None:
+    contract = _fixed_binary_contract()
+    contract["primary_metric"] = primary_metric
+    contract["secondary_metrics"] = [
+        name for name in ("roc_auc", "f1", "pr_auc") if name != primary_metric
+    ]
+    _, output_directory = _run(fixed_training_environment, tmp_path, contract=contract)
+    artifact = json.loads((output_directory / ANALYTICAL_VISUALIZATIONS_FILENAME).read_text())
+    record = json.loads((output_directory / TRAINING_PARAMETER_RECORD_FILENAME).read_text())
+
+    assert artifact["feature_importance_method"]["scoring"] == expected_scorer
+    assert record["training_parameters"]["permutation_importance_metric"] == primary_metric
+    assert record["training_parameters"]["permutation_importance_scorer"] == expected_scorer

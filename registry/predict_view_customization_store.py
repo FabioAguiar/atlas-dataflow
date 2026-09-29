@@ -28,9 +28,9 @@ explicit scope for api/admin_predict_view_customizations.py.
 
 import json
 import re
-import shutil
 from pathlib import Path
 
+from registry.file_backup import backup_file_contents
 from registry.predict_view_customization_validate import validate_customization
 
 _SLUG_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
@@ -264,7 +264,7 @@ def update_customization(
     registry_path = _registry_path(repo_root)
     if registry_path.is_file():
         backup_path = registry_path.parent / f"{registry_path.name}.previous"
-        shutil.copy2(registry_path, backup_path)
+        backup_file_contents(registry_path, backup_path)
 
     entries[existing_index] = customization
     registry = dict(registry, predict_view_customizations=entries)

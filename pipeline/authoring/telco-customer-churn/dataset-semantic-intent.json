@@ -4,7 +4,7 @@
     "human_reviewed": true,
     "safe_projection_intent": "Estimate customer churn propensity from reviewed service and account fields."
   },
-  "authoring_generation_id": "telco-authoring-v2",
+  "authoring_generation_id": "telco-authoring-v3",
   "authoring_rationale_refs": [
     {
       "reference_id": "atlas-current-source-observation",

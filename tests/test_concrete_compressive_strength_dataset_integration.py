@@ -556,16 +556,17 @@ def test_notebook_has_no_stale_sys_path_bootstrap():
 
 
 def test_notebook_declares_repository_import_root_coherence_check():
+    # The coherence check is shared infrastructure (pipeline/notebook_support.py,
+    # unit-tested in tests/test_notebook_support.py); the notebook imports it
+    # and runs it right after resolving its repository root.
     code = _source("code")
-    assert "def assert_repository_import_root_coherence(module, expected_repo_root):" in code
-    assert "def resolve_imported_module_repo_root(module):" in code
-    assert "return resolve_repository_root(module.__file__)" in code
-    assert "raise RuntimeError(" in code
-    assert "assert_repository_import_root_coherence(discovery_evidence_module, repo_root)" in code
+    assert "def assert_repository_import_root_coherence(" not in code
+    assert "def resolve_imported_module_repo_root(" not in code
+    import_offset = code.index("from pipeline.notebook_support import (")
+    assert "    assert_repository_import_root_coherence,\n" in code
     repo_root_assignment_offset = code.index("repo_root = resolve_repository_root()")
-    coherence_def_offset = code.index("def assert_repository_import_root_coherence(")
     first_call_offset = code.index("assert_repository_import_root_coherence(discovery_evidence_module, repo_root)")
-    assert repo_root_assignment_offset < coherence_def_offset < first_call_offset
+    assert import_offset < repo_root_assignment_offset < first_call_offset
 
 
 def test_notebook_rechecks_pipeline_training_import_root_before_native_training():

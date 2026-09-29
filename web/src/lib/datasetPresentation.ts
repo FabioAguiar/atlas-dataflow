@@ -98,27 +98,16 @@ export function datasetThemeStyle(value: unknown): DatasetThemeStyle {
   ) as DatasetThemeStyle;
 }
 
+// Public labels for the governed Atlas problem types (the result-semantics
+// problem_type vocabulary). The single problem-type label authority.
 const PROBLEM_TYPE_LABELS: Record<string, string> = {
   binary_classification: "Binary Classification",
   multiclass_classification: "Multiclass Classification",
   continuous_regression: "Continuous Regression",
-  regression: "Regression",
-  clustering: "Clustering",
-  anomaly_detection: "Anomaly Detection",
-  time_series_forecasting: "Time Series Forecasting",
+  univariate_forecasting: "Univariate Forecasting",
 };
 
 const DEFAULT_PROBLEM_TYPE_LABEL = "Predictive Analysis";
-
-const LEGACY_HOME_CARD_DESCRIPTION_FALLBACKS = new Set([
-  "Customer churn prediction dataset for a telecommunications provider.",
-  "Customer churn prediction dataset for a telecommunications provider. Predicts whether a customer will churn based on service usage and account features.",
-]);
-
-export function presentHomeCardDescription(description?: string | null): string {
-  const trimmed = description?.trim() ?? "";
-  return LEGACY_HOME_CARD_DESCRIPTION_FALLBACKS.has(trimmed) ? "" : trimmed;
-}
 
 export type DatasetOperationalTimestampPresentation = {
   localizedDateTime: string;
@@ -247,17 +236,18 @@ export function safePublicSourceUrl(value: string | null | undefined): string | 
 }
 
 /**
- * GET /datasets (registry/list.py ListedDataset) returns only dataset_slug,
- * title, summary, domain, visibility and tags today, never problem_type. This
- * always falls back to a generic public label instead of inventing a
- * specific analysis type per dataset; if problem_type is added to the API
- * later, known values resolve to their documented public label.
+ * Public label for a governed problem_type. An absent or unknown value
+ * resolves to `fallback` (a generic label by default) instead of inventing a
+ * specific analysis type.
  */
-export function getProblemTypeLabel(problemType?: string | null): string {
+export function getProblemTypeLabel(
+  problemType?: string | null,
+  fallback: string = DEFAULT_PROBLEM_TYPE_LABEL,
+): string {
   if (!problemType) {
-    return DEFAULT_PROBLEM_TYPE_LABEL;
+    return fallback;
   }
-  return PROBLEM_TYPE_LABELS[problemType] ?? DEFAULT_PROBLEM_TYPE_LABEL;
+  return PROBLEM_TYPE_LABELS[problemType] ?? fallback;
 }
 
 /**
@@ -292,16 +282,16 @@ export function resolveModelDisplayName(resultContract: DatasetModelDisplayNameR
   return trimmed || null;
 }
 
-// Not exhaustive of DatasetIconName's full curated icon bank -- only the
-// domains this function can confidently infer automatically from
-// domain/tags. A domain matching none of these keyword families falls back
-// to "generic", a normal renderable value, never a rejection; this
-// automatic fallback never requires telecom or bank to exist. An authoring
+// Domain taxonomy (never dataset identity): keyword families matched against
+// a dataset's registry domain/tags. Not exhaustive of DatasetIconName's full
+// curated icon bank -- a domain matching none of these families falls back
+// to "generic", a normal renderable value, never a rejection. An authoring
 // curator may still hand-select any other icon from the full bank via
-// web/src/pages/admin/DatasetAdminPage.tsx. Kept in lockstep with
-// api/public_profile_fallback.py's _DOMAIN_ICON_RULES.
+// web/src/pages/admin/DatasetAdminPage.tsx. Must stay identical to
+// api/public_profile_fallback.py's _DOMAIN_ICON_RULES (enforced by
+// tests/api/test_domain_icon_taxonomy_consistency.py).
 const DOMAIN_ICON_RULES: Array<{ icon: DatasetIconName; keywords: string[] }> = [
-  { icon: "telecom", keywords: ["telecom", "telco"] },
+  { icon: "telecom", keywords: ["telecom"] },
   { icon: "bank", keywords: ["bank", "financ"] },
   { icon: "heart", keywords: ["health", "medical", "clinic", "hospital"] },
   { icon: "shopping-cart", keywords: ["retail", "commerce", "shop"] },

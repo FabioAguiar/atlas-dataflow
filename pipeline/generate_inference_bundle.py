@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from pipeline import model_families
 from pipeline.training import _prepared_dataset_metadata_blocking_reasons
 
 
@@ -43,43 +44,19 @@ DEFAULT_MODEL_PACKAGE_REFERENCE = "models/model.pkl"
 SUPPORTED_SERIALIZATION_FORMAT = "joblib"
 SUPPORTED_LOADER_STRATEGY = "joblib_sklearn_predict"
 SUPPORTED_PREDICTION_INTERFACE = "predict"
-SUPPORTED_MODEL_FAMILIES = frozenset({
-    "logistic_regression",
-    "gradient_boosting",
-    "random_forest",
-    # Project Spec S0216: internal Atlas-native fixed-configuration
-    # multiclass training now fits hist_gradient_boosting (see
-    # pipeline/training.py's NATIVE_MULTICLASS_* fixed-configuration
-    # pipeline) -- runtime_execution.model_family already accepted this
-    # value at the schema level (contracts/inference-bundle.schema.json,
-    # added for the external path by Project Spec S0209).
-    "hist_gradient_boosting",
-})
-# Project Spec S0108: deterministic code mapping from model-family ID to a
-# safe display descriptor. Never looked up any other way (e.g. from editable
-# profile copy) -- the design prototype's "Logistic Regression" placeholder
-# must never be hardcoded as a default; this dict is keyed and looked up by
-# whatever model_family the actual training evidence recorded.
-MODEL_FAMILY_DISPLAY_NAMES: dict[str, str] = {
-    "logistic_regression": "Logistic Regression",
-    "gradient_boosting": "Gradient Boosting",
-    "random_forest": "Random Forest",
-    # Project Spec S0191: originally the only external public-result model
-    # family (training-parameter-record.external-fitted-model.v1 restricts
-    # model_family to exactly this one enum value). Project Spec S0232
-    # additionally reaches this entry from internal Atlas-native
-    # continuous-regression bundle generation (CONTINUOUS_REGRESSION_MODEL_FAMILIES
-    # above); binary/multiclass internal training records still cannot reach
-    # it via SUPPORTED_MODEL_FAMILIES.
-    "hist_gradient_boosting": "HistGradientBoosting",
-    # Project Spec S0208/S0209: the fourth bounded external multiclass (v2)
-    # estimator family -- an internal training record can never reach this
-    # entry either, for the same reason as hist_gradient_boosting above.
-    "decision_tree": "Decision Tree",
-    # Project Spec S0245: the sole inference_bundle.v2 forecasting model
-    # family. Deterministic projection only -- never editable profile copy.
-    "deterministic_seasonal_trend_ols": "Deterministic Seasonal-Trend OLS",
-}
+# Internal (Atlas-native) classification bundle families: every family native
+# training fits for binary or multiclass classification, derived from the
+# model-family authority (pipeline/model_families.py).
+SUPPORTED_MODEL_FAMILIES = model_families.native_trainable_family_ids_for_any(
+    (model_families.BINARY_CLASSIFICATION, model_families.MULTICLASS_CLASSIFICATION)
+)
+# Deterministic code mapping from model-family ID to a safe display
+# descriptor, owned by the model-family authority. Never looked up any other
+# way (e.g. from editable profile copy) and keyed by whatever model_family the
+# actual training evidence recorded; external-lineage (decision_tree) and
+# forecasting families are included because their bundles carry the same
+# descriptor.
+MODEL_FAMILY_DISPLAY_NAMES: dict[str, str] = model_families.display_names()
 # Project Spec S0191: bounded governed pairing of external public-result
 # model_family to its required estimator_identity, mirroring
 # training-parameter-record.schema.json's external profile enums. Never
@@ -94,11 +71,9 @@ BINARY_CLASSIFICATION_RESULT_SCHEMA_VERSION = "binary-classification-result.v1"
 # the S0231 native hist_gradient_boosting regression family -- never widened
 # just because another classification/external family already exists
 # elsewhere in this module.
-CONTINUOUS_REGRESSION_MODEL_FAMILIES = frozenset({
-    "gradient_boosting",
-    "random_forest",
-    "hist_gradient_boosting",
-})
+CONTINUOUS_REGRESSION_MODEL_FAMILIES = frozenset(
+    model_families.native_trainable_family_ids(model_families.CONTINUOUS_REGRESSION)
+)
 CONTINUOUS_REGRESSION_RESULT_SEMANTICS_SCHEMA_VERSION = "continuous-regression-result-semantics.v1"
 CONTINUOUS_REGRESSION_RESULT_SCHEMA_VERSION = "continuous-regression-result.v1"
 TRAINING_PARAMETER_RECORD_V3_SCHEMA_VERSION = "training-parameter-record.v3"

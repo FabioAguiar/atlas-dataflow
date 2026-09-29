@@ -651,16 +651,22 @@ def test_train_from_paths_legacy_contract_without_model_source_mode_still_trains
     assert result.status == "trained"
 
 
-def test_customer_id_feature_column_is_rejected(
+@pytest.mark.parametrize("identifier_column", ["RowNumber", "id", "customer_number"])
+def test_contract_ignored_identifier_column_in_features_is_rejected(
     fixed_training_environment: Path,
     tmp_path: Path,
+    identifier_column: str,
 ) -> None:
+    # Identifier protection is contract-driven (ignored_columns), never a
+    # hardcoded column name: an arbitrarily named identifier the contract
+    # excludes can never re-enter training as a feature.
     contract = _valid_execution_contract()
-    contract["feature_columns"].append("customerID")
-    contract["feature_definitions"]["customerID"] = {"type": "categorical"}
+    contract["ignored_columns"].append(identifier_column)
+    contract["feature_columns"].append(identifier_column)
+    contract["feature_definitions"][identifier_column] = {"type": "categorical"}
     dataset = _valid_prepared_dataset()
-    for row in dataset["rows"]:
-        row["customerID"] = "0002-ORFBO"
+    for index, row in enumerate(dataset["rows"]):
+        row[identifier_column] = f"record-{index:04d}"
     contract_path = _write_json(tmp_path / "execution-contract.json", contract)
     dataset_path = _write_json(tmp_path / "prepared-dataset.json", dataset)
 
@@ -674,6 +680,58 @@ def test_customer_id_feature_column_is_rejected(
 
     assert exc.value.code == "prohibited_training_feature"
     assert exc.value.field == "feature_columns"
+    assert identifier_column in str(exc.value)
+
+
+def test_feature_not_declared_ignored_is_never_blocked_by_its_name(
+    fixed_training_environment: Path,
+    tmp_path: Path,
+) -> None:
+    # A column name that happens to look like another dataset's identifier
+    # ("customerID") is a normal feature when this contract does not declare
+    # it ignored -- training keeps no global list of forbidden column names.
+    contract = _valid_execution_contract()
+    contract["feature_columns"].append("customerID")
+    contract["feature_definitions"]["customerID"] = {
+        "type": "categorical",
+        "domain_constraints": {"values": ["a", "b"]},
+    }
+    contract["missing_value_policy"]["customerID"] = "mode"
+    dataset = _valid_prepared_dataset()
+    for index, row in enumerate(dataset["rows"]):
+        row["customerID"] = "a" if index % 2 else "b"
+    contract_path = _write_json(tmp_path / "execution-contract.json", contract)
+    dataset_path = _write_json(tmp_path / "prepared-dataset.json", dataset)
+
+    result = train_from_paths(
+        contract_path,
+        dataset_path,
+        dataset_slug="training-pipeline-test",
+        run_id="train-20260626T010700Z",
+    )
+
+    assert result.status == "trained"
+
+
+def test_malformed_ignored_columns_fails_closed(
+    fixed_training_environment: Path,
+    tmp_path: Path,
+) -> None:
+    contract = _valid_execution_contract()
+    contract["ignored_columns"] = "operator_note"
+    contract_path = _write_json(tmp_path / "execution-contract.json", contract)
+    dataset_path = _write_json(tmp_path / "prepared-dataset.json", _valid_prepared_dataset())
+
+    with pytest.raises(TrainingInputError) as exc:
+        train_from_paths(
+            contract_path,
+            dataset_path,
+            dataset_slug="training-pipeline-test",
+            run_id="train-20260626T010700Z",
+        )
+
+    assert exc.value.code == "invalid_contract_field"
+    assert exc.value.field == "ignored_columns"
 
 
 def test_boolean_feature_type_mismatch_is_rejected(

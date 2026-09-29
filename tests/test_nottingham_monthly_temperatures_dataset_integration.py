@@ -146,7 +146,9 @@ def test_notebook_resolves_repository_root_without_cwd_override():
 
 def test_notebook_declares_repository_import_root_coherence_check():
     code = _source("code")
-    assert "def assert_repository_import_root_coherence(module, expected_repo_root):" in code
+    assert "def assert_repository_import_root_coherence(" not in code
+    assert "from pipeline.notebook_support import (" in code
+    assert "    assert_repository_import_root_coherence,\n" in code
     assert "assert_repository_import_root_coherence(discovery_evidence_module, repo_root)" in code
     assert "assert_repository_import_root_coherence(pipeline_training, repo_root)" in code
     assert "assert_repository_import_root_coherence(derive_projections_module, repo_root)" in code
@@ -220,12 +222,22 @@ def test_notebook_contains_no_direct_model_fit_call():
 
 
 def test_notebook_translates_raw_time_to_governed_monthly_periods_deterministically():
+    # The fractional-year -> monthly period translation is the generic
+    # forecasting capability (pipeline/forecasting_preparation.py, unit-tested
+    # in tests/test_forecasting_preparation.py); the Nottingham-specific
+    # geometry and field names stay in the notebook.
     code = _source("code")
-    assert "def period_label(position):" in code
+    assert "def period_label(" not in code
     assert "EXPECTED_FIRST_YEAR = 1920" in code
     assert 'EXPECTED_LAST_PERIOD = "1939-12"' in code
-    assert "abs(raw_time_value - expected_fractional_year) > 1e-6" in code
+    assert "period_label = partial(monthly_period_label, EXPECTED_FIRST_YEAR)" in code
+    assert "translate_fractional_year_monthly_series(" in code
+    assert "first_year=EXPECTED_FIRST_YEAR," in code
+    assert 'time_field="time",' in code and 'value_field="value",' in code
+    assert 'index_field="period",' in code and 'target_field="temperature",' in code
     assert '"raw_to_period_translation_failed"' in code
+    assert "expanding_window_fold_schedule(" in code
+    assert "temporal_integrity_confirmations(" in code
 
 
 def test_notebook_verifies_prepared_series_identity_and_row_count():

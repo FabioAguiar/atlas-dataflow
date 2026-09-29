@@ -35,7 +35,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
-from pipeline import model_families
+from pipeline import model_families, preparation_rules
 
 
 SCHEMA_VERSION_V1 = "scientific-study-contract.v1"
@@ -71,7 +71,7 @@ METRICS_BY_PROBLEM_TYPE: Mapping[str, frozenset[str]] = {
 REPRODUCTION_CAPABILITIES: Mapping[str, Any] = {
     "problem_types": {BINARY, MULTICLASS},
     "protocol_kinds": {"tabular_holdout_model_selection.v1", "tabular_holdout_model_selection.v2"},
-    "preparation_rule_kinds": {"conditional_blank_numeric_fill"},
+    "preparation_rule_kinds": set(preparation_rules.PREPARATION_RULE_KINDS),
     "split_kinds": {"two_stage_stratified_holdout"},
     "membership_kinds": {"identifier", "technical_row_occurrence"},
     "preprocessing_kinds": {"column_transformer_onehot_plus_numeric"},

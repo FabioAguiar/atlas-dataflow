@@ -236,8 +236,10 @@ class TestExecutionContractMaterializesFixedConfigurationPolicy:
             contract_derivation._build_execution_contract(modeling_intent, raw_discovery_evidence, None)
 
 
-class TestLegacyBinaryDerivationDefaultsUnchanged:
-    def test_no_training_policy_intent_preserves_legacy_defaults(self):
+class TestMissingTrainingPolicyFailsClosed:
+    def test_no_training_policy_intent_fails_closed_instead_of_inheriting_binary_defaults(self):
+        # A multiclass modeling intent without training_policy_intent must never
+        # receive binary-era defaults (roc_auc/f1/pr_auc): it fails closed.
         raw_discovery_evidence = discovery_evidence.generate_discovery_evidence(DRY_BEAN_RAW_PATH, seed=42)
         modeling_intent = discovery_evidence.build_dataset_modeling_intent(
             dataset_slug=DATASET_SLUG,
@@ -251,10 +253,9 @@ class TestLegacyBinaryDerivationDefaultsUnchanged:
             observed_target_distribution={},
             identifier_columns=[],
         )
-        contract = contract_derivation._build_execution_contract(modeling_intent, raw_discovery_evidence, None)
-        assert contract["numeric_handling"] == "standardize"
-        assert contract["primary_metric"] == "roc_auc"
-        assert "selection_mode" not in contract["modeling_constraints"]
+        with pytest.raises(contract_derivation.TrainingPolicyValidationError) as exc:
+            contract_derivation._build_execution_contract(modeling_intent, raw_discovery_evidence, None)
+        assert "training_policy_intent is absent" in str(exc.value)
 
 
 @pytest.fixture(scope="module")
@@ -371,6 +372,14 @@ class TestNativeMulticlassTrainingRun:
             split_sizes["training_rows"] + split_sizes["validation_rows"] + split_sizes["test_rows"] == 13611
         )
         assert split_sizes["final_fit_rows"] == split_sizes["training_rows"] + split_sizes["validation_rows"]
+
+    def test_permutation_importance_is_scored_by_the_contract_primary_metric(self, dry_bean_native_run):
+        record = json.loads(
+            (dry_bean_native_run["tmp_repo"] / dry_bean_native_run["result"].training_parameter_record_path).read_text()
+        )
+        assert record["training_parameters"]["primary_metric"] == "f1_macro"
+        assert record["training_parameters"]["permutation_importance_metric"] == "f1_macro"
+        assert record["training_parameters"]["permutation_importance_scorer"] == "f1_macro"
 
     def test_training_metrics_v2_validates_and_separates_validation_from_final_test(
         self, dry_bean_native_run

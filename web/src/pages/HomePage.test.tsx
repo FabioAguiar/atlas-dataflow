@@ -454,8 +454,9 @@ describe("HomePage Telco-like ready dataset listing (S0017)", () => {
       {
         dataset_slug: "telco-customer-churn",
         title: "Telco Customer Churn",
-        summary: "Customer churn prediction dataset for a telecommunications provider.",
-        domain: "telco",
+        summary:
+          "Estimate customer churn from service, contract, billing, payment, tenure, and charge data with a governed binary-classification model.",
+        domain: "telecommunications",
         visibility: "public",
         tags: ["telco", "churn", "classification"],
         problem_type: "binary_classification",
@@ -466,32 +467,41 @@ describe("HomePage Telco-like ready dataset listing (S0017)", () => {
 
     expect(await screen.findByText("Telco Customer Churn")).toBeInTheDocument();
     expect(
-      screen.queryByText("Customer churn prediction dataset for a telecommunications provider."),
-    ).not.toBeInTheDocument();
+      screen.getByText(
+        "Estimate customer churn from service, contract, billing, payment, tenure, and charge data with a governed binary-classification model.",
+      ),
+    ).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Explore dataset/ })).toHaveAttribute(
       "href",
       "/dataset/telco-customer-churn",
     );
 
-    // domain "telco" is not in DOMAIN_ICON_RULES' keyword list ("telecom"/
-    // "telco" both match "telco" today via datasetPresentation.ts's keyword
-    // substring check), and there is no curated home_card_icon in this
-    // payload, so the icon must come from the deterministic domain/tags
-    // fallback, not an invented per-dataset value.
+    // The registry domain "telecommunications" matches the "telecom" domain
+    // keyword family; there is no curated home_card_icon in this payload, so
+    // the icon comes from the deterministic domain/tags fallback.
     const iconPath = container.querySelector(".dataset-card__icon path");
     expect(iconPath?.getAttribute("d")).toBe(TELECOM_ICON_PATH_D);
   });
 
-  it("renders a published Home card description but not the legacy long fallback", async () => {
-    const legacyFallback = "Customer churn prediction dataset for a telecommunications provider. Predicts whether a customer will churn based on service usage and account features.";
+  it("presents listing descriptions verbatim -- no dataset-specific copy filter -- and prefers published curated copy", async () => {
+    const formerTelcoSummary =
+      "Customer churn prediction dataset for a telecommunications provider. Predicts whether a customer will churn based on service usage and account features.";
     installDatasetsFetchMock([
       {
         dataset_slug: "telco-customer-churn",
         title: "Telco Customer Churn",
-        summary: legacyFallback,
-        domain: "telco",
+        summary: formerTelcoSummary,
+        domain: "telecommunications",
         visibility: "public",
-        tags: ["telco"],
+        tags: [],
+      },
+      {
+        dataset_slug: "example-new-dataset",
+        title: "Example New Dataset",
+        summary: "A newly onboarded dataset rendered with no dataset-specific branch.",
+        domain: "aerospace",
+        visibility: "public",
+        tags: [],
       },
       {
         dataset_slug: "curated-description",
@@ -507,7 +517,28 @@ describe("HomePage Telco-like ready dataset listing (S0017)", () => {
     renderHomePage();
 
     expect(await screen.findByText("Explicitly published Home card description")).toBeInTheDocument();
-    expect(screen.queryByText(legacyFallback)).not.toBeInTheDocument();
+    expect(screen.queryByText("Canonical summary that must not replace curated copy")).not.toBeInTheDocument();
+    // The UI presents whatever the data says -- it never hides a description
+    // because it matches some dataset's text.
+    expect(screen.getByText(formerTelcoSummary)).toBeInTheDocument();
+    expect(screen.getByText("A newly onboarded dataset rendered with no dataset-specific branch.")).toBeInTheDocument();
+  });
+
+  it("treats the dataset abbreviation 'telco' as no domain keyword (domain taxonomy, not dataset identity)", async () => {
+    installDatasetsFetchMock([
+      {
+        dataset_slug: "abbreviation-only",
+        title: "Abbreviation only",
+        summary: "Domain given only as an abbreviation.",
+        domain: "telco",
+        visibility: "public",
+        tags: [],
+      },
+    ]);
+
+    const { container } = renderHomePage();
+    await screen.findByText("Abbreviation only");
+    expect(container.querySelector(".dataset-card__icon path")?.getAttribute("d")).not.toBe(TELECOM_ICON_PATH_D);
   });
 });
 

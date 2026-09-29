@@ -28,7 +28,6 @@ from pipeline.training import (
     METRICS_ARTIFACT_FILENAME,
     NATIVE_CONTINUOUS_REGRESSION_ANALYTICAL_VISUALIZATIONS_VERSION,
     NATIVE_CONTINUOUS_REGRESSION_HGB_PERMUTATION_IMPORTANCE_N_REPEATS,
-    NATIVE_CONTINUOUS_REGRESSION_HGB_PERMUTATION_IMPORTANCE_SCORING,
     NATIVE_CONTINUOUS_REGRESSION_METRIC_NAMES,
     NATIVE_CONTINUOUS_REGRESSION_RESULT_SEMANTICS_SCHEMA_VERSION,
     NATIVE_CONTINUOUS_REGRESSION_TRAINING_METRICS_VERSION,
@@ -303,8 +302,9 @@ def test_hist_gradient_boosting_feature_importance_uses_permutation_importance(
     assert method["source"] == "sklearn.inspection.permutation_importance"
     assert method["method"] == "permutation_importance"
     assert method["population_kind"] == "final_fit_train_plus_validation"
-    assert method["scoring"] == NATIVE_CONTINUOUS_REGRESSION_HGB_PERMUTATION_IMPORTANCE_SCORING
-    assert method["scoring"] == "neg_mean_absolute_error"
+    # Scored by the fixture contract's own primary metric (r2), resolved
+    # through the canonical metric identity registry.
+    assert method["scoring"] == "r2"
     assert method["n_repeats"] == NATIVE_CONTINUOUS_REGRESSION_HGB_PERMUTATION_IMPORTANCE_N_REPEATS
     assert method["n_repeats"] == 5
     assert method["random_seed"] == 13
@@ -354,7 +354,9 @@ def test_hist_gradient_boosting_permutation_importance_population_is_train_plus_
     assert captured["row_count"] < 150  # never the full 150-row prepared dataset either
 
     kwargs = captured["kwargs"]
-    assert kwargs["scoring"] == "neg_mean_absolute_error"
+    assert kwargs["scoring"] == "r2"
+    assert parameter_record["training_parameters"]["permutation_importance_metric"] == "r2"
+    assert parameter_record["training_parameters"]["permutation_importance_scorer"] == "r2"
     assert kwargs["n_repeats"] == 5
     assert kwargs["random_state"] == 13
     assert kwargs["n_jobs"] == 1
@@ -974,3 +976,39 @@ def test_stratified_split_strategy_fails_closed_for_continuous_regression(
     with pytest.raises(TrainingInputError) as excinfo:
         train_from_paths(contract_path, dataset_path, dataset_slug="synthetic-regression-fixture")
     assert excinfo.value.code == "invalid_split_policy"
+
+
+@pytest.mark.parametrize(
+    ("primary_metric", "expected_scorer"),
+    [("mae", "neg_mean_absolute_error"), ("rmse", "neg_root_mean_squared_error"), ("r2", "r2")],
+)
+def test_hist_gradient_boosting_permutation_scorer_derives_from_contract_primary_metric(
+    fixed_training_environment: Path, tmp_path: Path, primary_metric: str, expected_scorer: str,
+) -> None:
+    contract_path, dataset_path = _write_valid_inputs(tmp_path, model_family="hist_gradient_boosting")
+    contract = json.loads(contract_path.read_text())
+    contract["primary_metric"] = primary_metric
+    contract["secondary_metrics"] = [name for name in ("mae", "rmse", "r2") if name != primary_metric]
+    contract_path.write_text(json.dumps(contract))
+    result = train_from_paths(
+        contract_path, dataset_path, dataset_slug="synthetic-regression-fixture", run_id="train-20260819T000000Z",
+    )
+    output_directory = fixed_training_environment / result.output_directory
+    artifact = json.loads((output_directory / ANALYTICAL_VISUALIZATIONS_FILENAME).read_text())
+    record = json.loads((output_directory / TRAINING_PARAMETER_RECORD_FILENAME).read_text())
+
+    assert artifact["feature_importance_method"]["scoring"] == expected_scorer
+    assert record["training_parameters"]["permutation_importance_metric"] == primary_metric
+    assert record["training_parameters"]["permutation_importance_scorer"] == expected_scorer
+    if jsonschema is not None:
+        jsonschema.validate(artifact, json.loads(ANALYTICAL_VISUALIZATIONS_SCHEMA_PATH.read_text()))
+        jsonschema.validate(record, json.loads(TRAINING_PARAMETER_RECORD_SCHEMA_PATH.read_text()))
+
+
+def test_direct_importance_families_record_no_permutation_scorer(
+    fixed_training_environment: Path, tmp_path: Path,
+) -> None:
+    _, output_directory = _run(fixed_training_environment, tmp_path, model_family="gradient_boosting")
+    record = json.loads((output_directory / TRAINING_PARAMETER_RECORD_FILENAME).read_text())
+    assert "permutation_importance_metric" not in record["training_parameters"]
+    assert "permutation_importance_scorer" not in record["training_parameters"]

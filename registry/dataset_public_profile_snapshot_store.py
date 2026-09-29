@@ -53,10 +53,10 @@ result. No evidence file is created or replaced on a rejected publish.
 
 import json
 import re
-import shutil
 from datetime import date, datetime, timezone
 from pathlib import Path
 
+from registry.file_backup import backup_file_contents
 from registry.dataset_public_profile_snapshot_evidence import write_snapshot_evidence
 from registry.dataset_public_profile_store import (
     ProfileDraftNotFoundError,
@@ -488,7 +488,7 @@ def _publish_profile(
     path = _snapshot_path(dataset_slug, repo_root)
     if path.is_file():
         backup_path = path.parent / f"{path.name}.previous"
-        shutil.copy2(path, backup_path)
+        backup_file_contents(path, backup_path)
 
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(candidate, indent=2, ensure_ascii=False), encoding="utf-8")

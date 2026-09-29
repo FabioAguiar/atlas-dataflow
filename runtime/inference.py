@@ -104,6 +104,11 @@ _PROBABILITY_SUM_TOLERANCE = 1e-6
 
 _RISK_BAND_IDS = ("low", "medium", "high")
 
+# The three closed family sets below mirror pipeline/model_families.py's
+# governed_result_problem_types (the model-family authority). The runtime
+# layer is deployed without pipeline/, so they are kept as literals here and
+# tests/test_model_family_authority.py proves they equal the authority.
+#
 # Project Spec S0192: the closed set of governed binary result model
 # families accepted by project_result_contract's result_semantics
 # validation -- the internal M25-02 families plus hist_gradient_boosting,

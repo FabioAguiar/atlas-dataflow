@@ -76,6 +76,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from pipeline import metric_identity, model_families
 from pipeline.authoring_contracts import validate_authoring_contracts
 from pipeline.discovery_evidence import (
     build_binary_result_semantics_intent,
@@ -573,48 +574,34 @@ EXECUTION_CONTRACT_BOUNDARY_CONFIRMATIONS = {
     "model_family_selected": False,
 }
 
-# Training-policy fields this materialization populates with conservative,
-# disclosed repository-standard defaults whenever the upstream modeling
-# intent supplies no reviewed value for them (e.g. `metric_candidates: []`,
-# `split_policy_candidate: null`). Listed explicitly in the materialization
-# evidence rather than silently presented as reviewed policy.
-_POLICY_DEFAULT_FIELDS = (
-    "categorical_encoding_policy",
-    "numeric_handling",
-    "allowed_transformations",
-    "split_policy",
-    "primary_metric",
-    "secondary_metrics",
-    "modeling_constraints",
-)
-
-
 # ---------------------------------------------------------------------------
 # Reviewed native training policy validation and materialization
 # (Project Spec S0216)
 #
-# `_validate_training_policy_intent` strictly validates an optional, reviewed
+# `_validate_training_policy_intent` strictly validates the reviewed
 # `training_policy_intent` object (`pipeline.discovery_evidence
-# .build_dataset_modeling_intent`'s optional field) before it may ever
-# replace `_POLICY_DEFAULT_FIELDS`'s repository-standard defaults. Either the
-# complete approved policy is accepted (every execution-only field present
-# and schema-compatible) or it is rejected outright with a concrete reason --
-# there is no partial/field-by-field fallback from a partially supplied
-# approved policy. Absence of `training_policy_intent` entirely is not a
-# validation failure; that is the existing, unchanged legacy-defaults path
-# (`_build_execution_contract`) and this validator is never consulted for it.
+# .build_dataset_modeling_intent`'s field) that every execution_contract.v1
+# policy field is materialized from. Either the complete approved policy is
+# accepted (every execution-only field present and schema-compatible) or it
+# is rejected outright with a concrete reason -- there is no partial/
+# field-by-field fallback from a partially supplied approved policy, and no
+# default policy at all: an absent `training_policy_intent` fails closed in
+# `_build_execution_contract` before this validator is consulted.
 # ---------------------------------------------------------------------------
 
-_TRAINING_POLICY_METRIC_VOCABULARY = frozenset({
-    "roc_auc", "f1", "accuracy", "log_loss", "pr_auc", "average_precision",
-    "precision", "recall", "f2", "balanced_accuracy", "brier_score",
-    "f1_macro", "f1_weighted", "precision_macro", "recall_macro",
-    "r2", "mae", "rmse",
-})
-_TRAINING_POLICY_MODEL_FAMILY_VOCABULARY = frozenset({
-    "logistic_regression", "gradient_boosting", "random_forest",
-    "xgboost", "lightgbm", "hist_gradient_boosting",
-})
+# Every native-training metric name applicable to a tabular (v1) problem
+# type, derived from the canonical metric identity registry.
+_TRAINING_POLICY_METRIC_VOCABULARY = metric_identity.training_metric_vocabulary(
+    metric_identity.TABULAR_PROBLEM_TYPES
+)
+# Only families Atlas can actually train natively for a tabular problem type,
+# derived from the model-family authority (pipeline/model_families.py).
+# xgboost/lightgbm were never trainable and are no longer offered (they
+# survive only as historical read-only schema vocabulary for already-written
+# training records).
+_TRAINING_POLICY_MODEL_FAMILY_VOCABULARY = model_families.native_trainable_family_ids_for_any(
+    model_families.TABULAR_PROBLEM_TYPES
+)
 _TRAINING_POLICY_NUMERIC_HANDLING_VOCABULARY = frozenset({"standardize", "normalize", "passthrough"})
 _TRAINING_POLICY_CATEGORICAL_ENCODING_VOCABULARY = frozenset({"onehot", "ordinal", "target_encode", "binary"})
 _TRAINING_POLICY_TRANSFORMATION_VOCABULARY = frozenset({"log1p", "sqrt", "clip", "passthrough"})
@@ -657,10 +644,12 @@ _HGB_REGRESSION_OPTIONAL_HYPERPARAMETERS = frozenset({"early_stopping"})
 _HGB_REGRESSION_ALLOWED_HYPERPARAMETERS = (
     _HGB_REGRESSION_REQUIRED_HYPERPARAMETERS | _HGB_REGRESSION_OPTIONAL_HYPERPARAMETERS
 )
-_CONTINUOUS_REGRESSION_METRIC_VOCABULARY = frozenset({"r2", "mae", "rmse"})
-_CONTINUOUS_REGRESSION_FIXED_FAMILY_VOCABULARY = frozenset({
-    "gradient_boosting", "random_forest", "hist_gradient_boosting",
-})
+_CONTINUOUS_REGRESSION_METRIC_VOCABULARY = metric_identity.training_metric_vocabulary({"continuous_regression"})
+_CONTINUOUS_REGRESSION_FIXED_FAMILY_VOCABULARY = frozenset(
+    model_families.native_trainable_family_ids(
+        model_families.CONTINUOUS_REGRESSION, model_families.FIXED_CONFIGURATION
+    )
+)
 # Project Spec S0258: the bounded binary-classification metric vocabulary
 # actually computed by pipeline/training.py's governed native binary
 # fixed-configuration trainer (roc_auc/f1/accuracy/log_loss/pr_auc) -- never
@@ -689,13 +678,10 @@ class TrainingPolicyValidationError(ValueError):
     """Raised when a supplied `training_policy_intent` is present but not a
     complete, approved, schema-compatible reviewed native training policy.
 
-    Never raised for an absent `training_policy_intent` on a binary/
-    multiclass execution contract -- that case uses the unchanged legacy
-    derivation defaults instead. Project Spec S0223 adds the one exception:
-    an absent `training_policy_intent` alongside a present
-    `continuous_regression_result_semantics_intent` also raises this error,
-    since continuous regression can never inherit the legacy classification
-    training defaults.
+    Also raised for an absent `training_policy_intent` on any
+    execution_contract.v1 (binary, multiclass, or continuous regression):
+    Atlas never infers default training policy fields, so a missing policy
+    fails closed with this same error instead of materializing a contract.
     """
 
     def __init__(self, reasons: list[str]) -> None:
@@ -1060,7 +1046,7 @@ def _materialize_training_policy_fields(modeling_intent: dict[str, Any]) -> dict
 
     Raises `TrainingPolicyValidationError` when `training_policy_intent` is
     present but fails strict validation -- a present-but-invalid policy is
-    never silently replaced by the legacy defaults.
+    never silently replaced by default values.
     """
     training_policy_intent = modeling_intent.get("training_policy_intent")
     if training_policy_intent is None:
@@ -1904,6 +1890,20 @@ def _materialize_result_semantics(
     return result_semantics, evidence
 
 
+def _requested_tabular_problem_type(modeling_intent: dict[str, Any]) -> str:
+    """Name the tabular problem type a modeling intent requests, for
+    fail-closed diagnostics only (never used to select policy values)."""
+    for key, problem_type in (
+        ("continuous_regression_result_semantics_intent", "continuous regression"),
+        ("multiclass_result_semantics_intent", "multiclass classification"),
+        ("binary_result_semantics_intent", "binary classification"),
+    ):
+        if isinstance(modeling_intent.get(key), dict):
+            return problem_type
+    task_type = (modeling_intent.get("target_intent") or {}).get("task_type")
+    return f"task_type {task_type!r}" if task_type else "an unspecified tabular problem type"
+
+
 def _build_execution_contract(
     modeling_intent: dict[str, Any],
     discovery_evidence: dict[str, Any],
@@ -1917,9 +1917,8 @@ def _build_execution_contract(
     (`identifier_and_ignored_columns`), or discovery evidence has no
     recognised `inferred_type` for it, or an unresolved (not
     'explicit'/'inferred_approved') missing-value-handling review item names
-    it -- this is how a still-pending blank-value concern (e.g.
-    TotalCharges) is excluded from execution scope instead of being silently
-    approved. Per-feature `type` is grounded in discovery evidence's own
+    it -- this is how a still-pending blank-value concern is excluded from
+    execution scope instead of being silently approved. Per-feature `type` is grounded in discovery evidence's own
     `inferred_type`, using the same compatibility mapping enforced by
     `pipeline/validate_contract_consistency.py`, so a materialized contract
     always passes that consistency check by construction.
@@ -2030,73 +2029,33 @@ def _build_execution_contract(
         modeling_intent, semantic_intent
     )
 
-    # Project Spec S0223: a requested continuous-regression result intent
-    # can never inherit the legacy binary/multiclass classification training
-    # defaults below -- it must fail closed before the historical fallback
-    # policy is ever applied, requiring an explicit approved
-    # training_policy_intent instead. This check only looks at whether a
-    # continuous_regression_result_semantics_intent object is present on the
-    # modeling intent (not whether it is approved or materializes), and
-    # never affects binary/multiclass callers, which retain the historical
-    # default-policy path unchanged.
-    if (
-        isinstance(modeling_intent.get("continuous_regression_result_semantics_intent"), dict)
-        and modeling_intent.get("training_policy_intent") is None
-    ):
+    # An execution_contract.v1 contract is only ever materialized from an
+    # explicit, reviewed training_policy_intent -- for every tabular problem
+    # type (binary, multiclass, continuous regression). There is no implicit
+    # default policy: the former repository-standard fallback (derived from
+    # the first binary dataset's cycle) let a new dataset silently inherit
+    # another dataset's split, metrics, and model families, so an absent
+    # policy now fails closed before any contract field is populated
+    # (generalizing the S0223 continuous-regression guard).
+    # `_materialize_training_policy_fields` still raises
+    # `TrainingPolicyValidationError` for a present-but-invalid policy.
+    if modeling_intent.get("training_policy_intent") is None:
         raise TrainingPolicyValidationError(
             [
-                "continuous_regression_result_semantics_intent is present but "
-                "training_policy_intent is absent: continuous regression requires an "
-                "explicit approved training policy and cannot inherit legacy "
-                "classification training defaults"
+                "training_policy_intent is absent: execution_contract.v1 requires an "
+                f"explicit approved training policy for {_requested_tabular_problem_type(modeling_intent)} "
+                "and never infers default training policy fields"
             ]
         )
 
-    # Project Spec S0216: a reviewed, approved training_policy_intent
-    # replaces the repository-standard execution-only policy defaults below
-    # wholesale (never field-by-field) once it passes strict validation.
-    # Absence preserves the historical Telco-derived defaults unchanged
-    # (Desired Change F); `_materialize_training_policy_fields` raises
-    # `TrainingPolicyValidationError` for a present-but-invalid policy
-    # rather than silently falling back to these defaults.
     training_policy_fields = _materialize_training_policy_fields(modeling_intent)
-
-    if training_policy_fields is not None:
-        categorical_encoding_policy = training_policy_fields["categorical_encoding_policy"]
-        numeric_handling = training_policy_fields["numeric_handling"]
-        allowed_transformations = training_policy_fields["allowed_transformations"]
-        split_policy = training_policy_fields["split_policy"]
-        primary_metric = training_policy_fields["primary_metric"]
-        secondary_metrics = training_policy_fields["secondary_metrics"]
-        modeling_constraints = training_policy_fields["modeling_constraints"]
-    else:
-        categorical_encoding_policy = "onehot"
-        numeric_handling = "standardize"
-        allowed_transformations = ["passthrough"]
-        split_policy = {
-            "strategy": "stratified",
-            "train_ratio": 0.7,
-            "val_ratio": 0.15,
-            "test_ratio": 0.15,
-        }
-        primary_metric = "roc_auc"
-        secondary_metrics = ["f1", "pr_auc"]
-        modeling_constraints = {
-            # Full schema-permitted family space -- modeling_intent records
-            # no model family constraint (`metric_candidates: []`), so this
-            # deliberately narrows nothing beyond what the schema itself
-            # already scopes to Atlas classification families, rather than
-            # selecting a specific model family or candidate.
-            "allowed_model_families": [
-                "logistic_regression",
-                "gradient_boosting",
-                "random_forest",
-                "xgboost",
-                "lightgbm",
-            ],
-            "no_automl": True,
-            "max_training_time_seconds": None,
-        }
+    categorical_encoding_policy = training_policy_fields["categorical_encoding_policy"]
+    numeric_handling = training_policy_fields["numeric_handling"]
+    allowed_transformations = training_policy_fields["allowed_transformations"]
+    split_policy = training_policy_fields["split_policy"]
+    primary_metric = training_policy_fields["primary_metric"]
+    secondary_metrics = training_policy_fields["secondary_metrics"]
+    modeling_constraints = training_policy_fields["modeling_constraints"]
 
     contract: dict[str, Any] = {
         "contract_version": EXECUTION_CONTRACT_CONTRACT_VERSION,
@@ -2107,10 +2066,10 @@ def _build_execution_contract(
         "required_columns": required_columns,
         "optional_columns": optional_columns,
         "feature_definitions": feature_definitions,
-        # No feature currently carries an approved missing-value strategy --
-        # TotalCharges (the only column with real missing values) is excluded
-        # from feature_columns above rather than assigned a fabricated
-        # strategy here.
+        # Atlas-wide design: missing values are resolved upstream by the
+        # governed preparation recipe, never by a training-time imputation
+        # strategy fabricated here (training blocks on unresolved missing
+        # values instead).
         "missing_value_policy": {},
         "categorical_encoding_policy": categorical_encoding_policy,
         "numeric_handling": numeric_handling,
@@ -2140,7 +2099,7 @@ def _build_execution_contract(
 # intent, a valid `dataset-semantic-intent.v4`, and a valid
 # `candidate-preparation-recipe.v2`; the presence of a forecasting result
 # intent without compatible v4/v2 predecessors fails closed before any
-# historical default is ever applied.
+# v1 tabular field is ever computed.
 # ---------------------------------------------------------------------------
 
 EXECUTION_CONTRACT_V2_CONTRACT_VERSION = "execution_contract.v2"
@@ -2828,9 +2787,10 @@ def _build_execution_contract_materialization_evidence(
             "rejected_categorical_domain_declarations": rejected_categorical_domain_declarations,
             "values_inferred_during_materialization": False,
         },
-        "policy_defaults_requiring_future_review": (
-            [] if training_policy_intent_present else list(_POLICY_DEFAULT_FIELDS)
-        ),
+        # Retained for evidence-format compatibility: an execution_contract.v1
+        # is never materialized with defaulted policy fields any more (an
+        # absent training_policy_intent fails closed), so this is always empty.
+        "policy_defaults_requiring_future_review": [],
         "training_policy_materialization": training_policy_materialization,
         "result_semantics_materialization": result_semantics_evidence,
         "execution_contract_boundary_confirmations": dict(EXECUTION_CONTRACT_BOUNDARY_CONFIRMATIONS),
@@ -2855,7 +2815,11 @@ def materialize_execution_contract(
     semantic_intent_relative_path: str | Path | None = None,
     generated_at: str | None = None,
 ) -> dict[str, Any]:
-    """Build, schema-validate, and write the official Telco execution contract.
+    """Build, schema-validate, and write a dataset's execution contract.
+
+    Dataset-agnostic: dispatches to execution_contract.v1 (tabular) or
+    execution_contract.v2 (univariate forecasting) purely from the governed
+    modeling intent, never from a dataset slug.
 
     Every field is read from already-built upstream objects
     (`modeling_intent`, `discovery_evidence`, `preparation_recipe`) passed in

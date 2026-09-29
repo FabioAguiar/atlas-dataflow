@@ -27,9 +27,9 @@ explicit scope for a later issue.
 
 import json
 import re
-import shutil
 from pathlib import Path
 
+from registry.file_backup import backup_file_contents
 from registry.dataset_public_profile_validate import validate_profile_references
 
 DATASET_SLUG_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
@@ -254,7 +254,7 @@ def update_draft(dataset_slug: str, profile: dict, repo_root: Path | None = None
         return {"updated": False, "path": None, "errors": errors}
 
     backup_path = path.parent / f"{path.name}.previous"
-    shutil.copy2(path, backup_path)
+    backup_file_contents(path, backup_path)
     path.write_text(json.dumps(profile, indent=2, ensure_ascii=False), encoding="utf-8")
 
     return {"updated": True, "path": str(path.relative_to(repo_root)), "errors": []}

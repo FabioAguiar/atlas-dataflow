@@ -579,6 +579,28 @@ def _approved_binary_result_semantics_intent(**overrides):
     return build_binary_result_semantics_intent(**kwargs)
 
 
+def _explicit_evaluate_allowed_families_training_policy_intent(**overrides) -> dict:
+    """An explicit, approved multi-family (evaluate_allowed_families) tabular
+    training policy. Synthetic fixtures declare their policy explicitly:
+    execution_contract.v1 never infers default training policy fields."""
+    policy = {
+        "review_status": "approved",
+        "numeric_handling": "standardize",
+        "categorical_encoding_policy": "onehot",
+        "allowed_transformations": ["passthrough"],
+        "split_policy": {"strategy": "stratified", "train_ratio": 0.7, "val_ratio": 0.15, "test_ratio": 0.15},
+        "primary_metric": "roc_auc",
+        "secondary_metrics": ["f1", "pr_auc"],
+        "modeling_constraints": {
+            "allowed_model_families": ["logistic_regression", "gradient_boosting", "random_forest"],
+            "no_automl": True,
+            "max_training_time_seconds": None,
+        },
+    }
+    policy.update(overrides)
+    return policy
+
+
 def _modeling_intent_for_result_semantics(binary_result_semantics_intent=None) -> dict:
     return {
         "artifact_type": "dataset_modeling_intent",
@@ -601,6 +623,7 @@ def _modeling_intent_for_result_semantics(binary_result_semantics_intent=None) -
         "initial_feature_candidates": ["age", "channel", "opted_in"],
         "categorical_domain_intent": [],
         "binary_result_semantics_intent": binary_result_semantics_intent,
+        "training_policy_intent": _explicit_evaluate_allowed_families_training_policy_intent(),
     }
 
 
@@ -808,6 +831,7 @@ def _valid_semantic_intent_v2(classes=None) -> dict:
 def _modeling_intent_for_multiclass_result_semantics(multiclass_result_semantics_intent=None) -> dict:
     intent = _modeling_intent_for_result_semantics(binary_result_semantics_intent=None)
     intent["multiclass_result_semantics_intent"] = multiclass_result_semantics_intent
+    intent["training_policy_intent"] = _approved_fixed_configuration_training_policy_intent()
     return intent
 
 
@@ -1684,15 +1708,37 @@ def test_execution_contract_continuous_regression_hgb_policy_validates_against_s
     jsonschema.validate(contract, schema)
 
 
-def test_execution_contract_binary_multiclass_callers_without_training_policy_retain_historical_defaults_alongside_continuous_regression_addition():
-    # Binary/multiclass callers that omit training_policy_intent are
-    # unaffected by the new S0223 fail-closed condition, which only fires
-    # when a continuous_regression_result_semantics_intent is present.
+@pytest.mark.parametrize(
+    ("result_intent_key", "expected_problem_type"),
+    [
+        ("binary_result_semantics_intent", "binary classification"),
+        ("multiclass_result_semantics_intent", "multiclass classification"),
+        ("continuous_regression_result_semantics_intent", "continuous regression"),
+    ],
+)
+def test_execution_contract_v1_without_training_policy_fails_closed_for_every_tabular_problem_type(
+    result_intent_key, expected_problem_type
+):
+    # execution_contract.v1 never infers training policy fields for any
+    # tabular problem type: there are no implicit (formerly Telco-derived)
+    # defaults for binary, multiclass, or continuous regression.
     modeling_intent = _modeling_intent_for_result_semantics(binary_result_semantics_intent=None)
+    modeling_intent[result_intent_key] = {"review_status": "approved"}
     modeling_intent["training_policy_intent"] = None
-    contract = _build_execution_contract(modeling_intent, _discovery_evidence_for_result_semantics(), None)
-    assert contract["numeric_handling"] == "standardize"
-    assert contract["primary_metric"] == "roc_auc"
+    with pytest.raises(TrainingPolicyValidationError) as exc:
+        _build_execution_contract(modeling_intent, _discovery_evidence_for_result_semantics(), None)
+    assert any(
+        "training_policy_intent is absent" in reason and expected_problem_type in reason
+        for reason in exc.value.reasons
+    )
+
+
+def test_execution_contract_v1_without_training_policy_or_result_intent_fails_closed():
+    modeling_intent = _modeling_intent_for_result_semantics(binary_result_semantics_intent=None)
+    del modeling_intent["training_policy_intent"]
+    with pytest.raises(TrainingPolicyValidationError) as exc:
+        _build_execution_contract(modeling_intent, _discovery_evidence_for_result_semantics(), None)
+    assert "training_policy_intent is absent" in str(exc.value)
 
 
 # --- Project Spec S0216: reviewed native training-policy validation and
@@ -1819,13 +1865,34 @@ def test_execution_contract_present_but_invalid_training_policy_raises_not_falls
         _build_execution_contract(modeling_intent, _discovery_evidence_for_result_semantics(), None)
 
 
-def test_execution_contract_legacy_defaults_unchanged_when_training_policy_absent():
+def test_execution_contract_never_defaults_policy_fields_when_training_policy_absent():
     modeling_intent = _modeling_intent_with_training_policy(None)
+    with pytest.raises(TrainingPolicyValidationError):
+        _build_execution_contract(modeling_intent, _discovery_evidence_for_result_semantics(), None)
+
+
+def test_execution_contract_materializes_explicit_policy_values_verbatim():
+    policy = _explicit_evaluate_allowed_families_training_policy_intent(
+        numeric_handling="passthrough", primary_metric="pr_auc", secondary_metrics=["roc_auc"],
+    )
+    modeling_intent = _modeling_intent_with_training_policy(policy)
     contract = _build_execution_contract(modeling_intent, _discovery_evidence_for_result_semantics(), None)
 
-    assert contract["numeric_handling"] == "standardize"
-    assert contract["primary_metric"] == "roc_auc"
+    assert contract["numeric_handling"] == "passthrough"
+    assert contract["primary_metric"] == "pr_auc"
+    assert contract["secondary_metrics"] == ["roc_auc"]
+    assert contract["modeling_constraints"]["allowed_model_families"] == [
+        "logistic_regression", "gradient_boosting", "random_forest",
+    ]
     assert "selection_mode" not in contract["modeling_constraints"]
+
+
+@pytest.mark.parametrize("family", ["xgboost", "lightgbm"])
+def test_training_policy_rejects_model_families_atlas_cannot_train(family):
+    policy = _explicit_evaluate_allowed_families_training_policy_intent()
+    policy["modeling_constraints"]["allowed_model_families"] = ["logistic_regression", family]
+    reasons = _validate_training_policy_intent(policy)
+    assert any("unknown model family" in reason for reason in reasons)
 
 
 def test_execution_contract_with_training_policy_still_validates_against_schema():
@@ -2026,18 +2093,26 @@ def test_execution_contract_binary_fixed_policy_still_validates_against_schema()
 
 
 def test_historical_binary_evaluate_allowed_families_selection_behavior_unchanged():
-    """Acceptance criterion: the historical binary evaluate_allowed_families
-    path (no training_policy_intent supplied at all) remains completely
-    unchanged even though binary_result_semantics_intent is present and
-    approved -- fixed_configuration is never forced onto binary the way it
-    is for continuous_regression."""
-    modeling_intent = _modeling_intent_with_binary_training_policy(training_policy_intent=None)
+    """The binary evaluate_allowed_families selection path remains fully
+    supported when explicitly declared, even though
+    binary_result_semantics_intent is present and approved --
+    fixed_configuration is never forced onto binary the way it is for
+    continuous_regression."""
+    modeling_intent = _modeling_intent_with_binary_training_policy(
+        training_policy_intent=_explicit_evaluate_allowed_families_training_policy_intent()
+    )
     contract = _build_execution_contract(modeling_intent, _discovery_evidence_for_result_semantics(), None)
 
     assert contract["numeric_handling"] == "standardize"
     assert contract["primary_metric"] == "roc_auc"
     assert "selection_mode" not in contract["modeling_constraints"]
     assert contract["result_semantics"]["schema_version"] == "binary-result-semantics.v1"
+
+
+def test_binary_result_intent_without_training_policy_fails_closed():
+    modeling_intent = _modeling_intent_with_binary_training_policy(training_policy_intent=None)
+    with pytest.raises(TrainingPolicyValidationError):
+        _build_execution_contract(modeling_intent, _discovery_evidence_for_result_semantics(), None)
 
 
 # ---------------------------------------------------------------------------
@@ -2382,11 +2457,16 @@ def _modeling_intent_for_forecasting(
     multiclass_result_semantics_intent=None,
     continuous_regression_result_semantics_intent=None,
 ) -> dict:
-    training_policy_intent = (
-        _approved_continuous_regression_training_policy_intent()
-        if continuous_regression_result_semantics_intent is not None
-        else None
-    )
+    # A tabular result intent alongside forecasting falls through to the v1
+    # conflict path, which (like every v1 contract) needs an explicit policy.
+    if continuous_regression_result_semantics_intent is not None:
+        training_policy_intent = _approved_continuous_regression_training_policy_intent()
+    elif multiclass_result_semantics_intent is not None:
+        training_policy_intent = _approved_fixed_configuration_training_policy_intent()
+    elif binary_result_semantics_intent is not None:
+        training_policy_intent = _explicit_evaluate_allowed_families_training_policy_intent()
+    else:
+        training_policy_intent = None
     return {
         "training_policy_intent": training_policy_intent,
         "artifact_type": "dataset_modeling_intent",
@@ -3360,3 +3440,81 @@ def test_materialize_execution_contract_writes_v2_and_v2_evidence(tmp_path):
         (tmp_path / "contracts/synthetic-series/execution-contract.json").read_text(encoding="utf-8")
     )
     assert written_contract["contract_version"] == "execution_contract.v2"
+
+
+# ---------------------------------------------------------------------------
+# Explicit training policies of the real registered datasets are unaffected by
+# the removal of the implicit (Telco-era) v1 default policy.
+# ---------------------------------------------------------------------------
+
+_REPO_ROOT_FOR_REAL_CONTRACTS = Path(__file__).parent.parent
+_POLICY_FIELDS_FROM_CONTRACT = (
+    "numeric_handling",
+    "categorical_encoding_policy",
+    "allowed_transformations",
+    "split_policy",
+    "primary_metric",
+    "secondary_metrics",
+    "modeling_constraints",
+)
+
+
+def _registered_real_dataset_slugs() -> list[str]:
+    registry = json.loads(
+        (_REPO_ROOT_FOR_REAL_CONTRACTS / "registry" / "datasets.json").read_text(encoding="utf-8")
+    )
+    return sorted(entry["dataset_slug"] for entry in registry["datasets"])
+
+
+def _real_contract(dataset_slug: str, name: str) -> dict:
+    return json.loads(
+        (_REPO_ROOT_FOR_REAL_CONTRACTS / "contracts" / dataset_slug / name).read_text(encoding="utf-8")
+    )
+
+
+@pytest.mark.parametrize("dataset_slug", _registered_real_dataset_slugs())
+def test_real_dataset_contract_was_materialized_without_any_defaulted_policy(dataset_slug):
+    contract = _real_contract(dataset_slug, "execution-contract.json")
+    evidence = _real_contract(dataset_slug, "execution-contract-materialization-evidence.json")
+    if contract["contract_version"] == "execution_contract.v2":
+        assert evidence["no_defaults_inferred"] is True
+        return
+    assert contract["contract_version"] == "execution_contract.v1"
+    assert evidence["training_policy_materialization"] == {
+        "reviewed_source_intent_present": True,
+        "materialized": True,
+    }
+    assert evidence["policy_defaults_requiring_future_review"] == []
+
+
+@pytest.mark.parametrize(
+    ("dataset_slug", "expected_primary_metric"),
+    [
+        ("telco-customer-churn", "roc_auc"),
+        ("dry-bean", "f1_macro"),
+        ("concrete-compressive-strength", "mae"),
+    ],
+)
+def test_real_v1_dataset_explicit_policy_still_materializes_identically(dataset_slug, expected_primary_metric):
+    contract = _real_contract(dataset_slug, "execution-contract.json")
+    assert contract["primary_metric"] == expected_primary_metric
+    policy = {"review_status": "approved"}
+    policy.update({field: contract[field] for field in _POLICY_FIELDS_FROM_CONTRACT})
+    problem_type = (contract.get("result_semantics") or {}).get("problem_type")
+    hint = problem_type if problem_type in ("binary_classification", "continuous_regression") else None
+    assert _validate_training_policy_intent(policy, problem_type_hint=hint) == []
+
+    modeling_intent = _modeling_intent_for_result_semantics(binary_result_semantics_intent=None)
+    if problem_type == "continuous_regression":
+        modeling_intent["continuous_regression_result_semantics_intent"] = {"review_status": "approved"}
+    modeling_intent["training_policy_intent"] = policy
+    rebuilt = _build_execution_contract(modeling_intent, _discovery_evidence_for_result_semantics(), None)
+    for field in _POLICY_FIELDS_FROM_CONTRACT:
+        assert rebuilt[field] == contract[field], field
+
+
+def test_real_forecasting_contract_keeps_its_own_v2_policy():
+    contract = _real_contract("nottem", "execution-contract.json")
+    assert contract["contract_version"] == "execution_contract.v2"
+    assert "primary_metric" not in contract
+    assert contract["training_policy"]["model_family"] == "deterministic_seasonal_trend_ols"

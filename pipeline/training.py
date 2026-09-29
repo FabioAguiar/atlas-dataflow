@@ -33,6 +33,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from pipeline import metric_identity, model_families
+
 
 PERMITTED_EXECUTION_CONTRACT_FIELDS = frozenset({
     "contract_version",
@@ -56,10 +58,10 @@ PERMITTED_EXECUTION_CONTRACT_FIELDS = frozenset({
     "result_semantics",
 })
 
-SUPPORTED_MODEL_FAMILIES = (
-    "logistic_regression",
-    "gradient_boosting",
-    "random_forest",
+# The binary evaluate_allowed_families candidate families, derived from the
+# model-family authority (pipeline/model_families.py) -- never a local list.
+SUPPORTED_MODEL_FAMILIES = model_families.native_trainable_family_ids(
+    model_families.BINARY_CLASSIFICATION, model_families.EVALUATE_ALLOWED_FAMILIES
 )
 
 SERIALIZER_NAME = "joblib"
@@ -78,20 +80,21 @@ CONTROLLED_ENTRYPOINT_PROVENANCE_VERSION = "controlled-entrypoint-provenance.v1"
 ANALYTICAL_VISUALIZATIONS_SCHEMA_VERSION = "analytical-visualizations.v1"
 FEATURE_IMPORTANCE_TOP_N = 10
 
-# Columns that must never enter training as a model feature, regardless of
-# what a given execution contract declares (Project Spec S0026). customerID
-# is a raw record identifier, never a predictive feature, for every dataset
-# this entrypoint has been asked to govern so far.
-PROHIBITED_TRAINING_FEATURE_COLUMNS = frozenset({"customerID"})
+# Columns that must never enter training as a model feature are declared by
+# the execution contract itself (Project Spec S0026): `ignored_columns` holds
+# every identifier/ignored column the governed modeling intent excluded
+# (semantic role "identifier" included). Training never keeps its own list of
+# concrete column names -- a dataset's identifier ("id", "RowNumber", ...) is
+# protected purely by its contract, with no code edit.
 
 # Accepted on-disk encodings for an execution-contract `boolean` feature type
-# (Project Spec S0026). Telco's own raw CSV alone uses two different
-# conventions for boolean-typed columns: SeniorCitizen as "0"/"1" and
-# Partner/Dependents as "Yes"/"No" (confirmed via discovery-evidence.json).
+# (Project Spec S0026): an Atlas-wide superset, since a single raw source can
+# mix conventions (e.g. "0"/"1" in one boolean column and "Yes"/"No" in
+# another).
 _BOOLEAN_ENCODED_VALUES = frozenset({"0", "1", "true", "false", "yes", "no", "t", "f", "y", "n"})
 
-# Project Spec S0224 adds mae/rmse (continuous-regression, lower_is_better).
-_LOWER_IS_BETTER_METRICS = frozenset({"log_loss", "mae", "rmse"})
+# Metric direction comes from the canonical metric identity registry.
+_LOWER_IS_BETTER_METRICS = metric_identity.lower_is_better_training_metrics()
 
 # Project Spec S0244: execution_contract.v2 univariate-forecasting dispatch
 # identities and the closed forecasting training-interface field/metric
@@ -354,17 +357,35 @@ def _load_execution_contract(path: Path) -> dict[str, Any]:
             "execution contract feature_columns must be a non-empty array.",
             field="feature_columns",
         )
-    prohibited = PROHIBITED_TRAINING_FEATURE_COLUMNS.intersection(reduced["feature_columns"])
+    prohibited = _contract_prohibited_feature_columns(contract).intersection(reduced["feature_columns"])
     if prohibited:
         raise TrainingInputError(
             "prohibited_training_feature",
             (
-                "execution contract feature_columns must not include prohibited "
-                f"columns: {sorted(prohibited)}."
+                "execution contract feature_columns must not include columns the contract "
+                f"itself declares as ignored/identifier columns: {sorted(prohibited)}."
             ),
             field="feature_columns",
         )
     return reduced
+
+
+def _contract_prohibited_feature_columns(contract: dict[str, Any]) -> frozenset[str]:
+    """Columns the execution contract excludes from modeling (its
+    `ignored_columns`, which carries every identifier column). Contract
+    authority only -- never a hardcoded column name."""
+    ignored_columns = contract.get("ignored_columns")
+    if ignored_columns is None:
+        return frozenset()
+    if not isinstance(ignored_columns, list) or not all(
+        isinstance(column, str) for column in ignored_columns
+    ):
+        raise TrainingInputError(
+            "invalid_contract_field",
+            "execution contract ignored_columns must be an array of column names.",
+            field="ignored_columns",
+        )
+    return frozenset(ignored_columns)
 
 
 def _is_missing_dataset_value(value: Any) -> bool:
@@ -459,8 +480,8 @@ def _validate_missing_value_policy(
     A blank/missing value in a feature column is only acceptable when the
     execution contract's `missing_value_policy` carries an explicit entry
     naming how that column's missing values are handled (Project Spec
-    S0026) — for example Telco's own `TotalCharges` blanks, which are
-    single-space strings in the raw CSV, not empty strings. Silent
+    S0026) — including blanks that are whitespace-only strings in the raw
+    source rather than empty strings. Silent
     acceptance without a recorded policy decision is never permitted.
     """
     missing_value_policy = contract.get("missing_value_policy")
@@ -2600,9 +2621,8 @@ def train_from_paths(
 # explicit path references, whether `train_from_paths` is ready to be
 # invoked. An execution-contract draft (Project Spec S0014,
 # `execution_contract_draft.v1`) is always reported as not training-ready,
-# and any unresolved review items it already carries (for example
-# `TotalCharges` blank-value handling) are surfaced rather than silently
-# accepted.
+# and any unresolved review items it already carries (for example a pending
+# blank-value handling decision) are surfaced rather than silently accepted.
 # ---------------------------------------------------------------------------
 
 TRAINING_INVOCATION_READINESS_CONTRACT_VERSION = "training_invocation_readiness.v1"
@@ -3008,7 +3028,6 @@ NATIVE_MULTICLASS_METRIC_NAMES = (
 )
 NATIVE_MULTICLASS_MINIMUM_CLASS_COUNT = 3
 NATIVE_MULTICLASS_PERMUTATION_IMPORTANCE_N_REPEATS = 5
-NATIVE_MULTICLASS_PERMUTATION_IMPORTANCE_SCORING = "f1_macro"
 
 _HGB_REQUIRED_HYPERPARAMETER_FIELDS = frozenset({
     "class_weight", "l2_regularization", "learning_rate", "max_iter", "max_leaf_nodes", "min_samples_leaf",
@@ -3321,15 +3340,73 @@ def _permutation_feature_importance(
     return data, total_source_feature_count, omitted_count
 
 
+def _permutation_importance_scoring(contract: dict[str, Any], problem_type: str) -> tuple[str, str]:
+    """(metric, sklearn scorer) for governed permutation Feature Importance.
+
+    Derived from the execution contract's own primary_metric through the
+    canonical metric identity registry -- never a fixed per-problem-type
+    scorer -- so importance is ranked by the metric the contract optimizes.
+    Fails closed when the primary metric does not apply to the problem type
+    or has no scikit-learn scorer.
+    """
+    primary_metric = str(contract["primary_metric"])
+    try:
+        scorer = metric_identity.sklearn_scorer_for_training_metric(primary_metric, problem_type)
+    except metric_identity.MetricIdentityError as exc:
+        raise TrainingInputError(
+            "unsupported_permutation_importance_metric",
+            f"execution contract primary_metric cannot drive permutation Feature Importance: {exc}",
+            field="primary_metric",
+        ) from exc
+    return primary_metric, scorer
+
+
+# scikit-learn's built-in scorers for positive-class-sensitive binary metrics
+# assume pos_label=1; Atlas binary targets carry governed string class ids, so
+# those scorers are rebuilt bound to the contract's positive class. Keyed by
+# sklearn scorer name (an adapter, not a metric vocabulary): which metrics are
+# positive-class sensitive is declared by the canonical metric registry.
+_POSITIVE_CLASS_BOUND_SCORER_FUNCTIONS = {
+    "f1": ("f1_score", "predict"),
+    "precision": ("precision_score", "predict"),
+    "recall": ("recall_score", "predict"),
+    "average_precision": ("average_precision_score", ("decision_function", "predict_proba")),
+}
+
+
+def _positive_class_bound_scorer(metric_name: str, scorer_name: str, positive_class_id: Any) -> Any:
+    """The scorer to hand permutation_importance for a binary contract metric:
+    the scorer name itself when the metric does not depend on which class is
+    positive, otherwise an equivalent scorer bound to the governed positive
+    class."""
+    if not metric_identity.resolve_training_metric(metric_name).positive_class_sensitive:
+        return scorer_name
+    if scorer_name not in _POSITIVE_CLASS_BOUND_SCORER_FUNCTIONS:
+        raise TrainingInputError(
+            "unsupported_permutation_importance_metric",
+            f"no positive-class-bound scorer is available for {scorer_name!r}.",
+            field="primary_metric",
+        )
+    from sklearn import metrics as sk_metrics
+
+    function_name, response_method = _POSITIVE_CLASS_BOUND_SCORER_FUNCTIONS[scorer_name]
+    return sk_metrics.make_scorer(
+        getattr(sk_metrics, function_name),
+        response_method=response_method,
+        pos_label=positive_class_id,
+    )
+
+
 def _native_multiclass_permutation_importance(
     *, pipeline: Any, features: Any, target: Any, feature_columns: list[str], random_seed: int | None,
+    scoring: str,
 ) -> tuple[list[dict[str, Any]], int, int]:
     return _permutation_feature_importance(
         pipeline=pipeline,
         features=features,
         target=target,
         feature_columns=feature_columns,
-        scoring=NATIVE_MULTICLASS_PERMUTATION_IMPORTANCE_SCORING,
+        scoring=scoring,
         n_repeats=NATIVE_MULTICLASS_PERMUTATION_IMPORTANCE_N_REPEATS,
         random_seed=random_seed,
     )
@@ -3611,7 +3688,10 @@ def _train_native_multiclass_fixed_configuration(
     # Step 4: deterministic permutation Feature Importance on the
     # final-fit (train+validation) population -- descriptive model
     # interpretation, never used for candidate selection or hyperparameter
-    # tuning.
+    # tuning. Scored by the contract's own primary metric.
+    permutation_importance_metric, permutation_importance_scorer = _permutation_importance_scoring(
+        contract, "multiclass_classification"
+    )
     feature_importance_data, total_source_feature_count, omitted_source_feature_count = (
         _native_multiclass_permutation_importance(
             pipeline=final_pipeline,
@@ -3619,6 +3699,7 @@ def _train_native_multiclass_fixed_configuration(
             target=target.iloc[final_fit_indices],
             feature_columns=feature_columns,
             random_seed=random_seed,
+            scoring=permutation_importance_scorer,
         )
     )
 
@@ -3827,6 +3908,8 @@ def _train_native_multiclass_fixed_configuration(
             "random_seed": random_seed,
             "primary_metric": str(contract["primary_metric"]),
             "secondary_metrics": list(contract.get("secondary_metrics") or []),
+            "permutation_importance_metric": permutation_importance_metric,
+            "permutation_importance_scorer": permutation_importance_scorer,
             "modeling_constraints": _json_safe(modeling_constraints),
             "selection_mode": "fixed_configuration",
             "model_selection_performed": False,
@@ -3973,7 +4056,6 @@ _HGB_REGRESSION_ALLOWED_HYPERPARAMETER_FIELDS = (
     _HGB_REGRESSION_REQUIRED_HYPERPARAMETER_FIELDS | frozenset({"early_stopping"})
 )
 NATIVE_CONTINUOUS_REGRESSION_HGB_PERMUTATION_IMPORTANCE_N_REPEATS = 5
-NATIVE_CONTINUOUS_REGRESSION_HGB_PERMUTATION_IMPORTANCE_SCORING = "neg_mean_absolute_error"
 
 
 def _validate_fixed_continuous_regression_configuration(
@@ -4395,6 +4477,7 @@ def _native_continuous_regression_feature_importance(
     final_fit_features: Any = None,
     final_fit_target: Any = None,
     random_seed: int | None = None,
+    permutation_scoring: str | None = None,
 ) -> tuple[list[dict[str, Any]], int, int]:
     """gradient_boosting/random_forest use the direct estimator.feature_importances_
     path unchanged (Desired Change I). hist_gradient_boosting (Project Spec
@@ -4407,7 +4490,7 @@ def _native_continuous_regression_feature_importance(
             features=final_fit_features,
             target=final_fit_target,
             feature_columns=feature_columns,
-            scoring=NATIVE_CONTINUOUS_REGRESSION_HGB_PERMUTATION_IMPORTANCE_SCORING,
+            scoring=permutation_scoring,
             n_repeats=NATIVE_CONTINUOUS_REGRESSION_HGB_PERMUTATION_IMPORTANCE_N_REPEATS,
             random_seed=random_seed,
         )
@@ -4525,6 +4608,7 @@ def _build_native_continuous_regression_analytical_visualizations_artifact(
     final_fit_features: Any = None,
     final_fit_target: Any = None,
     random_seed: int | None = None,
+    permutation_scoring: str | None = None,
 ) -> dict[str, Any]:
     target_chart_data, target_distribution_method = _native_continuous_regression_target_histogram_chart(
         rows, target_column, max_bins=NATIVE_CONTINUOUS_REGRESSION_MAX_HISTOGRAM_BINS,
@@ -4536,6 +4620,7 @@ def _build_native_continuous_regression_analytical_visualizations_artifact(
         final_fit_features=final_fit_features,
         final_fit_target=final_fit_target,
         random_seed=random_seed,
+        permutation_scoring=permutation_scoring,
     )
     actual_vs_predicted = _native_continuous_regression_actual_vs_predicted(
         y_true=final_test_actual,
@@ -4587,7 +4672,7 @@ def _build_native_continuous_regression_analytical_visualizations_artifact(
                 "source": "sklearn.inspection.permutation_importance",
                 "method": "permutation_importance",
                 "population_kind": "final_fit_train_plus_validation",
-                "scoring": NATIVE_CONTINUOUS_REGRESSION_HGB_PERMUTATION_IMPORTANCE_SCORING,
+                "scoring": permutation_scoring,
                 "n_repeats": NATIVE_CONTINUOUS_REGRESSION_HGB_PERMUTATION_IMPORTANCE_N_REPEATS,
                 "random_seed": random_seed,
                 "total_source_feature_count": total_source_feature_count,
@@ -4886,6 +4971,15 @@ def _train_native_continuous_regression_fixed_configuration(
     }
     metrics_sha256 = _write_reduced_json_artifact(metrics_path, metrics_artifact)
 
+    # hist_gradient_boosting Feature Importance is permutation importance
+    # scored by the contract's own primary metric; the direct
+    # feature_importances_ families use no scorer at all.
+    if model_family == "hist_gradient_boosting":
+        permutation_importance_metric, permutation_importance_scorer = _permutation_importance_scoring(
+            contract, "continuous_regression"
+        )
+    else:
+        permutation_importance_metric, permutation_importance_scorer = None, None
     analytical_visualizations_artifact = _build_native_continuous_regression_analytical_visualizations_artifact(
         rows=rows,
         target_column=target_column,
@@ -4899,6 +4993,7 @@ def _train_native_continuous_regression_fixed_configuration(
         final_fit_features=features.iloc[final_fit_indices],
         final_fit_target=target.iloc[final_fit_indices],
         random_seed=random_seed,
+        permutation_scoring=permutation_importance_scorer,
     )
     analytical_visualizations_sha256 = _write_reduced_json_artifact(
         analytical_visualizations_path, analytical_visualizations_artifact,
@@ -4949,6 +5044,14 @@ def _train_native_continuous_regression_fixed_configuration(
             "random_seed": random_seed,
             "primary_metric": str(contract["primary_metric"]),
             "secondary_metrics": list(contract.get("secondary_metrics") or []),
+            **(
+                {
+                    "permutation_importance_metric": permutation_importance_metric,
+                    "permutation_importance_scorer": permutation_importance_scorer,
+                }
+                if permutation_importance_scorer is not None
+                else {}
+            ),
             "modeling_constraints": _json_safe(modeling_constraints),
             "selection_mode": "fixed_configuration",
             "model_selection_performed": False,
@@ -5080,7 +5183,6 @@ NATIVE_BINARY_FIXED_TRAINING_METRICS_VERSION = "training-metrics.v5"
 NATIVE_BINARY_FIXED_ANALYTICAL_VISUALIZATIONS_VERSION = "analytical-visualizations.v5"
 NATIVE_BINARY_FIXED_METRIC_NAMES = ("roc_auc", "f1", "accuracy", "log_loss", "pr_auc")
 NATIVE_BINARY_FIXED_HGB_PERMUTATION_IMPORTANCE_N_REPEATS = 5
-NATIVE_BINARY_FIXED_HGB_PERMUTATION_IMPORTANCE_SCORING = "roc_auc"
 NATIVE_BINARY_FIXED_PERMUTATION_IMPORTANCE_POPULATION_KIND = "finalized_fit_population"
 
 
@@ -5217,6 +5319,8 @@ def _build_native_binary_fixed_analytical_visualizations_artifact(
     output_directory: Path,
     training_timestamp: str,
     random_seed: int | None,
+    permutation_scoring: str,
+    permutation_scorer: Any = None,
 ) -> dict[str, Any]:
     target_data, population_row_count = _target_distribution_chart_data(rows, target_column)
     feature_data, total_source_feature_count, omitted_count = _permutation_feature_importance(
@@ -5224,7 +5328,7 @@ def _build_native_binary_fixed_analytical_visualizations_artifact(
         features=final_fit_features,
         target=final_fit_target,
         feature_columns=feature_columns,
-        scoring=NATIVE_BINARY_FIXED_HGB_PERMUTATION_IMPORTANCE_SCORING,
+        scoring=permutation_scorer if permutation_scorer is not None else permutation_scoring,
         n_repeats=NATIVE_BINARY_FIXED_HGB_PERMUTATION_IMPORTANCE_N_REPEATS,
         random_seed=random_seed,
     )
@@ -5270,7 +5374,7 @@ def _build_native_binary_fixed_analytical_visualizations_artifact(
             "source": "sklearn.inspection.permutation_importance",
             "method": "permutation_importance",
             "population_kind": NATIVE_BINARY_FIXED_PERMUTATION_IMPORTANCE_POPULATION_KIND,
-            "scoring": NATIVE_BINARY_FIXED_HGB_PERMUTATION_IMPORTANCE_SCORING,
+            "scoring": permutation_scoring,
             "n_repeats": NATIVE_BINARY_FIXED_HGB_PERMUTATION_IMPORTANCE_N_REPEATS,
             "random_seed_source": "execution_contract.random_seed",
             "total_source_feature_count": total_source_feature_count,
@@ -5512,7 +5616,11 @@ def _train_native_binary_fixed_configuration(
 
     # Step 4: deterministic permutation Feature Importance on the
     # finalized-fit (train+validation) population only -- descriptive model
-    # interpretation, never computed against final-test rows/labels.
+    # interpretation, never computed against final-test rows/labels. Scored
+    # by the contract's own primary metric.
+    permutation_importance_metric, permutation_importance_scorer = _permutation_importance_scoring(
+        contract, "binary_classification"
+    )
     analytical_visualizations_artifact = _build_native_binary_fixed_analytical_visualizations_artifact(
         rows=rows,
         target_column=target_column,
@@ -5524,6 +5632,12 @@ def _train_native_binary_fixed_configuration(
         output_directory=output_directory,
         training_timestamp=training_timestamp,
         random_seed=random_seed,
+        permutation_scoring=permutation_importance_scorer,
+        permutation_scorer=_positive_class_bound_scorer(
+            permutation_importance_metric,
+            permutation_importance_scorer,
+            final_classification_evidence["positive_class_id"],
+        ),
     )
     analytical_visualizations_sha256 = _write_reduced_json_artifact(
         analytical_visualizations_path, analytical_visualizations_artifact,
@@ -5648,6 +5762,8 @@ def _train_native_binary_fixed_configuration(
             "random_seed": random_seed,
             "primary_metric": str(contract["primary_metric"]),
             "secondary_metrics": list(contract.get("secondary_metrics") or []),
+            "permutation_importance_metric": permutation_importance_metric,
+            "permutation_importance_scorer": permutation_importance_scorer,
             "modeling_constraints": _json_safe(modeling_constraints),
             "selection_mode": "fixed_configuration",
             "model_selection_performed": False,

@@ -21,8 +21,8 @@ pipeline/contract_derivation.py: _derive_public_contract() and _check_safety().
 These symbols must not be redeclared here (constraint-05).
 
 RUNTIME_CONTRACT_SCHEMA_VERSION is parallel to PUBLIC_CONTRACT_SCHEMA_VERSION in
-pipeline/contract_derivation.py, both fixed to '1.0.0' (decision-03, first-cycle
-versioning assumption consistent with contracts/bank-marketing/runtime-contract.json).
+pipeline/contract_derivation.py, both fixed to '1.0.0' (decision-03, the Atlas-wide
+first-cycle versioning assumption; the historical first-cycle contracts carry it too).
 
 Project Spec S0102: closed-select sufficiency is a governed readiness
 condition, not merely reported evidence. `derive()` raises `DerivationFailed`

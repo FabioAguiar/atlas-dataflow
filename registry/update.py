@@ -74,12 +74,12 @@ customization here.
 import json
 import os
 import re
-import shutil
 import sys
 from datetime import date, datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from registry.file_backup import backup_file_contents
 from registry.predict_view_customization_validate import classify_customization_compatibility
 from registry.predict_view_validate import PREDICT_VIEWS_SCHEMA_VERSION, validate_predict_views
 from registry.validate import RELEASE_ID_PATTERN, validate_registry
@@ -218,7 +218,7 @@ def _json_bytes(value: dict) -> bytes:
 
 
 def _restore_files(originals: dict[Path, bytes | None]) -> None:
-    """Best-effort rollback of every file participating in a rename."""
+    """Best-effort rollback of every file participating in a registry write."""
     for path, content in originals.items():
         try:
             if content is None:
@@ -228,6 +228,19 @@ def _restore_files(originals: dict[Path, bytes | None]) -> None:
                 path.write_bytes(content)
         except OSError:
             pass
+
+
+def _snapshot_backup(originals: dict[Path, bytes | None], backup_path: Path) -> None:
+    """Track a backup file's prior bytes so a failed write restores it too.
+
+    An unreadable backup is left untracked rather than failing the write:
+    the backup is a convenience copy, while the primary files' rollback is
+    always tracked by the caller.
+    """
+    try:
+        originals[backup_path] = backup_path.read_bytes() if backup_path.is_file() else None
+    except OSError:
+        pass
 
 
 def _resolve_run_dir(result_path_or_run_dir: str) -> Path:
@@ -769,32 +782,31 @@ def run(
     predict_views_rewrite = materialization["rewrite_needed"]
     predict_views_existed = predict_views_path.is_file()
 
+    # Every file this block may write is snapshotted first, primary files
+    # before backups, so any failing stage (backup or write, registry or
+    # predict views) restores all of them to their exact prior bytes.
     originals: dict[Path, bytes | None] = {registry_path: registry_path.read_bytes()}
     if predict_views_rewrite:
         originals[predict_views_path] = predict_views_path.read_bytes() if predict_views_existed else None
+    _snapshot_backup(originals, backup_path)
+    if predict_views_rewrite and predict_views_existed:
+        _snapshot_backup(originals, predict_views_backup_path)
 
     try:
-        shutil.copy2(registry_path, backup_path)
+        backup_file_contents(registry_path, backup_path)
         registry_path.write_text(
             json.dumps(registry, indent=2, ensure_ascii=False),
             encoding="utf-8",
         )
         if predict_views_rewrite:
             if predict_views_existed:
-                shutil.copy2(predict_views_path, predict_views_backup_path)
+                backup_file_contents(predict_views_path, predict_views_backup_path)
             predict_views_path.write_text(
                 json.dumps(materialization["final_registry"], indent=2, ensure_ascii=False),
                 encoding="utf-8",
             )
     except OSError:
-        for path, original in originals.items():
-            try:
-                if original is None:
-                    path.unlink(missing_ok=True)
-                else:
-                    path.write_bytes(original)
-            except OSError:
-                pass
+        _restore_files(originals)
         raise RuntimeError("Registry update halted: the registry could not be written.")
 
     previous_display = previous_active_release_id if previous_active_release_id else "none"
@@ -826,7 +838,7 @@ def remove_dataset_entry(dataset_slug: str, repo_root: Path | None = None) -> di
     Removes only the matching entry from the in-memory registry, validates
     the resulting registry with validate_registry() before writing anything,
     backs up the previous registry to registry/datasets.json.previous (the
-    same shutil.copy2 backup run() uses) and writes the updated registry.
+    same content-only backup run() uses) and writes the updated registry.
     Never touches releases/, publisher/runs/, contracts, notebooks, model
     artifacts, profile artifacts, evidence, or support-root files -- this
     function never reads or writes any path other than the registry file and
@@ -903,13 +915,17 @@ def remove_dataset_entry(dataset_slug: str, repo_root: Path | None = None) -> di
             "errors": [REGISTRY_VALIDATION_FAILED_ERROR],
         }
 
+    originals: dict[Path, bytes | None] = {}
     try:
-        shutil.copy2(registry_path, backup_path)
+        originals[registry_path] = registry_path.read_bytes()
+        _snapshot_backup(originals, backup_path)
+        backup_file_contents(registry_path, backup_path)
         registry_path.write_text(
             json.dumps(registry, indent=2, ensure_ascii=False),
             encoding="utf-8",
         )
     except OSError:
+        _restore_files(originals)
         return {
             "dataset_slug": dataset_slug,
             "removed": False,

@@ -1,10 +1,23 @@
-"""Generic model-family registry for Atlas tabular estimators.
+"""Generic model-family registry for Atlas estimators -- the model-family
+authority.
 
-One declarative table maps an Atlas model-family identifier to the concrete
-scikit-learn estimator class for each task type it supports. Native training
-(``pipeline.training``) and scientific reproduction
-(``pipeline.scientific_reproduction``) both resolve estimator classes here, so
-adding a family is a registry change rather than a dataset-specific branch.
+One declarative table maps an Atlas model-family identifier to:
+
+* the concrete scikit-learn estimator class for each task type it supports
+  (resolved here by native training and scientific reproduction);
+* the display name used by inference bundles and result contracts;
+* ``native_training``: the problem types Atlas-native training can fit the
+  family for, and with which selection modes;
+* ``governed_result_problem_types``: the problem types whose governed result
+  contracts (inference bundle / runtime result semantics) accept the family,
+  which also covers families that only reach a release through the external
+  fitted-model lineage.
+
+Every per-layer closed set (training's supported families, the training-
+policy vocabulary, inference-bundle family sets, runtime result family sets,
+and the JSON schema enums) is derived from, or tested against, these fields.
+Support is never widened implicitly: a family is accepted for a problem type
+only where this table says so.
 
 The registry only resolves classes and validates hyperparameter names against
 the estimator's real ``get_params()`` surface. It never chooses defaults for a
@@ -16,12 +29,21 @@ declares.
 from __future__ import annotations
 
 import importlib
-from dataclasses import dataclass
-from typing import Any, Mapping
+from dataclasses import dataclass, field
+from typing import Any, Iterable, Mapping
 
 
 CLASSIFICATION = "classification"
 REGRESSION = "regression"
+
+BINARY_CLASSIFICATION = "binary_classification"
+MULTICLASS_CLASSIFICATION = "multiclass_classification"
+CONTINUOUS_REGRESSION = "continuous_regression"
+UNIVARIATE_FORECASTING = "univariate_forecasting"
+TABULAR_PROBLEM_TYPES = (BINARY_CLASSIFICATION, MULTICLASS_CLASSIFICATION, CONTINUOUS_REGRESSION)
+
+EVALUATE_ALLOWED_FAMILIES = "evaluate_allowed_families"
+FIXED_CONFIGURATION = "fixed_configuration"
 
 
 class ModelFamilyError(ValueError):
@@ -39,6 +61,15 @@ class ModelFamily:
     baseline_only: bool = False
     scale_sensitive: bool = False
     description: str = ""
+    display_name: str | None = None
+    native_training: Mapping[str, frozenset[str]] = field(default_factory=dict)
+    governed_result_problem_types: frozenset[str] = frozenset()
+
+    def natively_trainable(self, problem_type: str, selection_mode: str | None = None) -> bool:
+        modes = self.native_training.get(problem_type)
+        if not modes:
+            return False
+        return selection_mode is None or selection_mode in modes
 
     def supports(self, task_type: str) -> bool:
         return task_type in self.estimators
@@ -68,20 +99,9 @@ MODEL_FAMILIES: Mapping[str, ModelFamily] = {
             family_id="logistic_regression",
             estimators={CLASSIFICATION: "sklearn.linear_model.LogisticRegression"},
             scale_sensitive=True,
-        ),
-        ModelFamily(
-            family_id="decision_tree",
-            estimators={
-                CLASSIFICATION: "sklearn.tree.DecisionTreeClassifier",
-                REGRESSION: "sklearn.tree.DecisionTreeRegressor",
-            },
-        ),
-        ModelFamily(
-            family_id="random_forest",
-            estimators={
-                CLASSIFICATION: "sklearn.ensemble.RandomForestClassifier",
-                REGRESSION: "sklearn.ensemble.RandomForestRegressor",
-            },
+            display_name="Logistic Regression",
+            native_training={BINARY_CLASSIFICATION: frozenset({EVALUATE_ALLOWED_FAMILIES})},
+            governed_result_problem_types=frozenset({BINARY_CLASSIFICATION, MULTICLASS_CLASSIFICATION}),
         ),
         ModelFamily(
             family_id="gradient_boosting",
@@ -89,6 +109,27 @@ MODEL_FAMILIES: Mapping[str, ModelFamily] = {
                 CLASSIFICATION: "sklearn.ensemble.GradientBoostingClassifier",
                 REGRESSION: "sklearn.ensemble.GradientBoostingRegressor",
             },
+            display_name="Gradient Boosting",
+            native_training={
+                BINARY_CLASSIFICATION: frozenset({EVALUATE_ALLOWED_FAMILIES}),
+                CONTINUOUS_REGRESSION: frozenset({FIXED_CONFIGURATION}),
+            },
+            governed_result_problem_types=frozenset({BINARY_CLASSIFICATION, CONTINUOUS_REGRESSION}),
+        ),
+        ModelFamily(
+            family_id="random_forest",
+            estimators={
+                CLASSIFICATION: "sklearn.ensemble.RandomForestClassifier",
+                REGRESSION: "sklearn.ensemble.RandomForestRegressor",
+            },
+            display_name="Random Forest",
+            native_training={
+                BINARY_CLASSIFICATION: frozenset({EVALUATE_ALLOWED_FAMILIES}),
+                CONTINUOUS_REGRESSION: frozenset({FIXED_CONFIGURATION}),
+            },
+            governed_result_problem_types=frozenset(
+                {BINARY_CLASSIFICATION, MULTICLASS_CLASSIFICATION, CONTINUOUS_REGRESSION}
+            ),
         ),
         ModelFamily(
             family_id="hist_gradient_boosting",
@@ -96,9 +137,75 @@ MODEL_FAMILIES: Mapping[str, ModelFamily] = {
                 CLASSIFICATION: "sklearn.ensemble.HistGradientBoostingClassifier",
                 REGRESSION: "sklearn.ensemble.HistGradientBoostingRegressor",
             },
+            display_name="HistGradientBoosting",
+            native_training={
+                BINARY_CLASSIFICATION: frozenset({FIXED_CONFIGURATION}),
+                MULTICLASS_CLASSIFICATION: frozenset({FIXED_CONFIGURATION}),
+                CONTINUOUS_REGRESSION: frozenset({FIXED_CONFIGURATION}),
+            },
+            governed_result_problem_types=frozenset(
+                {BINARY_CLASSIFICATION, MULTICLASS_CLASSIFICATION, CONTINUOUS_REGRESSION}
+            ),
+        ),
+        ModelFamily(
+            family_id="decision_tree",
+            estimators={
+                CLASSIFICATION: "sklearn.tree.DecisionTreeClassifier",
+                REGRESSION: "sklearn.tree.DecisionTreeRegressor",
+            },
+            display_name="Decision Tree",
+            # Reaches a release only through the external fitted-model
+            # (multiclass v2) lineage; Atlas-native training never fits it.
+            governed_result_problem_types=frozenset({MULTICLASS_CLASSIFICATION}),
+        ),
+        ModelFamily(
+            family_id="deterministic_seasonal_trend_ols",
+            # Atlas's own forecasting estimator (pipeline.training), not a
+            # scikit-learn estimator class resolvable by task type.
+            estimators={},
+            display_name="Deterministic Seasonal-Trend OLS",
+            native_training={UNIVARIATE_FORECASTING: frozenset({FIXED_CONFIGURATION})},
+            governed_result_problem_types=frozenset({UNIVARIATE_FORECASTING}),
         ),
     )
 }
+
+
+def native_trainable_family_ids(problem_type: str, selection_mode: str | None = None) -> tuple[str, ...]:
+    """Families Atlas-native training fits for problem_type (optionally
+    restricted to one selection mode), in registry order."""
+    return tuple(
+        family_id
+        for family_id, family in MODEL_FAMILIES.items()
+        if family.natively_trainable(problem_type, selection_mode)
+    )
+
+
+def native_trainable_family_ids_for_any(
+    problem_types: Iterable[str], selection_mode: str | None = None,
+) -> frozenset[str]:
+    return frozenset(
+        family_id
+        for problem_type in problem_types
+        for family_id in native_trainable_family_ids(problem_type, selection_mode)
+    )
+
+
+def governed_result_family_ids(problem_type: str) -> frozenset[str]:
+    """Families a governed result contract accepts for problem_type."""
+    return frozenset(
+        family_id
+        for family_id, family in MODEL_FAMILIES.items()
+        if problem_type in family.governed_result_problem_types
+    )
+
+
+def display_names() -> dict[str, str]:
+    return {
+        family_id: family.display_name
+        for family_id, family in MODEL_FAMILIES.items()
+        if family.display_name is not None
+    }
 
 
 def get_family(family_id: str) -> ModelFamily:

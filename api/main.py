@@ -981,10 +981,12 @@ def _resolve_runtime_dispatch(declaration: dict) -> tuple[str, dict | None, dict
 # value, since no separately validated configuration contract exists yet.
 _INFERENCE_CAPACITY = 2
 
-# Issue M50-06: one cold-load inference against the active dry-bean release
-# measured 2.058041s and the immediately cached path measured 0.041286s on
-# the implementation baseline. Ten seconds leaves roughly 4.8x headroom over
-# the observed cold path while remaining well below Nginx's 60s proxy default.
+# Global, dataset-independent inference deadline. Calibration history (Issue
+# M50-06): one cold-load inference against a then-active release measured
+# 2.058041s and the immediately cached path 0.041286s on the implementation
+# baseline. Ten seconds leaves roughly 4.8x headroom over that observed cold
+# path while remaining well below Nginx's 60s proxy default. A heavier future
+# model may warrant a per-release declared budget.
 _INFERENCE_EXECUTION_DEADLINE_SECONDS = 10.0
 
 

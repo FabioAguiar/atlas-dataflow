@@ -59,8 +59,8 @@
       "active_release": "release-20260830-001",
       "public_metadata": {
         "title": "Telco Customer Churn",
-        "summary": "Customer churn prediction dataset for a telecommunications provider. Predicts whether a customer will churn based on service usage and account features.",
-        "domain": "telco",
+        "summary": "Estimate customer churn from service, contract, billing, payment, tenure, and charge data with a governed binary-classification model.",
+        "domain": "telecommunications",
         "visibility": "public",
         "tags": [
           "telco",

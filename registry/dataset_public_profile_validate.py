@@ -12,8 +12,9 @@ Validates:
     an entry in the injected predict-views registry's predict_views[] array
     whose view_id matches; and that entry's dataset_slug equals the profile's
     own dataset_slug.
-  - home_card.primary_metric_key, when non-null, resolves to a key in the
-    injected release metrics artifact's evaluation.metrics object.
+  - home_card.primary_metric_key, when non-null, resolves to a metric key
+    the injected release metrics artifact publishes (see
+    release_published_metric_keys).
 
 Both reference fields are optional: null or absent values are not checked.
 
@@ -27,6 +28,8 @@ Validation is deterministic: identical inputs always produce identical output.
 Error messages are sanitized: field path and error code only -- no filesystem
 paths, release IDs, or raw registry/metrics data.
 """
+
+from registry.metric_identity import public_metric_key
 
 PERFORMANCE_FOCUS_LABELS = {
     "overall_discrimination": "Overall discrimination",
@@ -293,6 +296,58 @@ def normalize_result_presentation(result_card: object, expected_problem_type: st
     return normalize_binary_result_presentation(result_card)
 
 
+def _named_metric_entries(block: object) -> list[str]:
+    metrics = block.get("metrics") if isinstance(block, dict) else None
+    if not isinstance(metrics, list):
+        return []
+    return [entry["name"] for entry in metrics if isinstance(entry, dict) and isinstance(entry.get("name"), str)]
+
+
+def release_published_metric_keys(release_metrics: object) -> frozenset[str]:
+    """Metric keys a release publishes, for home_card.primary_metric_key
+    reference validation.
+
+    Accepts the legacy flat artifact (evaluation.metrics keyed by metric name,
+    whose raw keys stay valid for backward compatibility) and every current
+    training-metrics artifact, whose sealed evaluation partition declares
+    metrics by name. Every name is mapped to its published key through the
+    canonical metric identity registry, so a profile references the same
+    key-space the public metrics projection exposes.
+    """
+    if not isinstance(release_metrics, dict):
+        return frozenset()
+    raw_names: list[str] = []
+    keys: set[str] = set()
+
+    evaluation = release_metrics.get("evaluation")
+    legacy_metrics = evaluation.get("metrics") if isinstance(evaluation, dict) else None
+    if isinstance(legacy_metrics, dict):
+        keys.update(name for name in legacy_metrics if isinstance(name, str))
+        raw_names.extend(name for name in legacy_metrics if isinstance(name, str))
+
+    metrics_block = release_metrics.get("metrics")
+    if isinstance(metrics_block, dict):
+        primary = metrics_block.get("primary_metric")
+        if isinstance(primary, dict) and isinstance(primary.get("name"), str):
+            raw_names.append(primary["name"])
+        for secondary in metrics_block.get("secondary_metrics") or []:
+            if isinstance(secondary, dict) and isinstance(secondary.get("name"), str):
+                raw_names.append(secondary["name"])
+
+    final_test = release_metrics.get("final_test_evaluation")
+    if isinstance(final_test, dict) and final_test.get("completed", True) is not False:
+        raw_names.extend(_named_metric_entries(final_test))
+    else:
+        raw_names.extend(_named_metric_entries(release_metrics.get("validation_evaluation")))
+    raw_names.extend(_named_metric_entries(release_metrics.get("final_holdout_evaluation")))
+
+    for raw_name in raw_names:
+        public_key = public_metric_key(raw_name)
+        if public_key is not None:
+            keys.add(public_key)
+    return frozenset(keys)
+
+
 def _err(code: str, field: str | None, message: str) -> dict:
     return {"code": code, "field": field, "message": message}
 
@@ -313,9 +368,9 @@ def validate_profile_references(
     have "view_id" and "dataset_slug" fields. The caller is responsible for
     loading registry/predict-views.json before invoking this function.
 
-    release_metrics must be the relevant release's metrics artifact dict,
-    containing an "evaluation" object with a "metrics" object keyed by metric
-    name. The caller is responsible for resolving and loading the relevant
+    release_metrics must be the relevant release's metrics artifact dict
+    (legacy flat evaluation.metrics or a current training-metrics artifact;
+    see release_published_metric_keys). The caller is responsible for resolving and loading the relevant
     release's metrics.json before invoking this function; this validator does
     not select a release itself.
 
@@ -386,16 +441,7 @@ def validate_profile_references(
     if isinstance(home_card, dict):
         primary_metric_key = home_card.get("primary_metric_key")
         if isinstance(primary_metric_key, str) and primary_metric_key:
-            evaluation = (
-                release_metrics.get("evaluation")
-                if isinstance(release_metrics, dict)
-                else None
-            )
-            metrics = evaluation.get("metrics") if isinstance(evaluation, dict) else None
-            if not isinstance(metrics, dict):
-                metrics = {}
-
-            if primary_metric_key not in metrics:
+            if primary_metric_key not in release_published_metric_keys(release_metrics):
                 errors.append(_err(
                     "PRIMARY_METRIC_KEY_NOT_FOUND",
                     "home_card.primary_metric_key",

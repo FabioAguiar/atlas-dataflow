@@ -591,6 +591,31 @@ def _synthetic_multiclass_modeling_intent() -> dict:
             "decision_strategy": "argmax",
             "review_notes": "Reviewed for S0207 schema-level fixture coverage.",
         },
+        "training_policy_intent": {
+            "review_status": "approved",
+            "numeric_handling": "passthrough",
+            "categorical_encoding_policy": "onehot",
+            "allowed_transformations": ["passthrough"],
+            "split_policy": {"strategy": "stratified", "train_ratio": 0.7, "val_ratio": 0.15, "test_ratio": 0.15},
+            "primary_metric": "f1_macro",
+            "secondary_metrics": ["balanced_accuracy", "accuracy"],
+            "modeling_constraints": {
+                "allowed_model_families": ["hist_gradient_boosting"],
+                "no_automl": True,
+                "selection_mode": "fixed_configuration",
+                "fixed_model_configuration": {
+                    "model_family": "hist_gradient_boosting",
+                    "hyperparameters": {
+                        "class_weight": None,
+                        "l2_regularization": 0.0,
+                        "learning_rate": 0.05,
+                        "max_iter": 100,
+                        "max_leaf_nodes": 15,
+                        "min_samples_leaf": 20,
+                    },
+                },
+            },
+        },
     }
 
 
@@ -832,6 +857,21 @@ def _modeling_intent(
         "identifier_and_ignored_columns": identifier_and_ignored_columns,
         "initial_feature_candidates": initial_feature_candidates,
         "categorical_domain_intent": list(categorical_domain_intent or []),
+        # execution_contract.v1 is only materialized from an explicit policy.
+        "training_policy_intent": {
+            "review_status": "approved",
+            "numeric_handling": "standardize",
+            "categorical_encoding_policy": "onehot",
+            "allowed_transformations": ["passthrough"],
+            "split_policy": {"strategy": "stratified", "train_ratio": 0.7, "val_ratio": 0.15, "test_ratio": 0.15},
+            "primary_metric": "roc_auc",
+            "secondary_metrics": ["f1", "pr_auc"],
+            "modeling_constraints": {
+                "allowed_model_families": ["logistic_regression", "gradient_boosting", "random_forest"],
+                "no_automl": True,
+                "max_training_time_seconds": None,
+            },
+        },
     }
 
 

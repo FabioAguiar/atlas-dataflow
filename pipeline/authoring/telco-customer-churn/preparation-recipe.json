@@ -28,13 +28,11 @@
   "source_data_ref": "data/raw/telco-customer-churn.csv",
   "transformations": [
     {
-      "field": "TotalCharges",
-      "operation": "conditional_blank_to_zero",
-      "otherwise": "reject_blank",
-      "when": {
-        "equals": "0",
-        "field": "tenure"
-      }
+      "column": "TotalCharges",
+      "condition_column": "tenure",
+      "condition_value": "0",
+      "kind": "conditional_blank_numeric_fill",
+      "replacement": 0
     }
   ]
 }

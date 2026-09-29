@@ -1,0 +1,189 @@
+{
+  "schema_version": "1.0.0",
+  "features": [
+    {
+      "name": "gender",
+      "type": "categorical",
+      "required": true,
+      "domain_constraints": {
+        "values": [
+          "Female",
+          "Male"
+        ]
+      }
+    },
+    {
+      "name": "SeniorCitizen",
+      "type": "boolean",
+      "required": true
+    },
+    {
+      "name": "Partner",
+      "type": "boolean",
+      "required": true
+    },
+    {
+      "name": "Dependents",
+      "type": "boolean",
+      "required": true
+    },
+    {
+      "name": "tenure",
+      "type": "numeric",
+      "required": true,
+      "domain_constraints": {
+        "min": 0,
+        "max": 72
+      }
+    },
+    {
+      "name": "PhoneService",
+      "type": "boolean",
+      "required": true
+    },
+    {
+      "name": "MultipleLines",
+      "type": "categorical",
+      "required": true,
+      "domain_constraints": {
+        "values": [
+          "No",
+          "No phone service",
+          "Yes"
+        ]
+      }
+    },
+    {
+      "name": "InternetService",
+      "type": "categorical",
+      "required": true,
+      "domain_constraints": {
+        "values": [
+          "DSL",
+          "Fiber optic",
+          "No"
+        ]
+      }
+    },
+    {
+      "name": "OnlineSecurity",
+      "type": "categorical",
+      "required": true,
+      "domain_constraints": {
+        "values": [
+          "No",
+          "No internet service",
+          "Yes"
+        ]
+      }
+    },
+    {
+      "name": "OnlineBackup",
+      "type": "categorical",
+      "required": true,
+      "domain_constraints": {
+        "values": [
+          "No",
+          "No internet service",
+          "Yes"
+        ]
+      }
+    },
+    {
+      "name": "DeviceProtection",
+      "type": "categorical",
+      "required": true,
+      "domain_constraints": {
+        "values": [
+          "No",
+          "No internet service",
+          "Yes"
+        ]
+      }
+    },
+    {
+      "name": "TechSupport",
+      "type": "categorical",
+      "required": true,
+      "domain_constraints": {
+        "values": [
+          "No",
+          "No internet service",
+          "Yes"
+        ]
+      }
+    },
+    {
+      "name": "StreamingTV",
+      "type": "categorical",
+      "required": true,
+      "domain_constraints": {
+        "values": [
+          "No",
+          "No internet service",
+          "Yes"
+        ]
+      }
+    },
+    {
+      "name": "StreamingMovies",
+      "type": "categorical",
+      "required": true,
+      "domain_constraints": {
+        "values": [
+          "No",
+          "No internet service",
+          "Yes"
+        ]
+      }
+    },
+    {
+      "name": "Contract",
+      "type": "categorical",
+      "required": true,
+      "domain_constraints": {
+        "values": [
+          "Month-to-month",
+          "One year",
+          "Two year"
+        ]
+      }
+    },
+    {
+      "name": "PaperlessBilling",
+      "type": "boolean",
+      "required": true
+    },
+    {
+      "name": "PaymentMethod",
+      "type": "categorical",
+      "required": true,
+      "domain_constraints": {
+        "values": [
+          "Bank transfer (automatic)",
+          "Credit card (automatic)",
+          "Electronic check",
+          "Mailed check"
+        ]
+      }
+    },
+    {
+      "name": "MonthlyCharges",
+      "type": "numeric",
+      "required": true,
+      "domain_constraints": {
+        "min": 18.25,
+        "max": 118.75
+      }
+    },
+    {
+      "name": "TotalCharges",
+      "type": "numeric",
+      "required": false,
+      "domain_constraints": {
+        "min": 18.8,
+        "max": 8684.8
+      }
+    }
+  ]
+}

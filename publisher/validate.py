@@ -3813,7 +3813,6 @@ def run(
     return result
 
 
-_TELCO_DATASET_SLUG = "telco-customer-churn"
 _CANDIDATE_STAGING_PREFIX = ("releases", "candidates")
 _AMBIGUOUS_PATH_CHARS = frozenset("*?[]")
 
@@ -4090,50 +4089,6 @@ def materialize_validation_run(
 
     return _materialize_from_resolved_candidate(
         resolved["dataset_slug"], resolved["resolved_candidate_dir"], resolved_repo_root
-    )
-
-
-def materialize_telco_validation_run(
-    release_candidate_assembly_result: dict | None = None,
-    *,
-    candidate_dir: str | Path | None = None,
-    repo_root: Path | None = None,
-) -> dict:
-    """
-    Materialize a publisher validation run (and manifest, when permitted)
-    from an already-assembled Telco release candidate.
-
-    Telco-only convenience wrapper around `materialize_validation_run`
-    (Project Spec S0217): resolves the candidate reference using the same
-    generic rules (never both/neither reference, no absolute/traversal/glob
-    paths, assembly-result `dataset_slug` must agree with its own
-    `candidate_dir`), then fails closed with `non_telco_candidate_rejected`
-    -- before any `publisher.validate.run` call, so no Publisher Run
-    directory is ever created for a non-Telco candidate -- when the
-    resolved dataset is not `telco-customer-churn`. Never promotes a
-    release, never updates the registry, and never modifies any
-    release-candidate artifact.
-    """
-    if repo_root is None:
-        repo_root = Path(__file__).parent.parent
-    resolved_repo_root = Path(repo_root).expanduser().resolve()
-
-    resolved = _resolve_candidate_reference(
-        release_candidate_assembly_result, candidate_dir, resolved_repo_root
-    )
-    if "error" in resolved:
-        return resolved["error"]
-
-    dataset_slug = resolved["dataset_slug"]
-    if dataset_slug != _TELCO_DATASET_SLUG:
-        return _validation_materialization_result(
-            materialization_status="blocked",
-            reason_code="non_telco_candidate_rejected",
-            message=f"Candidate dataset_slug must be {_TELCO_DATASET_SLUG!r}.",
-        )
-
-    return _materialize_from_resolved_candidate(
-        dataset_slug, resolved["resolved_candidate_dir"], resolved_repo_root
     )
 
 

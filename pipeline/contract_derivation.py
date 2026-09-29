@@ -76,7 +76,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from pipeline import metric_identity
+from pipeline import metric_identity, model_families
 from pipeline.authoring_contracts import validate_authoring_contracts
 from pipeline.discovery_evidence import (
     build_binary_result_semantics_intent,
@@ -594,12 +594,14 @@ EXECUTION_CONTRACT_BOUNDARY_CONFIRMATIONS = {
 _TRAINING_POLICY_METRIC_VOCABULARY = metric_identity.training_metric_vocabulary(
     metric_identity.TABULAR_PROBLEM_TYPES
 )
-# Only families Atlas can actually train natively. xgboost/lightgbm were
-# never trainable and are no longer offered (they survive only as historical
-# read-only schema vocabulary for already-written training records).
-_TRAINING_POLICY_MODEL_FAMILY_VOCABULARY = frozenset({
-    "logistic_regression", "gradient_boosting", "random_forest", "hist_gradient_boosting",
-})
+# Only families Atlas can actually train natively for a tabular problem type,
+# derived from the model-family authority (pipeline/model_families.py).
+# xgboost/lightgbm were never trainable and are no longer offered (they
+# survive only as historical read-only schema vocabulary for already-written
+# training records).
+_TRAINING_POLICY_MODEL_FAMILY_VOCABULARY = model_families.native_trainable_family_ids_for_any(
+    model_families.TABULAR_PROBLEM_TYPES
+)
 _TRAINING_POLICY_NUMERIC_HANDLING_VOCABULARY = frozenset({"standardize", "normalize", "passthrough"})
 _TRAINING_POLICY_CATEGORICAL_ENCODING_VOCABULARY = frozenset({"onehot", "ordinal", "target_encode", "binary"})
 _TRAINING_POLICY_TRANSFORMATION_VOCABULARY = frozenset({"log1p", "sqrt", "clip", "passthrough"})
@@ -643,9 +645,11 @@ _HGB_REGRESSION_ALLOWED_HYPERPARAMETERS = (
     _HGB_REGRESSION_REQUIRED_HYPERPARAMETERS | _HGB_REGRESSION_OPTIONAL_HYPERPARAMETERS
 )
 _CONTINUOUS_REGRESSION_METRIC_VOCABULARY = metric_identity.training_metric_vocabulary({"continuous_regression"})
-_CONTINUOUS_REGRESSION_FIXED_FAMILY_VOCABULARY = frozenset({
-    "gradient_boosting", "random_forest", "hist_gradient_boosting",
-})
+_CONTINUOUS_REGRESSION_FIXED_FAMILY_VOCABULARY = frozenset(
+    model_families.native_trainable_family_ids(
+        model_families.CONTINUOUS_REGRESSION, model_families.FIXED_CONFIGURATION
+    )
+)
 # Project Spec S0258: the bounded binary-classification metric vocabulary
 # actually computed by pipeline/training.py's governed native binary
 # fixed-configuration trainer (roc_auc/f1/accuracy/log_loss/pr_auc) -- never

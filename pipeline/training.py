@@ -33,7 +33,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from pipeline import metric_identity
+from pipeline import metric_identity, model_families
 
 
 PERMITTED_EXECUTION_CONTRACT_FIELDS = frozenset({
@@ -58,10 +58,10 @@ PERMITTED_EXECUTION_CONTRACT_FIELDS = frozenset({
     "result_semantics",
 })
 
-SUPPORTED_MODEL_FAMILIES = (
-    "logistic_regression",
-    "gradient_boosting",
-    "random_forest",
+# The binary evaluate_allowed_families candidate families, derived from the
+# model-family authority (pipeline/model_families.py) -- never a local list.
+SUPPORTED_MODEL_FAMILIES = model_families.native_trainable_family_ids(
+    model_families.BINARY_CLASSIFICATION, model_families.EVALUATE_ALLOWED_FAMILIES
 )
 
 SERIALIZER_NAME = "joblib"

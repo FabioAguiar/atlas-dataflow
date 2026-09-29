@@ -2503,12 +2503,12 @@ def _write_telco_release_candidate(tmp_repo: Path, missing_role: str | None = No
     return candidate_dir
 
 
-def test_materialize_telco_validation_run_accepted_candidate_writes_manifest(tmp_path):
+def test_materialize_validation_run_telco_shaped_candidate_accepted_candidate_writes_manifest(tmp_path):
     tmp_repo = tmp_path / "repo"
     _copy_publisher_contracts(tmp_repo)
     candidate_dir = _write_telco_release_candidate(tmp_repo)
 
-    result = validate.materialize_telco_validation_run(
+    result = validate.materialize_validation_run(
         candidate_dir=str(candidate_dir.relative_to(tmp_repo)),
         repo_root=tmp_repo,
     )
@@ -2528,12 +2528,12 @@ def test_materialize_telco_validation_run_accepted_candidate_writes_manifest(tmp
     assert (candidate_dir / "release-candidate.json").is_file()
 
 
-def test_materialize_telco_validation_run_rejected_candidate_skips_manifest(tmp_path):
+def test_materialize_validation_run_telco_shaped_candidate_rejected_candidate_skips_manifest(tmp_path):
     tmp_repo = tmp_path / "repo"
     _copy_publisher_contracts(tmp_repo)
     _write_telco_release_candidate(tmp_repo, missing_role="metrics")
 
-    result = validate.materialize_telco_validation_run(
+    result = validate.materialize_validation_run(
         candidate_dir=f"releases/candidates/{TELCO_DATASET_SLUG}/{TELCO_RELEASE_ID}",
         repo_root=tmp_repo,
     )
@@ -2548,23 +2548,33 @@ def test_materialize_telco_validation_run_rejected_candidate_skips_manifest(tmp_
     assert not (run_dir / "manifest.json").exists()
 
 
-def test_materialize_telco_validation_run_blocks_non_telco_candidate(tmp_path):
+def test_materialize_validation_run_has_no_dataset_slug_gate(tmp_path):
+    # The retired Telco-only wrapper (materialize_telco_validation_run) and its
+    # non_telco_candidate_rejected gate must not come back: every dataset's
+    # candidate goes through the same generic materializer.
+    assert not hasattr(validate, "materialize_telco_validation_run")
+    assert not hasattr(validate, "_TELCO_DATASET_SLUG")
+
     tmp_repo = tmp_path / "repo"
     _copy_publisher_contracts(tmp_repo)
-    _write_candidate(tmp_repo)  # example-dataset, not telco-customer-churn
+    _write_candidate(tmp_repo)  # example-dataset
+    _write_telco_release_candidate(tmp_repo)
 
-    result = validate.materialize_telco_validation_run(
+    example_result = validate.materialize_validation_run(
         candidate_dir=f"releases/candidates/{DATASET_SLUG}/{RELEASE_ID}",
         repo_root=tmp_repo,
     )
+    telco_result = validate.materialize_validation_run(
+        candidate_dir=f"releases/candidates/{TELCO_DATASET_SLUG}/{TELCO_RELEASE_ID}",
+        repo_root=tmp_repo,
+    )
 
-    assert result["materialization_status"] == "blocked"
-    assert result["reason_code"] == "non_telco_candidate_rejected"
-    runs_dir = tmp_repo / "publisher" / "runs"
-    assert not runs_dir.exists() or not any(runs_dir.iterdir())
+    assert example_result["materialization_status"] == "materialized"
+    assert telco_result["materialization_status"] == "materialized"
+    assert example_result.get("reason_code") != "non_telco_candidate_rejected"
 
 
-def test_materialize_telco_validation_run_from_accepted_assembly_result(tmp_path):
+def test_materialize_validation_run_telco_shaped_candidate_from_accepted_assembly_result(tmp_path):
     tmp_repo = tmp_path / "repo"
     _copy_publisher_contracts(tmp_repo)
     candidate_dir = _write_telco_release_candidate(tmp_repo)
@@ -2576,14 +2586,14 @@ def test_materialize_telco_validation_run_from_accepted_assembly_result(tmp_path
         "candidate_dir": str(candidate_dir),
     }
 
-    result = validate.materialize_telco_validation_run(assembly_result, repo_root=tmp_repo)
+    result = validate.materialize_validation_run(assembly_result, repo_root=tmp_repo)
 
     assert result["materialization_status"] == "materialized"
     assert result["validation_outcome"] == "accepted"
     assert result["manifest_generated"] is True
 
 
-def test_materialize_telco_validation_run_blocks_rejected_assembly_result(tmp_path):
+def test_materialize_validation_run_telco_shaped_candidate_blocks_rejected_assembly_result(tmp_path):
     tmp_repo = tmp_path / "repo"
     _copy_publisher_contracts(tmp_repo)
 
@@ -2593,18 +2603,18 @@ def test_materialize_telco_validation_run_blocks_rejected_assembly_result(tmp_pa
         "rejection_phase": "candidate_input_parse",
     }
 
-    result = validate.materialize_telco_validation_run(assembly_result, repo_root=tmp_repo)
+    result = validate.materialize_validation_run(assembly_result, repo_root=tmp_repo)
 
     assert result["materialization_status"] == "blocked"
     assert result["reason_code"] == "release_candidate_assembly_not_accepted"
     assert not (tmp_repo / "publisher" / "runs").exists()
 
 
-def test_materialize_telco_validation_run_rejects_absolute_candidate_dir(tmp_path):
+def test_materialize_validation_run_telco_shaped_candidate_rejects_absolute_candidate_dir(tmp_path):
     tmp_repo = tmp_path / "repo"
     _copy_publisher_contracts(tmp_repo)
 
-    result = validate.materialize_telco_validation_run(
+    result = validate.materialize_validation_run(
         candidate_dir="/etc/passwd",
         repo_root=tmp_repo,
     )
@@ -2614,12 +2624,12 @@ def test_materialize_telco_validation_run_rejects_absolute_candidate_dir(tmp_pat
     assert not (tmp_repo / "publisher" / "runs").exists()
 
 
-def test_materialize_telco_validation_run_rejects_both_references_given(tmp_path):
+def test_materialize_validation_run_telco_shaped_candidate_rejects_both_references_given(tmp_path):
     tmp_repo = tmp_path / "repo"
     _copy_publisher_contracts(tmp_repo)
     candidate_dir = _write_telco_release_candidate(tmp_repo)
 
-    result = validate.materialize_telco_validation_run(
+    result = validate.materialize_validation_run(
         {"status": "accepted", "dataset_slug": TELCO_DATASET_SLUG, "candidate_dir": str(candidate_dir)},
         candidate_dir=str(candidate_dir.relative_to(tmp_repo)),
         repo_root=tmp_repo,
@@ -2630,8 +2640,8 @@ def test_materialize_telco_validation_run_rejects_both_references_given(tmp_path
 
 
 # --- Project Spec S0217: dataset-generic Publisher Run materializer
-# (materialize_validation_run), the generalization
-# materialize_telco_validation_run above now wraps.
+# (materialize_validation_run), the only Publisher Run materializer (the
+# former Telco-only wrapper was retired).
 
 
 def test_materialize_validation_run_accepted_binary_internal_candidate_writes_manifest(tmp_path):

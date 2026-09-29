@@ -236,8 +236,10 @@ class TestExecutionContractMaterializesFixedConfigurationPolicy:
             contract_derivation._build_execution_contract(modeling_intent, raw_discovery_evidence, None)
 
 
-class TestLegacyBinaryDerivationDefaultsUnchanged:
-    def test_no_training_policy_intent_preserves_legacy_defaults(self):
+class TestMissingTrainingPolicyFailsClosed:
+    def test_no_training_policy_intent_fails_closed_instead_of_inheriting_binary_defaults(self):
+        # A multiclass modeling intent without training_policy_intent must never
+        # receive binary-era defaults (roc_auc/f1/pr_auc): it fails closed.
         raw_discovery_evidence = discovery_evidence.generate_discovery_evidence(DRY_BEAN_RAW_PATH, seed=42)
         modeling_intent = discovery_evidence.build_dataset_modeling_intent(
             dataset_slug=DATASET_SLUG,
@@ -251,10 +253,9 @@ class TestLegacyBinaryDerivationDefaultsUnchanged:
             observed_target_distribution={},
             identifier_columns=[],
         )
-        contract = contract_derivation._build_execution_contract(modeling_intent, raw_discovery_evidence, None)
-        assert contract["numeric_handling"] == "standardize"
-        assert contract["primary_metric"] == "roc_auc"
-        assert "selection_mode" not in contract["modeling_constraints"]
+        with pytest.raises(contract_derivation.TrainingPolicyValidationError) as exc:
+            contract_derivation._build_execution_contract(modeling_intent, raw_discovery_evidence, None)
+        assert "training_policy_intent is absent" in str(exc.value)
 
 
 @pytest.fixture(scope="module")

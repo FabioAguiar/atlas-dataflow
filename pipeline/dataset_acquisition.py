@@ -2,7 +2,7 @@
 Generic Atlas-owned Rdatasets source acquisition helper (Project Spec S0254).
 
 This module is dataset-agnostic: it must never branch on a specific dataset
-slug, encode Nottingham-specific period logic, or contain forecasting,
+slug, encode dataset-specific period logic, or contain forecasting,
 training, or publisher logic. It owns exactly one responsibility --
 materializing (or safely reusing) a normalized local CSV copy of a named
 Rdatasets dataset inside the Atlas repository, over the Python standard

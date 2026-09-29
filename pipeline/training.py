@@ -88,9 +88,9 @@ FEATURE_IMPORTANCE_TOP_N = 10
 # protected purely by its contract, with no code edit.
 
 # Accepted on-disk encodings for an execution-contract `boolean` feature type
-# (Project Spec S0026). Telco's own raw CSV alone uses two different
-# conventions for boolean-typed columns: SeniorCitizen as "0"/"1" and
-# Partner/Dependents as "Yes"/"No" (confirmed via discovery-evidence.json).
+# (Project Spec S0026): an Atlas-wide superset, since a single raw source can
+# mix conventions (e.g. "0"/"1" in one boolean column and "Yes"/"No" in
+# another).
 _BOOLEAN_ENCODED_VALUES = frozenset({"0", "1", "true", "false", "yes", "no", "t", "f", "y", "n"})
 
 # Metric direction comes from the canonical metric identity registry.
@@ -480,8 +480,8 @@ def _validate_missing_value_policy(
     A blank/missing value in a feature column is only acceptable when the
     execution contract's `missing_value_policy` carries an explicit entry
     naming how that column's missing values are handled (Project Spec
-    S0026) — for example Telco's own `TotalCharges` blanks, which are
-    single-space strings in the raw CSV, not empty strings. Silent
+    S0026) — including blanks that are whitespace-only strings in the raw
+    source rather than empty strings. Silent
     acceptance without a recorded policy decision is never permitted.
     """
     missing_value_policy = contract.get("missing_value_policy")
@@ -2621,9 +2621,8 @@ def train_from_paths(
 # explicit path references, whether `train_from_paths` is ready to be
 # invoked. An execution-contract draft (Project Spec S0014,
 # `execution_contract_draft.v1`) is always reported as not training-ready,
-# and any unresolved review items it already carries (for example
-# `TotalCharges` blank-value handling) are surfaced rather than silently
-# accepted.
+# and any unresolved review items it already carries (for example a pending
+# blank-value handling decision) are surfaced rather than silently accepted.
 # ---------------------------------------------------------------------------
 
 TRAINING_INVOCATION_READINESS_CONTRACT_VERSION = "training_invocation_readiness.v1"

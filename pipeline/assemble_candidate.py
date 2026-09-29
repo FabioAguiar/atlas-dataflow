@@ -1075,7 +1075,7 @@ class LayoutRolePolicyResult:
     roles against a resolved capability role policy (Project Spec S0168,
     desired changes B/C). Applicability comes only from `role_policy` and
     presence comes only from `declared_roles` -- this function never reads
-    a dataset slug, Telco identity, filesystem existence, or a milestone
+    a dataset slug or identity, filesystem existence, or a milestone
     id, so candidate applicability can never be derived from any of those."""
 
     valid: bool

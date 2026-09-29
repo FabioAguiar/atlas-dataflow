@@ -1917,9 +1917,8 @@ def _build_execution_contract(
     (`identifier_and_ignored_columns`), or discovery evidence has no
     recognised `inferred_type` for it, or an unresolved (not
     'explicit'/'inferred_approved') missing-value-handling review item names
-    it -- this is how a still-pending blank-value concern (e.g.
-    TotalCharges) is excluded from execution scope instead of being silently
-    approved. Per-feature `type` is grounded in discovery evidence's own
+    it -- this is how a still-pending blank-value concern is excluded from
+    execution scope instead of being silently approved. Per-feature `type` is grounded in discovery evidence's own
     `inferred_type`, using the same compatibility mapping enforced by
     `pipeline/validate_contract_consistency.py`, so a materialized contract
     always passes that consistency check by construction.

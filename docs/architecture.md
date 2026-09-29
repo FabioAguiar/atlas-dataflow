@@ -185,9 +185,11 @@ boundaries, or public/internal evidence controls.
 ### Dataset integration notebook
 
 The dataset integration notebook is dataset-specific and is the single
-canonical, human-facing orchestration entrypoint for its dataset. The
-canonical Telco name is
-`notebooks/datasets/telco-customer-churn/dataset_integration.ipynb`.
+canonical, human-facing orchestration entrypoint for its dataset, at the
+conventional path `notebooks/datasets/<dataset_slug>/dataset_integration.ipynb`
+(e.g. `notebooks/datasets/telco-customer-churn/dataset_integration.ipynb`). No
+single dataset's notebook is globally canonical; shared notebook plumbing
+lives in `pipeline/notebook_support.py`.
 
 Project Spec S0179 extended this notebook's orchestration boundary beyond
 authoring alone. The notebook:

@@ -23,8 +23,8 @@ registry/datasets.json entries -- never inside public_metadata, which
 registry/validate.py's UNSAFE_METADATA_FIELDS check rejects extra keys on)
 tracks whether a Dataset Detail has ever been curated/published, independent
 of whether its published snapshot is currently hidden/shown. An entry with
-no review_status (every dataset seeded before this issue, e.g.
-telco-customer-churn) defaults to "ready", preserving existing public
+no review_status (every dataset seeded before this issue) defaults to
+"ready", preserving existing public
 listing behavior exactly; only a brand-new entry created by
 registry/update.py's promotion-driven entry creation defaults to
 "needs_review". is_dataset_needs_review() is the gate api/main.py's public

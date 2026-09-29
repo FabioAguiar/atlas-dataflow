@@ -4,7 +4,14 @@ Esta página descreve a camada que permite ao Atlas responder, de forma verific�
 
 > O Atlas consegue reproduzir o protocolo científico desta revisão específica do Dataset Study?
 
-O primeiro caso-piloto é o `dataset-study-telco-customer-churn`, pinado na revisão `43ced1fbb76f55ad156e133ee421e756b1921df1`. A infraestrutura é genérica: o código não tem nenhum caminho `if telco`. O que é específico do Telco vive apenas no contrato versionado do estudo.
+Há dois casos reais:
+
+| Estudo | Revisão | Problema | Contrato | Status da reprodução |
+|---|---|---|---|---|
+| `dataset-study-telco-customer-churn` | `43ced1fbb76f` | classificação binária | `scientific-study-contract.v1` | `reproduced_within_tolerance` |
+| `dataset-study-dry-bean` | `e3e697c1b60f` | classificação multiclasse (7 classes) + seleção em duas etapas | `scientific-study-contract.v2` | `reproduced_within_tolerance` ([detalhes](scientific-reproduction-dry-bean.md)) |
+
+A infraestrutura é genérica. O código despacha pelo `problem.problem_type` (adapters `binary_classification` e `multiclass_classification`) e não tem nenhum caminho `if telco` ou `if dry-bean`; um teste garante que os módulos do motor não citam datasets. O que é específico de cada estudo vive apenas no contrato versionado.
 
 ## 1. Linhagens de evidência
 
@@ -35,6 +42,10 @@ Regras aplicadas pelo código e pelos testes:
 | `pipeline/scientific-reproduction-report.schema.json` | schema | `scientific-reproduction-report.v1` |
 | `pipeline/scientific-studies/telco-customer-churn/study-43ced1fbb76f/scientific-study-contract.json` | contrato | protocolo + evidência de referência do Telco na revisão pinada |
 | `pipeline/scientific-reproduction-runs/telco-customer-churn/<run_id>/` | evidência | `reproduction-report.json` + `search-results.json` (todas as configurações de busca) |
+| `pipeline/scientific-study-contract.v2.schema.json` | schema | `scientific-study-contract.v2`: binário + multiclasse com regras condicionais |
+| `pipeline/scientific-reproduction-report.v2.schema.json` | schema | `scientific-reproduction-report.v2` (os relatórios v1 continuam válidos no schema v1) |
+| `pipeline/scientific-studies/dry-bean/study-e3e697c1b60f/` | contrato | contrato Dry Bean + rascunho de autoria (`authoring/contract-draft.json`) |
+| `pipeline/scientific-reproduction-runs/dry-bean/repro-20260929T163341Z/` | evidência | primeira reprodução real do Dry Bean |
 
 `pipeline/training.py` passou a resolver as classes de estimador pelo registry. Os argumentos de construção nativos não mudaram (`LogisticRegression(max_iter=1000, …)` etc.), e o conjunto nativo `SUPPORTED_MODEL_FAMILIES` também não.
 
@@ -58,6 +69,25 @@ Seções: `study_identity`, `source_repository` (URL, commit, arquivos pinados c
 - **Composição por referência.** O contrato referencia arquivos do estudo por caminho e hash e não copia notebooks, locks nem artefatos.
 - **Evidência localizável.** Cada valor esperado tem `source.path` e um `locator`: `notebook_cell_output:<n>` ou `file_text` (texto renderizado), ou `json_pointer:/…` (valor em artefato JSON estruturado). `verify_against_study_checkout` confere commit, hashes pinados e todos os locators e devolve `synchronized`, `revision_differs_but_pinned_content_unchanged` ou `study_revision_drift`. O caminho absoluto do checkout nunca é gravado.
 - **Tolerância declarada antes da primeira execução.** Para o Telco: `numeric_absolute = 1e-4` (duas ordens de grandeza abaixo da tolerância de empate prático do próprio estudo, 0,01) e contagens exatas. Valores publicados com N casas também aceitam meia unidade da precisão reportada, com o tier registrado.
+
+### Contrato v2 (binário e multiclasse)
+
+`scientific-study-contract.v2` não torna campos opcionais indiscriminadamente. Ele usa regras condicionais por `problem_type`:
+
+| Conceito | `binary_classification` | `multiclass_classification` |
+|---|---|---|
+| `problem.target.positive_class` | classe obrigatória | `{"applicable": false, "reason": …}` obrigatório; `null` ou uma classe são rejeitados |
+| `threshold_policy` | regra de threshold obrigatória | `{"kind": "not_applicable", "applicable": false, "reason": "multiclass_argmax_decision"}` |
+| `metrics.default_threshold` | permitido | proibido |
+| `problem.decision_rule` | `probability_threshold` | `argmax_class_probability` + `tie_resolution` |
+| ordens de classes | — | `estimator_class_order` e `public_class_order` obrigatórias e distintas |
+| vocabulário de métricas | AP, ROC-AUC, Brier, F1/F2, precisão/recall… | macro-F1, balanced accuracy, macro recall, weighted F1, accuracy, recall mínimo por classe, log loss multiclasse |
+
+Outras novidades: membership `technical_row_occurrence` (hash da linha + ordinal de ocorrência, para fontes sem identificador), `partition_fingerprint` (SHA-256 dos bytes CSV), **gates de protocolo** (membership e número de linhas do fit final: a execução para antes de qualquer fit se a partição não coincidir), `family_shortlist`, `feature_policies` (projeções com parâmetros congelados da família), `interpretive_evidence` (pares de confusão, sensibilidade a perfis repetidos), `canonical_run` pinado, grupo `runtime_identity` (bytes da matriz de probabilidades, que nunca tornam uma reprodução divergente), `protocol_integrity` (isolamento procedimental × exposição histórica) e `protocol_parameter_sources` (parâmetros declarados reconferidos contra o artefato do estudo). `validate_contract_semantics` checa coerência entre campos: ordens de classes como permutações, políticas que excluem só features conhecidas, canonical run pinado com o mesmo hash etc.
+
+**Autoria sem transcrição.** `python -m pipeline.scientific_study_contract author --draft … --study-checkout … --output …` preenche valores esperados, gates e hashes a partir do checkout pinado, por JSON pointer. `verify` reconfere o contrato contra o checkout.
+
+**Probabilidades multiclasse.** A coluna *j* de `predict_proba` pertence a `estimator.classes_[j]`. `align_probabilities_to_class_order` mapeia colunas para classes por rótulo e falha se faltar classe, sobrar classe ou se a ordem ajustada diferir da declarada. O log loss é calculado depois desse mapeamento. Um teste de regressão mostra que tratar as colunas brutas como ordem pública muda o log loss.
 
 ## 4. Ambiente científico
 
@@ -83,6 +113,8 @@ Calculados por `compute_reproduction_status`, nesta ordem:
 | `insufficient_scientific_evidence` | falta valor esperado, há lacuna `blocking` ou não há evidência numérica |
 | `reproduced_exact` | ambiente `exact` e tudo igual na precisão reportada |
 | `reproduced_within_tolerance` | demais casos concordantes (ex.: ambiente `compatible`) |
+
+Uma falha de gate de protocolo (membership ou linhas do fit final) produz `divergent` logo depois das checagens de dataset, capacidade e ambiente, e nenhuma etapa posterior é executada. Cada relatório v2 traz `reproduction_status.evidence_tiers`: `structural_exact`, `numeric_exact_at_reported_precision`, `numeric_within_tolerance`, `environment`, `byte_identical_runtime`, `unsupported_capabilities` e `scientific_mismatches`. Assim ficam separados "mesmo protocolo científico" e "runtime byte-idêntico". Toda métrica carrega `metric_scope` (`baseline_validation`, `family_search_cv`, `feature_policy_cv`, `candidate_validation`, `scientific_final_test`), `feature_policy`, `fit_partitions`, `class_order` e o threshold ou o registro explícito de não aplicável.
 
 A reprodução responde ao critério de sucesso por `answer_reproduction_questions(report)`: revisão, dataset, ambiente de referência, modelos esperados e executados, espaços de busca, regra de seleção, regra de threshold, métricas esperadas e reproduzidas, deltas, tolerância, itens não suportados, status final e perguntas sem resposta (lacunas registradas).
 
@@ -172,7 +204,7 @@ Os hiperparâmetros do HGB nativo coincidem com os selecionados pelo estudo, mas
 
 **Capacidade ausente (vira `atlas_capability_missing`, sem execução parcial):**
 
-- Dry Bean: métricas multiclasse (`macro_f1`, recall da pior classe) e scorers; split sem identificador (membership por ocorrência de linha); etapa de política de features.
+- Dry Bean: **implementado nesta evolução** (métricas multiclasse, membership por ocorrência de linha, shortlist e etapa de políticas de features). Ver [scientific-reproduction-dry-bean.md](scientific-reproduction-dry-bean.md).
 - Concrete: família `ridge`; `KFold` não estratificado; split não estratificado; métricas de regressão (MAE, RMSE, MedAE, R²).
 - Nottingham: famílias statsmodels e baselines ingênuos; backtesting expanding-window; holdout temporal.
 
@@ -182,7 +214,8 @@ Os hiperparâmetros do HGB nativo coincidem com os selecionados pelo estudo, mas
 
 ## 10. Limitações restantes
 
-- O protocolo tabular suportado cobre apenas classificação binária (`tabular_holdout_model_selection.v1`).
+- O protocolo tabular suportado cobre classificação binária e multiclasse (`tabular_holdout_model_selection.v1`/`.v2`). Regressão e forecasting continuam fora de escopo e aparecem como `atlas_capability_missing`.
+- A regra de desempate Dry Bean do estudo é um mínimo lexicográfico, e o motor aplica os critérios em sequência. Um teste com 300 casos aleatórios confirma a equivalência. Com valores iguais a menos de 1e-12, a filtragem sequencial trata como empate o que a comparação exata do estudo distinguiria.
 - A referência do Telco vem de outputs de notebook (6 casas) e do README, porque o estudo não versiona seus artefatos estruturados.
 - A reprodução não é `exact`: não há runner linux-aarch64 com CPython 3.13.13 neste ambiente.
 - A linhagem nativa continua sem proveniência por `metric_set` e sem hash da fonte bruta. A visão de linhagens a rotula, mas não altera artefatos nativos.
@@ -192,6 +225,6 @@ Os hiperparâmetros do HGB nativo coincidem com os selecionados pelo estudo, mas
 
 1. Nos Dataset Studies, versionar um `canonical-run.json` também no Telco (como Dry Bean e Nottingham já fazem), incluindo membership SHA e melhores hiperparâmetros por família, para que a referência deixe de depender de texto renderizado.
 2. Executar a reprodução em linux-aarch64 com CPython 3.13.13 para buscar `reproduced_exact`.
-3. Adicionar `multiclass_classification` (Dry Bean) como próximo protocolo: scorers macro, split por ocorrência de linha e estágio de política de features.
+3. ~~Adicionar `multiclass_classification` (Dry Bean)~~: feito. Próximo candidato: regressão (Concrete), com `k_fold` não estratificado e família `ridge`.
 4. Pinar o SHA-256 da fonte bruta também na linhagem nativa e dar proveniência de linhagem às métricas nativas em uma versão nova de schema, sem reescrever artefatos antigos.
 5. Orquestrar as etapas do motor (já funções determinísticas com entradas e saídas JSON) quando o Airflow for introduzido.

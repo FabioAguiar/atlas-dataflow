@@ -5,7 +5,6 @@ import {
   datasetThemeStyle,
   getDatasetIcon,
   isSafeHomeCardMediaReference,
-  presentHomeCardDescription,
   resolveDatasetThemePreset,
   type DatasetIconName,
 } from "../../lib/datasetPresentation";
@@ -106,7 +105,7 @@ export default function DatasetCard({
 }: DatasetCardProps) {
   const icon = iconOverride ?? getDatasetIcon(domain, tags);
   const safeMediaRef = isSafeHomeCardMediaReference(mediaRef) ? mediaRef : null;
-  const description = presentHomeCardDescription(summary);
+  const description = summary?.trim() ?? "";
   const resolvedTheme = resolveDatasetThemePreset(themePreset);
 
   return (

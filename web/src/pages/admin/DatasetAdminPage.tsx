@@ -78,6 +78,7 @@ import {
 import {
   DATASET_THEME_PRESETS,
   DEFAULT_DATASET_THEME_PRESET,
+  getProblemTypeLabel,
   isDatasetThemePresetId,
   normalizeDatasetDateOnly,
   presentDatasetOperationalTimestamp,
@@ -2820,7 +2821,7 @@ function MetadataCardTab({
               <h2>Problem type</h2>
             </div>
             <div aria-label="Problem type display" className="dataset-admin-problem-type-options">
-              <strong>{problemType === "binary_classification" ? "Binary Classification" : problemType === "multiclass_classification" ? "Multiclass Classification" : problemType === "continuous_regression" ? "Continuous Regression" : problemType === "univariate_forecasting" ? "Univariate Forecasting" : "Unavailable"}</strong>
+              <strong>{getProblemTypeLabel(problemType, "Unavailable")}</strong>
               <small>Release-governed</small>
             </div>
           </Card>

@@ -589,6 +589,19 @@ def test_scientific_values_are_in_natural_orientation(run):
         assert not any(key.startswith("neg_") for key in metric_set["metrics"])
 
 
+def test_comparable_evidence_keeps_pipeline_names_eligibility_and_effective_parameters(run):
+    actuals = run["result"].actuals
+    for model_id, search in actuals["search"].items():
+        assert search["pipeline_best_params"] == {f"model__{k}": v for k, v in search["best_params"].items()}
+    selection = actuals["selection"]
+    assert selection["selected_pipeline_params"] == actuals["search"][selection["selected_model_id"]]["pipeline_best_params"]
+    assert selection["eligibility"] == {m: m in selection["eligible_model_ids"] for m in actuals["validation"]}
+    effective = actuals["final_fit"]["estimator_effective_parameters"]
+    assert all(value is not None for value in effective.values())
+    for name, value in selection["selected_best_params"].items():
+        assert effective[name] == value
+
+
 def test_search_refits_on_the_best_cv_mae(run):
     table = run["result"].search_results["decision_tree"]
     best = min(table, key=lambda row: (row["mean_mae"], row["candidate_index"]))

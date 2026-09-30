@@ -705,6 +705,7 @@ def run_candidate_search(candidate: Mapping[str, Any], contract: Mapping[str, An
         "candidate_count_expected": expected,
         "best_index": best,
         "best_params": {name.removeprefix("model__"): _jsonable(value) for name, value in searcher.best_params_.items()},
+        "pipeline_best_params": {name: _jsonable(value) for name, value in searcher.best_params_.items()},
         "refit_metric": refit_name,
         "search_strategy": type(searcher).__name__,
         "search_random_state": search.get("random_state") if search["kind"] == "randomized" else None,
@@ -2006,6 +2007,7 @@ class Reproduction:
                 "candidate_count_expected": summary["candidate_count_expected"],
                 "candidate_count_executed": summary["candidate_count_executed"],
                 "best_params": summary["best_params"],
+                "pipeline_best_params": summary["pipeline_best_params"],
                 "search_strategy": summary["search_strategy"],
                 "search_random_state": summary["search_random_state"],
                 "search_duration_seconds": summary["search_duration_seconds"],
@@ -2149,6 +2151,7 @@ class Reproduction:
             "practical_tie": selection.get("practical_tie", False),
             "selected_model_id": selection["selected_model_id"],
             "deciding_criterion": selection.get("deciding_criterion"),
+            "eligibility": {r["model_id"]: r["eligible"] for r in selection["records"]},
         }
         selected_id = selection["selected_model_id"]
         if selected_id is None:
@@ -2158,6 +2161,7 @@ class Reproduction:
         base_id = selected_variant["base_model_id"]
         selected_candidate = candidates[base_id]
         actuals["selection"]["selected_best_params"] = actuals["search"][base_id]["best_params"]
+        actuals["selection"]["selected_pipeline_params"] = actuals["search"][base_id]["pipeline_best_params"]
         actuals["selection"]["selected_base_model_id"] = base_id
         actuals["selection"]["selected_family"] = selected_candidate["family"]
         actuals["selection"]["selected_feature_policy"] = selected_variant["feature_policy"]
@@ -2190,7 +2194,10 @@ class Reproduction:
                                                   extra_params=actuals["search"][base_id]["best_params"],
                                                   feature_columns=columns if policies_spec else None)
         final_pipeline.fit(final_x, final_y)
-        actuals["selection"]["selected_estimator_class"] = type(final_pipeline.named_steps["model"]).__name__
+        final_estimator = final_pipeline.named_steps["model"]
+        actuals["selection"]["selected_estimator_class"] = type(final_estimator).__name__
+        actuals["final_fit"]["estimator_effective_parameters"] = {
+            name: _jsonable(value) for name, value in final_estimator.get_params(deep=False).items() if value is not None}
         x_test, y_test = xy(partitions["test"], columns)
         task.final_evaluation(
             self, result, selected_id=selected_id, pipeline=final_pipeline, x_test=x_test, y_test=y_test,

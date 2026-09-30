@@ -1,0 +1,1147 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas-dataflow.local/schemas/pipeline/scientific-reproduction-report.v3.schema.json",
+  "title": "Atlas DataFlow Scientific Reproduction Report v3",
+  "description": "Scientific reproduction report v3: the v2 report plus continuous_regression. A regression report records the absence of classification concepts explicitly (positive class, class order and threshold are not-applicable records, never invented values) and carries descriptive-only interpretive diagnostics. v1 and v2 reports keep validating against their own schemas.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "artifact_kind",
+    "run_identity",
+    "evidence_lineage",
+    "dataset",
+    "environment",
+    "protocol_support",
+    "source_verification",
+    "problem",
+    "split",
+    "candidate_models",
+    "family_search",
+    "family_shortlist",
+    "feature_policy_stage",
+    "selection",
+    "final_fit",
+    "thresholds",
+    "metric_sets",
+    "comparison",
+    "gate_checks",
+    "evidence_gaps",
+    "study_observations",
+    "protocol_integrity",
+    "execution_notes",
+    "limitations",
+    "reproduction_status",
+    "immutability",
+    "interpretive_diagnostics"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "scientific-reproduction-report.v3"
+    },
+    "artifact_kind": {
+      "const": "scientific_reproduction_report"
+    },
+    "run_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "run_kind",
+        "run_id",
+        "dataset_slug",
+        "created_at",
+        "producer",
+        "engine_version"
+      ],
+      "properties": {
+        "run_kind": {
+          "const": "scientific_reproduction_run"
+        },
+        "run_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"
+        },
+        "dataset_slug": {
+          "type": "string"
+        },
+        "created_at": {
+          "type": "string"
+        },
+        "producer": {
+          "type": "string"
+        },
+        "engine_version": {
+          "type": "string"
+        }
+      }
+    },
+    "evidence_lineage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "scientific_study_run",
+        "scientific_reproduction_run",
+        "atlas_native_training_run",
+        "atlas_release"
+      ],
+      "properties": {
+        "scientific_study_run": {
+          "type": "object",
+          "required": [
+            "role",
+            "study_id",
+            "study_revision",
+            "study_contract"
+          ],
+          "properties": {
+            "role": {
+              "const": "reference_evidence"
+            }
+          }
+        },
+        "scientific_reproduction_run": {
+          "type": "object",
+          "required": [
+            "role",
+            "run_id"
+          ],
+          "properties": {
+            "role": {
+              "const": "independent_atlas_reproduction"
+            }
+          }
+        },
+        "atlas_native_training_run": {
+          "type": "object",
+          "required": [
+            "role",
+            "referenced"
+          ],
+          "properties": {
+            "role": {
+              "const": "separate_lineage"
+            },
+            "referenced": {
+              "const": false
+            }
+          }
+        },
+        "atlas_release": {
+          "type": "object",
+          "required": [
+            "role",
+            "referenced"
+          ],
+          "properties": {
+            "role": {
+              "const": "separate_lineage"
+            },
+            "referenced": {
+              "const": false
+            }
+          }
+        }
+      }
+    },
+    "dataset": {
+      "type": "object",
+      "required": [
+        "dataset_slug",
+        "verified",
+        "expected_sha256"
+      ],
+      "properties": {
+        "verified": {
+          "type": "boolean"
+        }
+      }
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "scientific_reference",
+        "reproduction_runtime",
+        "compatibility"
+      ],
+      "properties": {
+        "scientific_reference": {
+          "type": "object"
+        },
+        "reproduction_runtime": {
+          "type": "object"
+        },
+        "compatibility": {
+          "type": "object",
+          "required": [
+            "classification"
+          ],
+          "properties": {
+            "classification": {
+              "enum": [
+                "exact",
+                "compatible",
+                "incompatible",
+                "unknown"
+              ]
+            }
+          }
+        },
+        "interpretation": {
+          "type": "string"
+        }
+      }
+    },
+    "protocol_support": {
+      "type": "object",
+      "required": [
+        "status",
+        "gaps"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "fully_supported",
+            "unsupported_elements_present"
+          ]
+        },
+        "gaps": {
+          "type": "array"
+        }
+      }
+    },
+    "source_verification": {
+      "type": "object",
+      "required": [
+        "status"
+      ]
+    },
+    "problem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "problem_type",
+        "target_column",
+        "positive_class",
+        "decision_rule",
+        "class_order"
+      ],
+      "properties": {
+        "problem_type": {
+          "enum": [
+            "binary_classification",
+            "multiclass_classification",
+            "continuous_regression"
+          ]
+        },
+        "target_column": {
+          "type": "string"
+        },
+        "classes": {
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "positive_class": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "$ref": "#/$defs/not_applicable"
+            }
+          ]
+        },
+        "decision_rule": {
+          "type": "object",
+          "required": [
+            "kind"
+          ]
+        },
+        "class_order": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "estimator_class_order",
+                "public_class_order",
+                "fitted_estimator_class_order"
+              ],
+              "properties": {
+                "estimator_class_order": {
+                  "type": "array"
+                },
+                "public_class_order": {
+                  "type": "array"
+                },
+                "fitted_estimator_class_order": {
+                  "type": [
+                    "array",
+                    "null"
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "target": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "classification_concepts": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/not_applicable"
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "problem_type": {
+                "const": "multiclass_classification"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "positive_class": {
+                "$ref": "#/$defs/not_applicable"
+              },
+              "decision_rule": {
+                "properties": {
+                  "kind": {
+                    "const": "argmax_class_probability"
+                  }
+                }
+              },
+              "class_order": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "problem_type": {
+                "const": "binary_classification"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "positive_class": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "problem_type": {
+                "const": "continuous_regression"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "target",
+              "classification_concepts"
+            ],
+            "properties": {
+              "positive_class": {
+                "$ref": "#/$defs/not_applicable"
+              },
+              "classes": {
+                "type": "null"
+              },
+              "class_order": {
+                "type": "null"
+              },
+              "classification_concepts": {
+                "$ref": "#/$defs/not_applicable"
+              },
+              "target": {
+                "type": "object"
+              },
+              "decision_rule": {
+                "properties": {
+                  "kind": {
+                    "const": "continuous_point_prediction"
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "split": {
+      "type": "object",
+      "required": [
+        "kind",
+        "seeds_used",
+        "membership",
+        "observed",
+        "gate"
+      ],
+      "properties": {
+        "seeds_used": {
+          "type": "object"
+        },
+        "membership": {
+          "type": "object",
+          "required": [
+            "kind",
+            "digest_order"
+          ]
+        },
+        "observed": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "gate": {
+          "type": [
+            "object",
+            "null"
+          ]
+        }
+      }
+    },
+    "candidate_models": {
+      "type": "object",
+      "required": [
+        "expected",
+        "executed",
+        "search_spaces"
+      ],
+      "properties": {
+        "expected": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "executed": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "search_spaces": {
+          "type": "object"
+        }
+      }
+    },
+    "family_search": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "model_id",
+          "family",
+          "search_strategy",
+          "declared_search_space",
+          "candidate_count_expected",
+          "candidate_count_executed",
+          "random_seed",
+          "best_params",
+          "best_score",
+          "cv_metrics"
+        ]
+      }
+    },
+    "family_shortlist": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "required": [
+            "rule",
+            "ranking",
+            "model_ids"
+          ]
+        }
+      ]
+    },
+    "feature_policy_stage": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "required": [
+            "policies",
+            "applies_to",
+            "candidates"
+          ],
+          "properties": {
+            "candidates": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "model_id",
+                  "family",
+                  "feature_policy",
+                  "feature_count",
+                  "feature_columns",
+                  "cv_reference",
+                  "validation_metrics",
+                  "selection_eligible"
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "selection": {
+      "type": "object",
+      "required": [
+        "rule",
+        "executed"
+      ]
+    },
+    "final_fit": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "thresholds": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "scientific_policy",
+            "scientific_reference",
+            "scientific_reproduced",
+            "atlas_native_operational"
+          ],
+          "properties": {
+            "scientific_policy": {
+              "$ref": "#/$defs/threshold_entry"
+            },
+            "scientific_reference": {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/threshold_entry"
+                },
+                {
+                  "properties": {
+                    "provenance": {
+                      "const": "scientific_study_run"
+                    }
+                  }
+                }
+              ]
+            },
+            "scientific_reproduced": {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/threshold_entry"
+                },
+                {
+                  "properties": {
+                    "provenance": {
+                      "const": "scientific_reproduction_run"
+                    }
+                  }
+                }
+              ]
+            },
+            "atlas_native_operational": {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/threshold_entry"
+                },
+                {
+                  "properties": {
+                    "provenance": {
+                      "const": "atlas_native_training_run"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "applicable",
+            "reason",
+            "decision_rule",
+            "positive_class",
+            "scientific_policy",
+            "atlas_native_operational"
+          ],
+          "properties": {
+            "applicable": {
+              "const": false
+            },
+            "reason": {
+              "type": "string",
+              "minLength": 1
+            },
+            "decision_rule": {
+              "type": "object",
+              "required": [
+                "kind"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "argmax_class_probability"
+                }
+              }
+            },
+            "positive_class": {
+              "$ref": "#/$defs/not_applicable"
+            },
+            "scientific_policy": {
+              "type": "object",
+              "required": [
+                "provenance",
+                "rule"
+              ],
+              "properties": {
+                "rule": {
+                  "type": "object",
+                  "required": [
+                    "kind"
+                  ],
+                  "properties": {
+                    "kind": {
+                      "const": "not_applicable"
+                    }
+                  }
+                }
+              }
+            },
+            "atlas_native_operational": {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/threshold_entry"
+                },
+                {
+                  "properties": {
+                    "provenance": {
+                      "const": "atlas_native_training_run"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "applicable",
+            "reason",
+            "decision_rule",
+            "positive_class",
+            "class_order",
+            "scientific_policy",
+            "atlas_native_operational"
+          ],
+          "properties": {
+            "applicable": {
+              "const": false
+            },
+            "reason": {
+              "type": "string",
+              "minLength": 1
+            },
+            "decision_rule": {
+              "type": "object",
+              "required": [
+                "kind"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "continuous_point_prediction"
+                }
+              }
+            },
+            "positive_class": {
+              "$ref": "#/$defs/not_applicable"
+            },
+            "class_order": {
+              "$ref": "#/$defs/not_applicable"
+            },
+            "scientific_policy": {
+              "type": "object",
+              "required": [
+                "provenance",
+                "rule"
+              ],
+              "properties": {
+                "rule": {
+                  "$ref": "#/$defs/not_applicable"
+                }
+              }
+            },
+            "atlas_native_operational": {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/threshold_entry"
+                },
+                {
+                  "properties": {
+                    "provenance": {
+                      "const": "atlas_native_training_run"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "metric_sets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "metric_set_id",
+          "provenance",
+          "metrics"
+        ],
+        "properties": {
+          "metric_set_id": {
+            "type": "string"
+          },
+          "provenance": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "producer_lineage",
+              "metric_scope",
+              "problem_type",
+              "run_id",
+              "study_revision",
+              "study_contract_sha256",
+              "dataset_sha256",
+              "partition",
+              "partition_membership_sha256",
+              "model_id",
+              "feature_policy",
+              "fit_partitions",
+              "threshold",
+              "class_order",
+              "protocol_kind"
+            ],
+            "properties": {
+              "producer_lineage": {
+                "const": "scientific_reproduction_run"
+              },
+              "metric_scope": {
+                "enum": [
+                  "baseline_validation",
+                  "family_search_cv",
+                  "feature_policy_cv",
+                  "candidate_validation",
+                  "scientific_final_test",
+                  "interpretive_diagnostic"
+                ]
+              },
+              "problem_type": {
+                "enum": [
+                  "binary_classification",
+                  "multiclass_classification",
+                  "continuous_regression"
+                ]
+              },
+              "run_id": {
+                "type": "string"
+              },
+              "study_revision": {
+                "type": "string"
+              },
+              "study_contract_sha256": {
+                "type": "string"
+              },
+              "dataset_sha256": {
+                "type": "string"
+              },
+              "partition": {
+                "enum": [
+                  "train_cross_validation",
+                  "validation",
+                  "test"
+                ]
+              },
+              "partition_membership_sha256": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "model_id": {
+                "type": "string"
+              },
+              "feature_policy": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "fit_partitions": {
+                "type": [
+                  "array",
+                  "null"
+                ],
+                "items": {
+                  "type": "string"
+                }
+              },
+              "threshold": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "type": "object",
+                    "required": [
+                      "value",
+                      "rule",
+                      "provenance"
+                    ],
+                    "properties": {
+                      "value": {
+                        "type": "number"
+                      },
+                      "rule": {
+                        "type": "string"
+                      },
+                      "provenance": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  {
+                    "$ref": "#/$defs/not_applicable"
+                  }
+                ]
+              },
+              "class_order": {
+                "type": [
+                  "array",
+                  "null"
+                ]
+              },
+              "protocol_kind": {
+                "type": "string"
+              }
+            },
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "problem_type": {
+                      "const": "multiclass_classification"
+                    },
+                    "partition": {
+                      "enum": [
+                        "validation",
+                        "test"
+                      ]
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "threshold": {
+                      "$ref": "#/$defs/not_applicable"
+                    },
+                    "class_order": {
+                      "type": "array"
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "problem_type": {
+                      "const": "continuous_regression"
+                    },
+                    "partition": {
+                      "enum": [
+                        "validation",
+                        "test"
+                      ]
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "threshold": {
+                      "$ref": "#/$defs/not_applicable"
+                    },
+                    "class_order": {
+                      "type": "null"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "metrics": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "comparison": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "gate_checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "gate",
+          "expected",
+          "observed",
+          "passed",
+          "expected_provenance"
+        ],
+        "properties": {
+          "passed": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "evidence_gaps": {
+      "type": "array"
+    },
+    "study_observations": {
+      "type": "array"
+    },
+    "protocol_integrity": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "execution_notes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "limitations": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "reproduction_status": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "reasons",
+        "evidence_tiers"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "reproduced_exact",
+            "reproduced_within_tolerance",
+            "atlas_capability_missing",
+            "environment_incompatible",
+            "insufficient_scientific_evidence",
+            "divergent",
+            "dataset_identity_mismatch"
+          ]
+        },
+        "reasons": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "evidence_tiers": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "structural_exact",
+            "numeric_exact_at_reported_precision",
+            "numeric_within_tolerance",
+            "environment",
+            "byte_identical_runtime",
+            "unsupported_capabilities",
+            "scientific_mismatches"
+          ],
+          "properties": {
+            "structural_exact": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "numeric_exact_at_reported_precision": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "numeric_within_tolerance": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "environment": {
+              "enum": [
+                "exact",
+                "compatible",
+                "incompatible",
+                "unknown"
+              ]
+            },
+            "byte_identical_runtime": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "unsupported_capabilities": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "scientific_mismatches": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0
+            }
+          }
+        }
+      }
+    },
+    "immutability": {
+      "type": "object",
+      "required": [
+        "write_once",
+        "historical_artifacts_modified"
+      ],
+      "properties": {
+        "write_once": {
+          "const": true
+        },
+        "historical_artifacts_modified": {
+          "const": false
+        }
+      }
+    },
+    "search_results_reference": {
+      "type": "object",
+      "required": [
+        "path",
+        "sha256"
+      ],
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "interpretive_diagnostics": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "required": [
+            "diagnostic_only",
+            "used_for_selection",
+            "evaluations"
+          ],
+          "properties": {
+            "diagnostic_only": {
+              "const": true
+            },
+            "used_for_selection": {
+              "const": false
+            },
+            "evaluations": {
+              "type": "array"
+            }
+          }
+        }
+      ]
+    }
+  },
+  "$defs": {
+    "not_applicable": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "applicable",
+        "reason"
+      ],
+      "properties": {
+        "applicable": {
+          "const": false
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "threshold_entry": {
+      "type": "object",
+      "required": [
+        "provenance"
+      ],
+      "properties": {
+        "provenance": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

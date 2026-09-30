@@ -1,0 +1,292 @@
+{
+  "schema_version": "1.0.0",
+  "features": [
+    {
+      "name": "gender",
+      "input_type": "select",
+      "optional": false,
+      "label": "Gender",
+      "display_order": 1,
+      "options": [
+        {
+          "value": "Female",
+          "label": "Female"
+        },
+        {
+          "value": "Male",
+          "label": "Male"
+        }
+      ]
+    },
+    {
+      "name": "SeniorCitizen",
+      "input_type": "checkbox",
+      "optional": false,
+      "label": "Seniorcitizen",
+      "display_order": 2
+    },
+    {
+      "name": "Partner",
+      "input_type": "checkbox",
+      "optional": false,
+      "label": "Partner",
+      "display_order": 3
+    },
+    {
+      "name": "Dependents",
+      "input_type": "checkbox",
+      "optional": false,
+      "label": "Dependents",
+      "display_order": 4
+    },
+    {
+      "name": "tenure",
+      "input_type": "number",
+      "optional": false,
+      "label": "Tenure",
+      "display_order": 5
+    },
+    {
+      "name": "PhoneService",
+      "input_type": "checkbox",
+      "optional": false,
+      "label": "Phoneservice",
+      "display_order": 6
+    },
+    {
+      "name": "MultipleLines",
+      "input_type": "select",
+      "optional": false,
+      "label": "Multiplelines",
+      "display_order": 7,
+      "options": [
+        {
+          "value": "No",
+          "label": "No"
+        },
+        {
+          "value": "No phone service",
+          "label": "No Phone Service"
+        },
+        {
+          "value": "Yes",
+          "label": "Yes"
+        }
+      ]
+    },
+    {
+      "name": "InternetService",
+      "input_type": "select",
+      "optional": false,
+      "label": "Internetservice",
+      "display_order": 8,
+      "options": [
+        {
+          "value": "DSL",
+          "label": "Dsl"
+        },
+        {
+          "value": "Fiber optic",
+          "label": "Fiber Optic"
+        },
+        {
+          "value": "No",
+          "label": "No"
+        }
+      ]
+    },
+    {
+      "name": "OnlineSecurity",
+      "input_type": "select",
+      "optional": false,
+      "label": "Onlinesecurity",
+      "display_order": 9,
+      "options": [
+        {
+          "value": "No",
+          "label": "No"
+        },
+        {
+          "value": "No internet service",
+          "label": "No Internet Service"
+        },
+        {
+          "value": "Yes",
+          "label": "Yes"
+        }
+      ]
+    },
+    {
+      "name": "OnlineBackup",
+      "input_type": "select",
+      "optional": false,
+      "label": "Onlinebackup",
+      "display_order": 10,
+      "options": [
+        {
+          "value": "No",
+          "label": "No"
+        },
+        {
+          "value": "No internet service",
+          "label": "No Internet Service"
+        },
+        {
+          "value": "Yes",
+          "label": "Yes"
+        }
+      ]
+    },
+    {
+      "name": "DeviceProtection",
+      "input_type": "select",
+      "optional": false,
+      "label": "Deviceprotection",
+      "display_order": 11,
+      "options": [
+        {
+          "value": "No",
+          "label": "No"
+        },
+        {
+          "value": "No internet service",
+          "label": "No Internet Service"
+        },
+        {
+          "value": "Yes",
+          "label": "Yes"
+        }
+      ]
+    },
+    {
+      "name": "TechSupport",
+      "input_type": "select",
+      "optional": false,
+      "label": "Techsupport",
+      "display_order": 12,
+      "options": [
+        {
+          "value": "No",
+          "label": "No"
+        },
+        {
+          "value": "No internet service",
+          "label": "No Internet Service"
+        },
+        {
+          "value": "Yes",
+          "label": "Yes"
+        }
+      ]
+    },
+    {
+      "name": "StreamingTV",
+      "input_type": "select",
+      "optional": false,
+      "label": "Streamingtv",
+      "display_order": 13,
+      "options": [
+        {
+          "value": "No",
+          "label": "No"
+        },
+        {
+          "value": "No internet service",
+          "label": "No Internet Service"
+        },
+        {
+          "value": "Yes",
+          "label": "Yes"
+        }
+      ]
+    },
+    {
+      "name": "StreamingMovies",
+      "input_type": "select",
+      "optional": false,
+      "label": "Streamingmovies",
+      "display_order": 14,
+      "options": [
+        {
+          "value": "No",
+          "label": "No"
+        },
+        {
+          "value": "No internet service",
+          "label": "No Internet Service"
+        },
+        {
+          "value": "Yes",
+          "label": "Yes"
+        }
+      ]
+    },
+    {
+      "name": "Contract",
+      "input_type": "select",
+      "optional": false,
+      "label": "Contract",
+      "display_order": 15,
+      "options": [
+        {
+          "value": "Month-to-month",
+          "label": "Month To Month"
+        },
+        {
+          "value": "One year",
+          "label": "One Year"
+        },
+        {
+          "value": "Two year",
+          "label": "Two Year"
+        }
+      ]
+    },
+    {
+      "name": "PaperlessBilling",
+      "input_type": "checkbox",
+      "optional": false,
+      "label": "Paperlessbilling",
+      "display_order": 16
+    },
+    {
+      "name": "PaymentMethod",
+      "input_type": "select",
+      "optional": false,
+      "label": "Paymentmethod",
+      "display_order": 17,
+      "options": [
+        {
+          "value": "Bank transfer (automatic)",
+          "label": "Bank Transfer (Automatic)"
+        },
+        {
+          "value": "Credit card (automatic)",
+          "label": "Credit Card (Automatic)"
+        },
+        {
+          "value": "Electronic check",
+          "label": "Electronic Check"
+        },
+        {
+          "value": "Mailed check",
+          "label": "Mailed Check"
+        }
+      ]
+    },
+    {
+      "name": "MonthlyCharges",
+      "input_type": "number",
+      "optional": false,
+      "label": "Monthlycharges",
+      "display_order": 18
+    },
+    {
+      "name": "TotalCharges",
+      "input_type": "number",
+      "optional": true,
+      "label": "Totalcharges",
+      "display_order": 19
+    }
+  ]
+}

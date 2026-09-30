@@ -19,6 +19,7 @@
         {
           "field_name": "SeniorCitizen",
           "display_order_hint": 3,
+          "display_label": "Senior Citizen",
           "group": "group-1"
         },
         {
@@ -40,21 +41,25 @@
         {
           "field_name": "InternetService",
           "display_order_hint": 7,
+          "display_label": "Internet Service",
           "group": "group-3"
         },
         {
           "field_name": "MultipleLines",
           "display_order_hint": 8,
+          "display_label": "Multiple Lines",
           "group": "group-3"
         },
         {
           "field_name": "PhoneService",
           "display_order_hint": 9,
+          "display_label": "Phone Service",
           "group": "group-3"
         },
         {
           "field_name": "OnlineSecurity",
           "display_order_hint": 10,
+          "display_label": "Online Security",
           "group": "group-4"
         },
         {
@@ -65,6 +70,7 @@
         {
           "field_name": "OnlineBackup",
           "display_order_hint": 12,
+          "display_label": "Online Backup",
           "group": "group-4"
         },
         {

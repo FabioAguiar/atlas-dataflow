@@ -1,0 +1,531 @@
+{
+  "artifact_kind": "scientific_reproduction_report",
+  "candidate_models": {
+    "baseline": "dummy_prior",
+    "executed": [],
+    "expected": [
+      "logistic_regression",
+      "decision_tree",
+      "random_forest",
+      "hist_gradient_boosting"
+    ],
+    "search_spaces": {
+      "decision_tree": {
+        "candidate_count_executed": null,
+        "candidate_count_expected": null,
+        "family": "decision_tree",
+        "fixed_params": {
+          "random_state": 42
+        },
+        "numerical_scaling": "passthrough",
+        "search_kind": "grid",
+        "space": {
+          "class_weight": [
+            null,
+            "balanced"
+          ],
+          "criterion": [
+            "gini",
+            "entropy"
+          ],
+          "max_depth": [
+            3,
+            5,
+            8,
+            null
+          ],
+          "min_samples_leaf": [
+            1,
+            10,
+            30
+          ]
+        }
+      },
+      "hist_gradient_boosting": {
+        "candidate_count_executed": null,
+        "candidate_count_expected": null,
+        "family": "hist_gradient_boosting",
+        "fixed_params": {
+          "random_state": 42
+        },
+        "numerical_scaling": "passthrough",
+        "search_kind": "randomized",
+        "space": {
+          "l2_regularization": [
+            0.0,
+            0.01,
+            0.1,
+            1.0,
+            10.0
+          ],
+          "learning_rate": [
+            0.03,
+            0.05,
+            0.1,
+            0.2
+          ],
+          "max_depth": [
+            null,
+            3,
+            5,
+            8
+          ],
+          "max_iter": [
+            100,
+            200,
+            400
+          ],
+          "max_leaf_nodes": [
+            7,
+            15,
+            31,
+            63
+          ],
+          "min_samples_leaf": [
+            10,
+            20,
+            40
+          ]
+        }
+      },
+      "logistic_regression": {
+        "candidate_count_executed": null,
+        "candidate_count_expected": null,
+        "family": "logistic_regression",
+        "fixed_params": {
+          "max_iter": 2000,
+          "random_state": 42,
+          "solver": "liblinear"
+        },
+        "numerical_scaling": "standard",
+        "search_kind": "grid",
+        "space": {
+          "C": [
+            0.001,
+            0.01,
+            0.1,
+            1.0,
+            10.0,
+            100.0
+          ],
+          "class_weight": [
+            null,
+            "balanced"
+          ],
+          "l1_ratio": [
+            1.0,
+            0.0
+          ]
+        }
+      },
+      "random_forest": {
+        "candidate_count_executed": null,
+        "candidate_count_expected": null,
+        "family": "random_forest",
+        "fixed_params": {
+          "n_jobs": 1,
+          "random_state": 42
+        },
+        "numerical_scaling": "passthrough",
+        "search_kind": "randomized",
+        "space": {
+          "class_weight": [
+            null,
+            "balanced",
+            "balanced_subsample"
+          ],
+          "max_depth": [
+            null,
+            8,
+            12,
+            20
+          ],
+          "max_features": [
+            "sqrt",
+            0.5,
+            null
+          ],
+          "min_samples_leaf": [
+            1,
+            2,
+            5,
+            10
+          ],
+          "min_samples_split": [
+            2,
+            10,
+            20
+          ],
+          "n_estimators": [
+            300,
+            500,
+            800
+          ]
+        }
+      }
+    }
+  },
+  "comparison": null,
+  "dataset": {
+    "atlas_local_path": "data/scientific-studies/telco-customer-churn/WA_Fn-UseC_-Telco-Customer-Churn.csv",
+    "dataset_slug": "telco-customer-churn",
+    "expected_sha256": "88be4b93fbe0cc83421af1c503794c97c342eca914c1576db7c276e61d61358a",
+    "observed_sha256": null,
+    "reason": "dataset file is absent",
+    "verified": false
+  },
+  "environment": {
+    "compatibility": {
+      "classification": "incompatible",
+      "components": [
+        {
+          "boundary": "same_minor",
+          "classification": "incompatible",
+          "component": "python",
+          "note": "crosses the declared same_minor boundary",
+          "observed": "3.12.13",
+          "reference": "3.13.13"
+        },
+        {
+          "boundary": "same_minor",
+          "classification": "incompatible",
+          "component": "joblib",
+          "note": "crosses the declared same_minor boundary",
+          "observed": "1.5.3",
+          "reference": "1.6.0"
+        },
+        {
+          "boundary": "same_minor",
+          "classification": "compatible",
+          "component": "numpy",
+          "note": "differs within the declared same_minor boundary",
+          "observed": "2.5.1",
+          "reference": "2.5.3"
+        },
+        {
+          "boundary": "same_minor",
+          "classification": "compatible",
+          "component": "pandas",
+          "note": "differs within the declared same_minor boundary",
+          "observed": "3.0.3",
+          "reference": "3.0.6"
+        },
+        {
+          "boundary": "same_minor",
+          "classification": "compatible",
+          "component": "scikit-learn",
+          "note": "differs within the declared same_minor boundary",
+          "observed": "1.9.0",
+          "reference": "1.9.1"
+        },
+        {
+          "boundary": "same_minor",
+          "classification": "compatible",
+          "component": "scipy",
+          "note": "differs within the declared same_minor boundary",
+          "observed": "1.18.0",
+          "reference": "1.18.1"
+        },
+        {
+          "boundary": "difference_is_compatible",
+          "classification": "exact",
+          "component": "platform",
+          "note": "identical",
+          "observed": "linux-aarch64",
+          "reference": "linux-aarch64"
+        }
+      ],
+      "differences": [
+        "python",
+        "joblib",
+        "numpy",
+        "pandas",
+        "scikit-learn",
+        "scipy"
+      ],
+      "lock_scope": "Only the interpreter and the declared core packages are compared; the full study lock is provenance (identified by its SHA-256) and is never installed into or merged with the Atlas environment."
+    },
+    "interpretation": "'same scientific protocol' is established by the comparison; 'byte-identical runtime' only by an exact environment and matching runtime-identity evidence.",
+    "reproduction_runtime": {
+      "core_packages": {
+        "joblib": "1.5.3",
+        "numpy": "2.5.1",
+        "pandas": "3.0.3",
+        "scikit-learn": "1.9.0",
+        "scipy": "1.18.0"
+      },
+      "implementation": "cpython",
+      "platform": "linux-aarch64",
+      "python": "3.12.13"
+    },
+    "scientific_reference": {
+      "core_packages": {
+        "joblib": "1.6.0",
+        "numpy": "2.5.3",
+        "pandas": "3.0.6",
+        "scikit-learn": "1.9.1",
+        "scipy": "1.18.1"
+      },
+      "lock": {
+        "format": "pep751",
+        "path": "pylock.toml",
+        "python_version_file": ".python-version",
+        "sha256": "ec987a5de91176c4b4785096fa075b338707d0c775594a11890992d630c98beb"
+      },
+      "platform": "linux-aarch64",
+      "python": "3.13.13"
+    }
+  },
+  "evidence_gaps": [
+    {
+      "description": "The study persists holdout membership only in gitignored artifacts; no identifier digest is present in versioned files. Split identity is checked through partition sizes and class counts and corroborated by downstream metric agreement.",
+      "gap_id": "GAP-SPLIT-MEMBERSHIP-DIGEST",
+      "severity": "informational"
+    },
+    {
+      "description": "Best hyperparameters of non-selected candidates are not printed in versioned outputs; their search reproduction is checked through CV and validation metrics only.",
+      "gap_id": "GAP-NON-SELECTED-BEST-PARAMS",
+      "severity": "informational"
+    },
+    {
+      "description": "Structured study artifacts (manifests, candidate-results, threshold-analysis, final-test-evidence) are gitignored; reference evidence is transcribed from executed notebook outputs (mostly 6-decimal display) and the README at the pinned revision.",
+      "gap_id": "GAP-STRUCTURED-ARTIFACTS-UNVERSIONED",
+      "severity": "informational"
+    }
+  ],
+  "evidence_lineage": {
+    "atlas_native_training_run": {
+      "referenced": false,
+      "relationship": "not an input to and not an output of this reproduction",
+      "role": "separate_lineage"
+    },
+    "atlas_release": {
+      "referenced": false,
+      "relationship": "a scientific reproduction never creates, modifies, replaces, or activates an Atlas release",
+      "role": "separate_lineage"
+    },
+    "scientific_reproduction_run": {
+      "role": "independent_atlas_reproduction",
+      "run_id": "repro-20260930T171105Z"
+    },
+    "scientific_study_run": {
+      "canonical_run": null,
+      "role": "reference_evidence",
+      "source_repository": "https://github.com/FabioAguiar/dataset-study-telco-customer-churn",
+      "study_contract": {
+        "path": "pipeline/scientific-studies/telco-customer-churn/study-43ced1fbb76f/scientific-study-contract.json",
+        "schema_version": "scientific-study-contract.v1",
+        "sha256": "a9b12062b8d86b8f40f496b69a4a16dac913d62a9ff439e138f94fb191dde95f",
+        "study_id": "dataset-study-telco-customer-churn",
+        "study_revision": "43ced1fbb76f55ad156e133ee421e756b1921df1",
+        "study_revision_label": "study-43ced1fbb76f"
+      },
+      "study_id": "dataset-study-telco-customer-churn",
+      "study_revision": "43ced1fbb76f55ad156e133ee421e756b1921df1"
+    }
+  },
+  "execution_notes": [],
+  "family_search": [],
+  "family_shortlist": null,
+  "feature_policy_stage": null,
+  "final_fit": null,
+  "gate_checks": [],
+  "immutability": {
+    "historical_artifacts_modified": false,
+    "supersedes": null,
+    "write_once": true
+  },
+  "limitations": [
+    "Educational benchmark on a stratified random snapshot; no temporal or prospective validity.",
+    "The educational threshold is not an operational or business-optimal threshold.",
+    "Associations and model importance are not causal effects.",
+    "Operations the study marked out_of_scope (TotalCharges log1p, scaler comparison, tenure/TotalCharges ablation, engineered interactions) are not reproduced because they were not evaluated."
+  ],
+  "metric_sets": [],
+  "problem": {
+    "class_order": null,
+    "classes": [
+      "No",
+      "Yes"
+    ],
+    "decision_rule": {
+      "kind": "probability_threshold"
+    },
+    "positive_class": "Yes",
+    "problem_type": "binary_classification",
+    "target_column": "Churn"
+  },
+  "protocol_integrity": null,
+  "protocol_support": {
+    "gaps": [],
+    "status": "fully_supported"
+  },
+  "reproduction_status": {
+    "evidence_tiers": {
+      "byte_identical_runtime": null,
+      "environment": "incompatible",
+      "numeric_exact_at_reported_precision": null,
+      "numeric_within_tolerance": null,
+      "scientific_mismatches": null,
+      "structural_exact": null,
+      "unsupported_capabilities": 0
+    },
+    "reasons": [
+      "dataset bytes do not match the pinned identity"
+    ],
+    "status": "dataset_identity_mismatch"
+  },
+  "run_identity": {
+    "created_at": "2026-09-30T17:11:05Z",
+    "dataset_slug": "telco-customer-churn",
+    "engine_version": "5",
+    "producer": "pipeline/scientific_reproduction.py",
+    "run_id": "repro-20260930T171105Z",
+    "run_kind": "scientific_reproduction_run"
+  },
+  "schema_version": "scientific-reproduction-report.v2",
+  "selection": {
+    "candidate_space": null,
+    "executed": null,
+    "rule": {
+      "eligibility": {
+        "baseline_model_id": "dummy_prior",
+        "margin": 0.01,
+        "metric": "average_precision",
+        "strict": true
+      },
+      "kind": "leader_anchored_practical_tie",
+      "leader": {
+        "direction": "max",
+        "metric": "average_precision",
+        "tie_order": "model_id"
+      },
+      "partition": "validation",
+      "practical_tie": {
+        "cv_interval_z": 1.96,
+        "metric": "average_precision",
+        "requires_cv_interval_overlap": true,
+        "tolerance": 0.01
+      },
+      "simplicity_order": [
+        "logistic_regression",
+        "decision_tree",
+        "random_forest",
+        "hist_gradient_boosting"
+      ],
+      "tie_breakers": [
+        {
+          "criterion": "lower_validation_brier_score",
+          "direction": "min",
+          "field": "validation_brier_score"
+        },
+        {
+          "criterion": "lower_validation_log_loss",
+          "direction": "min",
+          "field": "validation_log_loss"
+        },
+        {
+          "criterion": "lower_cv_average_precision_std",
+          "direction": "min",
+          "field": "cv_average_precision_std"
+        },
+        {
+          "criterion": "higher_validation_roc_auc",
+          "direction": "max",
+          "field": "validation_roc_auc"
+        },
+        {
+          "criterion": "higher_interpretability",
+          "direction": "min",
+          "field": "simplicity_rank"
+        },
+        {
+          "criterion": "lower_complexity",
+          "direction": "min",
+          "field": "simplicity_rank"
+        },
+        {
+          "criterion": "stable_model_id",
+          "direction": "min",
+          "field": "model_id"
+        }
+      ]
+    }
+  },
+  "source_verification": {
+    "reason": "no study checkout was supplied; the contract's pinned hashes were not re-checked in this run",
+    "status": "not_performed"
+  },
+  "split": {
+    "algorithm": "sklearn.model_selection.train_test_split (two stages, stratified)",
+    "fractions": {
+      "test": 0.15,
+      "train": 0.7,
+      "validation": 0.15
+    },
+    "gate": null,
+    "kind": "two_stage_stratified_holdout",
+    "membership": {
+      "digest_order": "sorted_keys",
+      "kind": "identifier"
+    },
+    "observed": null,
+    "seeds_used": {
+      "train_vs_temporary": 42,
+      "validation_vs_test": 43
+    },
+    "stratify_by": "Churn"
+  },
+  "study_observations": [
+    {
+      "affects_reproduction": false,
+      "description": "scripts/finalize_model.py reconstructs the final pipeline with scale_numerical=False regardless of the selected candidate. It is equivalent for the selected HistGradientBoosting candidate (no scaling) but would not be for Logistic Regression. Atlas refits the selected candidate with its declared scaling.",
+      "observation_id": "OBS-FINAL-PIPELINE-SCALING"
+    },
+    {
+      "affects_reproduction": false,
+      "description": "The README discloses that a superseded study version ran target-aware EDA on the full dataset, including today's test rows.",
+      "observation_id": "OBS-EARLIER-EDA-EXPOSURE"
+    }
+  ],
+  "thresholds": {
+    "atlas_native_operational": {
+      "note": "Not part of this run. The Atlas-native operational threshold is governed by the native execution contract's result_semantics and is never equated with a scientific threshold.",
+      "provenance": "atlas_native_training_run",
+      "value": null
+    },
+    "scientific_policy": {
+      "provenance": "scientific_study_contract",
+      "rule": {
+        "candidate_thresholds": "observed_validation_scores_plus_0_0.5_1",
+        "kind": "max_precision_subject_to_min_recall",
+        "min_recall": 0.8,
+        "operational": false,
+        "ordering": [
+          "precision",
+          "f2",
+          "threshold"
+        ],
+        "partition": "validation",
+        "scenario_id": "minimum_recall_0_80",
+        "scope": "educational"
+      }
+    },
+    "scientific_reference": {
+      "provenance": "scientific_study_run",
+      "source": {
+        "locator": "notebook_cell_output:38",
+        "path": "notebooks/03_model_selection_and_evaluation.ipynb",
+        "rendered_text": "0.2577809673219062"
+      },
+      "value": 0.2577809673219062
+    },
+    "scientific_reproduced": {
+      "partition": "validation",
+      "provenance": "scientific_reproduction_run",
+      "rule_kind": "max_precision_subject_to_min_recall",
+      "run_id": "repro-20260930T171105Z",
+      "value": null
+    }
+  }
+}

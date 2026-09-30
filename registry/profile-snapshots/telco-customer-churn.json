@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0.0",
   "dataset_slug": "telco-customer-churn",
-  "published_at": "2026-09-30T14:36:42Z",
+  "published_at": "2026-09-30T16:19:56Z",
   "active_release_at_publish_time": "release-20260830-001",
   "profile": {
     "display": {
@@ -11,7 +11,7 @@
       "problem_summary_body": "Each row represents one telecommunications customer account. The task is to estimate the probability of `Churn = Yes` from 19 customer, service, contract, billing, payment, tenure, and charge features. A decision threshold may then convert that probability into a binary prediction. Results reflect predictive patterns in the observed data and should not be interpreted as causal effects or validated retention decisions.",
       "source_name": "Kaggle",
       "source_url": "https://www.kaggle.com/datasets/blastchar/telco-customer-churn",
-      "release_date_label": "2026-08-29",
+      "release_date_label": "2026-08-30",
       "date_format": "dd/mm/yyyy",
       "canonical_name_fallback": true
     },
@@ -48,7 +48,7 @@
     },
     "result_card": {
       "schema_version": "binary-result-presentation.v1",
-      "positive_class_probability_label": "Positive class probability",
+      "positive_class_probability_label": "Churn probability",
       "predicted_outcome_label": "Predicted churn outcome",
       "positive_outcome_copy": "Churn is predicted for this customer account.",
       "negative_outcome_copy": "Churn is not predicted for this customer account.",

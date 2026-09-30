@@ -19,6 +19,7 @@
         {
           "field_name": "SeniorCitizen",
           "display_order_hint": 3,
+          "display_label": "Senior Citizen",
           "group": "group-1"
         },
         {
@@ -240,7 +241,8 @@
         },
         {
           "group_id": "group-4",
-          "label": "Group 4"
+          "label": "Shape Factors",
+          "description": "Source-provided numerical shape-factor variables retained as predictive morphology features."
         }
       ],
       "contract_precedence": {

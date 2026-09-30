@@ -1,0 +1,2063 @@
+{
+  "schema_version": "scientific-study-contract.v3",
+  "artifact_kind": "scientific_study_contract",
+  "study_identity": {
+    "study_id": "dataset-study-concrete-compressives-strength",
+    "dataset_slug": "concrete-compressive-strength",
+    "protocol_kind": "tabular_holdout_model_selection.v2",
+    "study_revision_label": "study-b223370e0f44",
+    "title": "Concrete Compressive Strength — Dataset Study"
+  },
+  "source_repository": {
+    "url": "https://github.com/FabioAguiar/dataset-study-concrete-compressives-strength",
+    "revision": "b223370e0f4490d620ecd16aad5b30120a538c8f",
+    "revision_committed_at": "2026-09-30T10:25:25+00:00",
+    "pinned_files": [
+      {
+        "path": "evidence/canonical-run.json",
+        "role": "canonical_run_structured_reference_evidence"
+      },
+      {
+        "path": "README.md",
+        "role": "published_results_protocol_and_evaluation_scope_narrative"
+      },
+      {
+        "path": ".python-version",
+        "role": "scientific_interpreter_contract"
+      },
+      {
+        "path": "pyproject.toml",
+        "role": "declared_dependency_contract"
+      },
+      {
+        "path": "pylock.toml",
+        "role": "scientific_environment_lock"
+      },
+      {
+        "path": "contracts/source.json",
+        "role": "pinned_source_identity"
+      },
+      {
+        "path": "scripts/canonical_run.py",
+        "role": "canonical_run_builder_and_verifier"
+      },
+      {
+        "path": "scripts/prepare_data.py",
+        "role": "non_stratified_split_membership_and_partition_fingerprint_implementation"
+      },
+      {
+        "path": "scripts/select_models.py",
+        "role": "regression_search_metrics_selection_and_group_overlap_implementation"
+      },
+      {
+        "path": "scripts/finalize_model.py",
+        "role": "final_fit_single_test_evaluation_implementation"
+      },
+      {
+        "path": "scripts/validate_duplicates.py",
+        "role": "grouped_overlap_mask_implementation"
+      },
+      {
+        "path": "notebooks/01_data_understanding_and_exploration.ipynb",
+        "role": "executed_exploration_mixture_grouping_evidence"
+      },
+      {
+        "path": "notebooks/02_data_preparation.ipynb",
+        "role": "executed_split_evidence"
+      },
+      {
+        "path": "notebooks/03_model_selection_and_evaluation.ipynb",
+        "role": "executed_candidate_space_and_selection_evidence"
+      },
+      {
+        "path": "notebooks/04_final_model_and_bundle.ipynb",
+        "role": "executed_final_fit_and_test_evidence"
+      }
+    ]
+  },
+  "canonical_run": {
+    "path": "evidence/canonical-run.json",
+    "schema_version": "canonical-run.v1",
+    "artifact_type": "canonical_reference_run"
+  },
+  "dataset_identity": {
+    "source_provider": "uci",
+    "source_reference": "UCI Machine Learning Repository dataset 165 (Concrete Compressive Strength), doi 10.24432/C5PK67",
+    "file_name": "dataset.csv",
+    "sha256": "2f6e632031e655e2344153e4d84bbebcfc7d53f91cad3ab8130076a8e1d4e1be",
+    "size_bytes": 48501,
+    "row_count": 1030,
+    "column_count": 9,
+    "read_format": "csv",
+    "read_options": {},
+    "atlas_local_path": "data/scientific-studies/concrete-compressive-strength/dataset.csv",
+    "study_source_contract_path": "contracts/source.json",
+    "acquisition_note": "The study materializes dataset.csv as pandas to_csv(index=False) of the ucimlrepo frame of UCI dataset 165. The file is gitignored in Atlas; the engine executes only when SHA-256 and size match. It is byte-identical to the source recorded by the Atlas native training runs, but the scientific reproduction reads only its own atlas_local_path."
+  },
+  "scientific_environment": {
+    "python": "3.12.13",
+    "implementation": "CPython",
+    "platform": "linux-x86_64",
+    "core_packages": {
+      "scikit-learn": "1.9.0",
+      "pandas": "3.0.3",
+      "numpy": "2.5.2",
+      "scipy": "1.18.0",
+      "joblib": "1.5.3"
+    },
+    "lock": {
+      "path": "pylock.toml",
+      "format": "pep751",
+      "python_version_file": ".python-version"
+    },
+    "compatibility_policy": {
+      "python": "same_minor",
+      "core_packages": "same_minor",
+      "platform": "difference_is_compatible",
+      "rationale": "The protocol depends on scikit-learn search, KFold, estimator and metric semantics and on pandas CSV parsing, stable within a minor release line. The pinned reference evidence (canonical-run.json) was produced on linux-x86_64 by a re-execution of the study's original linux-aarch64 canonical run; both are recorded. A different platform is a compatible difference whose numerical consequences are bounded by the tolerance policy."
+    }
+  },
+  "problem": {
+    "problem_type": "continuous_regression",
+    "target": {
+      "column": "Concrete compressive strength",
+      "semantics": "Continuous / quantitative",
+      "unit": "MPa",
+      "value_representation": "float",
+      "value_validation": "numeric_complete_finite"
+    },
+    "identifier_columns": [],
+    "classification_concepts": {
+      "applicable": false,
+      "reason": "continuous_regression_has_no_classes_positive_class_class_order_or_threshold"
+    }
+  },
+  "features": {
+    "feature_columns": [
+      "Cement",
+      "Blast Furnace Slag",
+      "Fly Ash",
+      "Water",
+      "Superplasticizer",
+      "Coarse Aggregate",
+      "Fine Aggregate",
+      "Age"
+    ],
+    "numerical": [
+      "Cement",
+      "Blast Furnace Slag",
+      "Fly Ash",
+      "Water",
+      "Superplasticizer",
+      "Coarse Aggregate",
+      "Fine Aggregate",
+      "Age"
+    ],
+    "categorical": []
+  },
+  "preparation": {
+    "rules": [],
+    "row_removal": "none"
+  },
+  "split": {
+    "kind": "two_stage_random_holdout",
+    "protocol_decision_id": "shuffled-70-15-15-seed-42",
+    "membership": {
+      "kind": "technical_row_occurrence",
+      "digest_order": "source_position",
+      "semantics": "source-order-bound full-row hash plus occurrence ordinal; technical partition evidence only, not source or entity identity"
+    },
+    "order_by_identifier": false,
+    "fractions": {
+      "train": 0.7,
+      "validation": 0.15,
+      "test": 0.15
+    },
+    "stratify_by": null,
+    "shuffle": true,
+    "seeds": {
+      "train_vs_temporary": 42,
+      "validation_vs_test": 43
+    },
+    "partition_handoff": {
+      "kind": "csv_roundtrip",
+      "float_format": "%.15g"
+    },
+    "partition_fingerprint": {
+      "kind": "csv_bytes_sha256",
+      "float_format": "%.15g"
+    },
+    "membership_gate": {
+      "required": true,
+      "source": {
+        "path": "evidence/canonical-run.json",
+        "locator": "json_pointer:/split/membership_sha256"
+      }
+    }
+  },
+  "preprocessing": {
+    "kind": "column_transformer_onehot_plus_numeric",
+    "numerical": {
+      "scaling": "per_candidate"
+    },
+    "categorical": {
+      "applicable": false,
+      "reason": "no categorical features"
+    },
+    "fit_scope": "inside_training_fold_or_final_training_only"
+  },
+  "cross_validation": {
+    "kind": "k_fold",
+    "n_splits": 5,
+    "shuffle": true,
+    "random_state": 42,
+    "partition": "train"
+  },
+  "metrics": {
+    "primary": "mae",
+    "refit": "mae",
+    "evaluated": [
+      "mae",
+      "rmse",
+      "r2",
+      "medae"
+    ],
+    "cv_scorers": [
+      "mae",
+      "rmse",
+      "r2",
+      "medae"
+    ],
+    "definitions": {
+      "mae": "mean absolute error (MPa), lower is better",
+      "rmse": "root mean squared error (MPa), lower is better",
+      "r2": "coefficient of determination, higher is better",
+      "medae": "median absolute error (MPa), lower is better",
+      "residuals": "observed - predicted; standard deviation with ddof=1; absolute-error percentiles with numpy.quantile (linear)"
+    }
+  },
+  "baseline": {
+    "model_id": "dummy_median",
+    "family": "dummy_prior",
+    "study_estimator_class": "DummyRegressor",
+    "fixed_params": {
+      "strategy": "median"
+    },
+    "numerical_scaling": "passthrough",
+    "search": {
+      "kind": "none"
+    },
+    "eligible_for_selection": false
+  },
+  "candidates": [
+    {
+      "model_id": "ridge",
+      "family": "ridge",
+      "study_estimator_class": "Ridge",
+      "fixed_params": {},
+      "numerical_scaling": "standard",
+      "search": {
+        "kind": "grid",
+        "space": {
+          "alpha": [
+            0.1,
+            1.0,
+            10.0,
+            100.0
+          ]
+        },
+        "expected_candidate_count": 4
+      },
+      "eligible_for_selection": true
+    },
+    {
+      "model_id": "decision_tree",
+      "family": "decision_tree",
+      "study_estimator_class": "DecisionTreeRegressor",
+      "fixed_params": {
+        "random_state": 42
+      },
+      "numerical_scaling": "passthrough",
+      "search": {
+        "kind": "grid",
+        "space": {
+          "max_depth": [
+            3,
+            5,
+            8,
+            null
+          ],
+          "min_samples_leaf": [
+            1,
+            5,
+            10
+          ]
+        },
+        "expected_candidate_count": 12
+      },
+      "eligible_for_selection": true
+    },
+    {
+      "model_id": "random_forest",
+      "family": "random_forest",
+      "study_estimator_class": "RandomForestRegressor",
+      "fixed_params": {
+        "n_estimators": 300,
+        "random_state": 42,
+        "n_jobs": 1
+      },
+      "numerical_scaling": "passthrough",
+      "search": {
+        "kind": "grid",
+        "space": {
+          "max_depth": [
+            null,
+            12
+          ],
+          "min_samples_leaf": [
+            1,
+            3,
+            5
+          ],
+          "max_features": [
+            1.0,
+            "sqrt"
+          ]
+        },
+        "expected_candidate_count": 12
+      },
+      "eligible_for_selection": true
+    },
+    {
+      "model_id": "hist_gradient_boosting",
+      "family": "hist_gradient_boosting",
+      "study_estimator_class": "HistGradientBoostingRegressor",
+      "fixed_params": {
+        "max_iter": 300,
+        "random_state": 42
+      },
+      "numerical_scaling": "passthrough",
+      "search": {
+        "kind": "grid",
+        "space": {
+          "learning_rate": [
+            0.05,
+            0.1
+          ],
+          "max_leaf_nodes": [
+            15,
+            31
+          ],
+          "min_samples_leaf": [
+            10,
+            20,
+            40
+          ],
+          "l2_regularization": [
+            0.0,
+            1.0
+          ]
+        },
+        "expected_candidate_count": 24
+      },
+      "eligible_for_selection": true
+    }
+  ],
+  "search_execution": {
+    "n_jobs": 1,
+    "error_score": "raise",
+    "search_partition": "train",
+    "validation_in_search": false,
+    "test_in_search": false,
+    "total_configurations": 52
+  },
+  "selection": {
+    "kind": "leader_anchored_practical_tie",
+    "partition": "validation",
+    "candidate_space": "searched_families",
+    "eligibility": {
+      "metric": "mae",
+      "margin": 0.0,
+      "strict": true,
+      "baseline_model_id": "dummy_median"
+    },
+    "leader": {
+      "metric": "mae",
+      "direction": "min",
+      "tie_order": "model_id"
+    },
+    "practical_tie": {
+      "metric": "mae",
+      "tolerance": 0.1,
+      "requires_cv_interval_overlap": false,
+      "bound": "leader_plus_tolerance"
+    },
+    "tie_breakers": [
+      {
+        "criterion": "lower_validation_rmse",
+        "field": "validation_rmse",
+        "direction": "min"
+      },
+      {
+        "criterion": "lower_validation_medae",
+        "field": "validation_medae",
+        "direction": "min"
+      },
+      {
+        "criterion": "lower_cv_mae_std",
+        "field": "cv_mae_std",
+        "direction": "min"
+      },
+      {
+        "criterion": "higher_validation_r2",
+        "field": "validation_r2",
+        "direction": "max"
+      },
+      {
+        "criterion": "stable_model_id",
+        "field": "model_id",
+        "direction": "min"
+      }
+    ],
+    "study_rule_reference": "scripts/select_models.py::select_regression_candidate_model (eligible when baseline MAE - candidate MAE > eps*max(1,|baseline|); finalists with validation_mae <= best + 0.10; lexicographic minimum of (rmse, medae, cv_mae_std, -r2, model_id), equivalent to applying the breakers in order)"
+  },
+  "final_evaluation": {
+    "kind": "refit_on_train_plus_validation_single_test_evaluation",
+    "fit_partitions": [
+      "train",
+      "validation"
+    ],
+    "fit_row_order": "train rows then validation rows, each in source order (pandas concat, ignore_index)",
+    "evaluation_partition": "test",
+    "evaluation_count": 1,
+    "fit_row_count_gate": {
+      "source": {
+        "path": "evidence/canonical-run.json",
+        "locator": "json_pointer:/final_model/fit_row_count"
+      }
+    }
+  },
+  "interpretive_evidence": {
+    "group_overlap_diagnostic": {
+      "kind": "non_destructive_group_overlap_diagnostic",
+      "group_label": "mixture",
+      "group_columns": [
+        "Cement",
+        "Blast Furnace Slag",
+        "Fly Ash",
+        "Water",
+        "Superplasticizer",
+        "Coarse Aggregate",
+        "Fine Aggregate"
+      ],
+      "excluded_columns_note": "Age is not part of the mixture identity: curing age varies within a mixture.",
+      "evaluations": [
+        {
+          "evaluated_partition": "validation",
+          "reference_partitions": [
+            "train"
+          ],
+          "model": "selected_candidate_fitted_on_train"
+        },
+        {
+          "evaluated_partition": "test",
+          "reference_partitions": [
+            "train",
+            "validation"
+          ],
+          "model": "final_model_fitted_on_fit_partitions"
+        }
+      ],
+      "minimum_subset_rows": 2,
+      "used_for_selection": false,
+      "interpretation": [
+        "A repeated mixture does not prove duplicate entity identity.",
+        "The split is row-level, not grouped: the experiment measures row-level generalization.",
+        "Performance claims are scoped mainly to mixtures represented in the fitting data.",
+        "Generalization to genuinely new mixture designs is not established.",
+        "A grouped evaluation (e.g. GroupShuffleSplit/GroupKFold) would require a new, untouched experimental design."
+      ]
+    }
+  },
+  "tolerance_policy": {
+    "numeric_absolute": 1e-09,
+    "count_absolute": 0,
+    "declared_before_first_reproduction": true,
+    "exact_elements": [
+      "dataset SHA-256, size, rows and columns",
+      "feature order and target",
+      "partition row counts, memberships and partition bytes",
+      "split seeds",
+      "candidate spaces and counts (52 configurations)",
+      "best hyperparameters per family",
+      "eligibility per candidate",
+      "practical-tie decision and group",
+      "selected model, class and hyperparameters",
+      "final estimator effective parameters",
+      "final-fit partitions and rows",
+      "test rows and evaluation count",
+      "mixture subset row counts"
+    ],
+    "rationale": "Reference values are recorded at full float precision (canonical-run.json). 1e-9 equals the study's own canonical_run verification tolerance, is eight orders of magnitude below the 0.10 MPa practical-tie tolerance and below any change of a single prediction, so no difference inside it can change a scientific conclusion; every identity, count, membership, parameter and decision is compared exactly. The study's own linux-aarch64 canonical run and its linux-x86_64 re-execution differ by at most 1.4e-14 (Ridge validation only), inside this tolerance."
+  },
+  "expected_evidence": {
+    "values": [
+      {
+        "quantity": "dataset.sha256",
+        "comparison": "exact",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/dataset/source_sha256"
+        }
+      },
+      {
+        "quantity": "dataset.rows",
+        "comparison": "count",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/dataset/source_row_count"
+        }
+      },
+      {
+        "quantity": "dataset.columns",
+        "comparison": "count",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/dataset/source_column_count"
+        }
+      },
+      {
+        "quantity": "partitions.train.rows",
+        "comparison": "count",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/split/row_counts/train"
+        }
+      },
+      {
+        "quantity": "partitions.train.membership_sha256",
+        "comparison": "exact",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/split/membership_sha256/train"
+        }
+      },
+      {
+        "quantity": "partitions.train.partition_sha256",
+        "comparison": "exact",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/split/partition_sha256/train"
+        }
+      },
+      {
+        "quantity": "partitions.validation.rows",
+        "comparison": "count",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/split/row_counts/validation"
+        }
+      },
+      {
+        "quantity": "partitions.validation.membership_sha256",
+        "comparison": "exact",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/split/membership_sha256/validation"
+        }
+      },
+      {
+        "quantity": "partitions.validation.partition_sha256",
+        "comparison": "exact",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/split/partition_sha256/validation"
+        }
+      },
+      {
+        "quantity": "partitions.test.rows",
+        "comparison": "count",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/split/row_counts/test"
+        }
+      },
+      {
+        "quantity": "partitions.test.membership_sha256",
+        "comparison": "exact",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/split/membership_sha256/test"
+        }
+      },
+      {
+        "quantity": "partitions.test.partition_sha256",
+        "comparison": "exact",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/split/partition_sha256/test"
+        }
+      },
+      {
+        "quantity": "baseline.validation.mae",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/baseline/validation_metrics/mae"
+        }
+      },
+      {
+        "quantity": "baseline.validation.rmse",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/baseline/validation_metrics/rmse"
+        }
+      },
+      {
+        "quantity": "baseline.validation.r2",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/baseline/validation_metrics/r2"
+        }
+      },
+      {
+        "quantity": "baseline.validation.medae",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/baseline/validation_metrics/medae"
+        }
+      },
+      {
+        "quantity": "baseline.validation.residual_mean",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/baseline/validation_metrics/residual_mean"
+        }
+      },
+      {
+        "quantity": "baseline.validation.residual_standard_deviation",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/baseline/validation_metrics/residual_standard_deviation"
+        }
+      },
+      {
+        "quantity": "baseline.validation.max_absolute_error",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/baseline/validation_metrics/max_absolute_error"
+        }
+      },
+      {
+        "quantity": "baseline.validation.absolute_error_p50",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/baseline/validation_metrics/absolute_error_p50"
+        }
+      },
+      {
+        "quantity": "baseline.validation.absolute_error_p90",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/baseline/validation_metrics/absolute_error_p90"
+        }
+      },
+      {
+        "quantity": "baseline.validation.absolute_error_p95",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/baseline/validation_metrics/absolute_error_p95"
+        }
+      },
+      {
+        "quantity": "search.decision_tree.candidate_count_executed",
+        "comparison": "count",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/0/candidate_count"
+        }
+      },
+      {
+        "quantity": "cv.decision_tree.mae_mean",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/0/cv_metrics/cv_mae_mean"
+        }
+      },
+      {
+        "quantity": "cv.decision_tree.rmse_mean",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/0/cv_metrics/cv_rmse_mean"
+        }
+      },
+      {
+        "quantity": "cv.decision_tree.r2_mean",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/0/cv_metrics/cv_r2_mean"
+        }
+      },
+      {
+        "quantity": "cv.decision_tree.medae_mean",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/0/cv_metrics/cv_medae_mean"
+        }
+      },
+      {
+        "quantity": "cv.decision_tree.mae_std",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/0/cv_metrics/cv_mae_std"
+        }
+      },
+      {
+        "quantity": "validation.decision_tree.mae",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/0/validation_metrics/mae"
+        }
+      },
+      {
+        "quantity": "validation.decision_tree.rmse",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/0/validation_metrics/rmse"
+        }
+      },
+      {
+        "quantity": "validation.decision_tree.r2",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/0/validation_metrics/r2"
+        }
+      },
+      {
+        "quantity": "validation.decision_tree.medae",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/0/validation_metrics/medae"
+        }
+      },
+      {
+        "quantity": "validation.decision_tree.residual_mean",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/0/validation_metrics/residual_mean"
+        }
+      },
+      {
+        "quantity": "validation.decision_tree.residual_standard_deviation",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/0/validation_metrics/residual_standard_deviation"
+        }
+      },
+      {
+        "quantity": "validation.decision_tree.max_absolute_error",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/0/validation_metrics/max_absolute_error"
+        }
+      },
+      {
+        "quantity": "validation.decision_tree.absolute_error_p50",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/0/validation_metrics/absolute_error_p50"
+        }
+      },
+      {
+        "quantity": "validation.decision_tree.absolute_error_p90",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/0/validation_metrics/absolute_error_p90"
+        }
+      },
+      {
+        "quantity": "validation.decision_tree.absolute_error_p95",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/0/validation_metrics/absolute_error_p95"
+        }
+      },
+      {
+        "quantity": "search.hist_gradient_boosting.candidate_count_executed",
+        "comparison": "count",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/1/candidate_count"
+        }
+      },
+      {
+        "quantity": "cv.hist_gradient_boosting.mae_mean",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/1/cv_metrics/cv_mae_mean"
+        }
+      },
+      {
+        "quantity": "cv.hist_gradient_boosting.rmse_mean",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/1/cv_metrics/cv_rmse_mean"
+        }
+      },
+      {
+        "quantity": "cv.hist_gradient_boosting.r2_mean",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/1/cv_metrics/cv_r2_mean"
+        }
+      },
+      {
+        "quantity": "cv.hist_gradient_boosting.medae_mean",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/1/cv_metrics/cv_medae_mean"
+        }
+      },
+      {
+        "quantity": "cv.hist_gradient_boosting.mae_std",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/1/cv_metrics/cv_mae_std"
+        }
+      },
+      {
+        "quantity": "validation.hist_gradient_boosting.mae",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/1/validation_metrics/mae"
+        }
+      },
+      {
+        "quantity": "validation.hist_gradient_boosting.rmse",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/1/validation_metrics/rmse"
+        }
+      },
+      {
+        "quantity": "validation.hist_gradient_boosting.r2",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/1/validation_metrics/r2"
+        }
+      },
+      {
+        "quantity": "validation.hist_gradient_boosting.medae",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/1/validation_metrics/medae"
+        }
+      },
+      {
+        "quantity": "validation.hist_gradient_boosting.residual_mean",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/1/validation_metrics/residual_mean"
+        }
+      },
+      {
+        "quantity": "validation.hist_gradient_boosting.residual_standard_deviation",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/1/validation_metrics/residual_standard_deviation"
+        }
+      },
+      {
+        "quantity": "validation.hist_gradient_boosting.max_absolute_error",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/1/validation_metrics/max_absolute_error"
+        }
+      },
+      {
+        "quantity": "validation.hist_gradient_boosting.absolute_error_p50",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/1/validation_metrics/absolute_error_p50"
+        }
+      },
+      {
+        "quantity": "validation.hist_gradient_boosting.absolute_error_p90",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/1/validation_metrics/absolute_error_p90"
+        }
+      },
+      {
+        "quantity": "validation.hist_gradient_boosting.absolute_error_p95",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/1/validation_metrics/absolute_error_p95"
+        }
+      },
+      {
+        "quantity": "search.random_forest.candidate_count_executed",
+        "comparison": "count",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/2/candidate_count"
+        }
+      },
+      {
+        "quantity": "cv.random_forest.mae_mean",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/2/cv_metrics/cv_mae_mean"
+        }
+      },
+      {
+        "quantity": "cv.random_forest.rmse_mean",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/2/cv_metrics/cv_rmse_mean"
+        }
+      },
+      {
+        "quantity": "cv.random_forest.r2_mean",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/2/cv_metrics/cv_r2_mean"
+        }
+      },
+      {
+        "quantity": "cv.random_forest.medae_mean",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/2/cv_metrics/cv_medae_mean"
+        }
+      },
+      {
+        "quantity": "cv.random_forest.mae_std",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/2/cv_metrics/cv_mae_std"
+        }
+      },
+      {
+        "quantity": "validation.random_forest.mae",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/2/validation_metrics/mae"
+        }
+      },
+      {
+        "quantity": "validation.random_forest.rmse",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/2/validation_metrics/rmse"
+        }
+      },
+      {
+        "quantity": "validation.random_forest.r2",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/2/validation_metrics/r2"
+        }
+      },
+      {
+        "quantity": "validation.random_forest.medae",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/2/validation_metrics/medae"
+        }
+      },
+      {
+        "quantity": "validation.random_forest.residual_mean",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/2/validation_metrics/residual_mean"
+        }
+      },
+      {
+        "quantity": "validation.random_forest.residual_standard_deviation",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/2/validation_metrics/residual_standard_deviation"
+        }
+      },
+      {
+        "quantity": "validation.random_forest.max_absolute_error",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/2/validation_metrics/max_absolute_error"
+        }
+      },
+      {
+        "quantity": "validation.random_forest.absolute_error_p50",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/2/validation_metrics/absolute_error_p50"
+        }
+      },
+      {
+        "quantity": "validation.random_forest.absolute_error_p90",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/2/validation_metrics/absolute_error_p90"
+        }
+      },
+      {
+        "quantity": "validation.random_forest.absolute_error_p95",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/2/validation_metrics/absolute_error_p95"
+        }
+      },
+      {
+        "quantity": "search.ridge.candidate_count_executed",
+        "comparison": "count",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/3/candidate_count"
+        }
+      },
+      {
+        "quantity": "cv.ridge.mae_mean",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/3/cv_metrics/cv_mae_mean"
+        }
+      },
+      {
+        "quantity": "cv.ridge.rmse_mean",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/3/cv_metrics/cv_rmse_mean"
+        }
+      },
+      {
+        "quantity": "cv.ridge.r2_mean",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/3/cv_metrics/cv_r2_mean"
+        }
+      },
+      {
+        "quantity": "cv.ridge.medae_mean",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/3/cv_metrics/cv_medae_mean"
+        }
+      },
+      {
+        "quantity": "cv.ridge.mae_std",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/3/cv_metrics/cv_mae_std"
+        }
+      },
+      {
+        "quantity": "validation.ridge.mae",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/3/validation_metrics/mae"
+        }
+      },
+      {
+        "quantity": "validation.ridge.rmse",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/3/validation_metrics/rmse"
+        }
+      },
+      {
+        "quantity": "validation.ridge.r2",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/3/validation_metrics/r2"
+        }
+      },
+      {
+        "quantity": "validation.ridge.medae",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/3/validation_metrics/medae"
+        }
+      },
+      {
+        "quantity": "validation.ridge.residual_mean",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/3/validation_metrics/residual_mean"
+        }
+      },
+      {
+        "quantity": "validation.ridge.residual_standard_deviation",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/3/validation_metrics/residual_standard_deviation"
+        }
+      },
+      {
+        "quantity": "validation.ridge.max_absolute_error",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/3/validation_metrics/max_absolute_error"
+        }
+      },
+      {
+        "quantity": "validation.ridge.absolute_error_p50",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/3/validation_metrics/absolute_error_p50"
+        }
+      },
+      {
+        "quantity": "validation.ridge.absolute_error_p90",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/3/validation_metrics/absolute_error_p90"
+        }
+      },
+      {
+        "quantity": "validation.ridge.absolute_error_p95",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/3/validation_metrics/absolute_error_p95"
+        }
+      },
+      {
+        "quantity": "final_fit.rows",
+        "comparison": "count",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/final_model/fit_row_count"
+        }
+      },
+      {
+        "quantity": "final_test.row_count",
+        "comparison": "count",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/final_test/row_count"
+        }
+      },
+      {
+        "quantity": "final_test.evaluation_count",
+        "comparison": "count",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/final_test/evaluation_count"
+        }
+      },
+      {
+        "quantity": "final_test.metrics.mae",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/final_test/metrics/mae"
+        }
+      },
+      {
+        "quantity": "final_test.metrics.rmse",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/final_test/metrics/rmse"
+        }
+      },
+      {
+        "quantity": "final_test.metrics.r2",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/final_test/metrics/r2"
+        }
+      },
+      {
+        "quantity": "final_test.metrics.medae",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/final_test/metrics/medae"
+        }
+      },
+      {
+        "quantity": "final_test.metrics.residual_mean",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/final_test/metrics/residual_mean"
+        }
+      },
+      {
+        "quantity": "final_test.metrics.residual_standard_deviation",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/final_test/metrics/residual_standard_deviation"
+        }
+      },
+      {
+        "quantity": "final_test.metrics.max_absolute_error",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/final_test/metrics/max_absolute_error"
+        }
+      },
+      {
+        "quantity": "final_test.metrics.absolute_error_p50",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/final_test/metrics/absolute_error_p50"
+        }
+      },
+      {
+        "quantity": "final_test.metrics.absolute_error_p90",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/final_test/metrics/absolute_error_p90"
+        }
+      },
+      {
+        "quantity": "final_test.metrics.absolute_error_p95",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/final_test/metrics/absolute_error_p95"
+        }
+      },
+      {
+        "quantity": "mixture_overlap.validation.evaluated_row_count",
+        "comparison": "count",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/mixture_overlap/validation/evaluated_row_count"
+        }
+      },
+      {
+        "quantity": "mixture_overlap.validation.seen.row_count",
+        "comparison": "count",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/mixture_overlap/validation/seen_groups/row_count"
+        }
+      },
+      {
+        "quantity": "mixture_overlap.validation.seen.metrics.mae",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/mixture_overlap/validation/seen_groups/metrics/mae"
+        }
+      },
+      {
+        "quantity": "mixture_overlap.validation.seen.metrics.rmse",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/mixture_overlap/validation/seen_groups/metrics/rmse"
+        }
+      },
+      {
+        "quantity": "mixture_overlap.validation.seen.metrics.r2",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/mixture_overlap/validation/seen_groups/metrics/r2"
+        }
+      },
+      {
+        "quantity": "mixture_overlap.validation.seen.metrics.medae",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/mixture_overlap/validation/seen_groups/metrics/medae"
+        }
+      },
+      {
+        "quantity": "mixture_overlap.validation.seen.metrics.residual_mean",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/mixture_overlap/validation/seen_groups/metrics/residual_mean"
+        }
+      },
+      {
+        "quantity": "mixture_overlap.validation.seen.metrics.residual_standard_deviation",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/mixture_overlap/validation/seen_groups/metrics/residual_standard_deviation"
+        }
+      },
+      {
+        "quantity": "mixture_overlap.validation.seen.metrics.max_absolute_error",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/mixture_overlap/validation/seen_groups/metrics/max_absolute_error"
+        }
+      },
+      {
+        "quantity": "mixture_overlap.validation.seen.metrics.absolute_error_p50",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/mixture_overlap/validation/seen_groups/metrics/absolute_error_p50"
+        }
+      },
+      {
+        "quantity": "mixture_overlap.validation.seen.metrics.absolute_error_p90",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/mixture_overlap/validation/seen_groups/metrics/absolute_error_p90"
+        }
+      },
+      {
+        "quantity": "mixture_overlap.validation.seen.metrics.absolute_error_p95",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/mixture_overlap/validation/seen_groups/metrics/absolute_error_p95"
+        }
+      },
+      {
+        "quantity": "mixture_overlap.validation.unseen.row_count",
+        "comparison": "count",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/mixture_overlap/validation/unseen_groups/row_count"
+        }
+      },
+      {
+        "quantity": "mixture_overlap.validation.unseen.metrics.mae",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/mixture_overlap/validation/unseen_groups/metrics/mae"
+        }
+      },
+      {
+        "quantity": "mixture_overlap.validation.unseen.metrics.rmse",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/mixture_overlap/validation/unseen_groups/metrics/rmse"
+        }
+      },
+      {
+        "quantity": "mixture_overlap.validation.unseen.metrics.r2",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/mixture_overlap/validation/unseen_groups/metrics/r2"
+        }
+      },
+      {
+        "quantity": "mixture_overlap.validation.unseen.metrics.medae",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/mixture_overlap/validation/unseen_groups/metrics/medae"
+        }
+      },
+      {
+        "quantity": "mixture_overlap.validation.unseen.metrics.residual_mean",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/mixture_overlap/validation/unseen_groups/metrics/residual_mean"
+        }
+      },
+      {
+        "quantity": "mixture_overlap.validation.unseen.metrics.residual_standard_deviation",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/mixture_overlap/validation/unseen_groups/metrics/residual_standard_deviation"
+        }
+      },
+      {
+        "quantity": "mixture_overlap.validation.unseen.metrics.max_absolute_error",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/mixture_overlap/validation/unseen_groups/metrics/max_absolute_error"
+        }
+      },
+      {
+        "quantity": "mixture_overlap.validation.unseen.metrics.absolute_error_p50",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/mixture_overlap/validation/unseen_groups/metrics/absolute_error_p50"
+        }
+      },
+      {
+        "quantity": "mixture_overlap.validation.unseen.metrics.absolute_error_p90",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/mixture_overlap/validation/unseen_groups/metrics/absolute_error_p90"
+        }
+      },
+      {
+        "quantity": "mixture_overlap.validation.unseen.metrics.absolute_error_p95",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/mixture_overlap/validation/unseen_groups/metrics/absolute_error_p95"
+        }
+      },
+      {
+        "quantity": "mixture_overlap.test.evaluated_row_count",
+        "comparison": "count",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/mixture_overlap/test/evaluated_row_count"
+        }
+      },
+      {
+        "quantity": "mixture_overlap.test.seen.row_count",
+        "comparison": "count",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/mixture_overlap/test/seen_groups/row_count"
+        }
+      },
+      {
+        "quantity": "mixture_overlap.test.seen.metrics.mae",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/mixture_overlap/test/seen_groups/metrics/mae"
+        }
+      },
+      {
+        "quantity": "mixture_overlap.test.seen.metrics.rmse",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/mixture_overlap/test/seen_groups/metrics/rmse"
+        }
+      },
+      {
+        "quantity": "mixture_overlap.test.seen.metrics.r2",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/mixture_overlap/test/seen_groups/metrics/r2"
+        }
+      },
+      {
+        "quantity": "mixture_overlap.test.seen.metrics.medae",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/mixture_overlap/test/seen_groups/metrics/medae"
+        }
+      },
+      {
+        "quantity": "mixture_overlap.test.seen.metrics.residual_mean",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/mixture_overlap/test/seen_groups/metrics/residual_mean"
+        }
+      },
+      {
+        "quantity": "mixture_overlap.test.seen.metrics.residual_standard_deviation",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/mixture_overlap/test/seen_groups/metrics/residual_standard_deviation"
+        }
+      },
+      {
+        "quantity": "mixture_overlap.test.seen.metrics.max_absolute_error",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/mixture_overlap/test/seen_groups/metrics/max_absolute_error"
+        }
+      },
+      {
+        "quantity": "mixture_overlap.test.seen.metrics.absolute_error_p50",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/mixture_overlap/test/seen_groups/metrics/absolute_error_p50"
+        }
+      },
+      {
+        "quantity": "mixture_overlap.test.seen.metrics.absolute_error_p90",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/mixture_overlap/test/seen_groups/metrics/absolute_error_p90"
+        }
+      },
+      {
+        "quantity": "mixture_overlap.test.seen.metrics.absolute_error_p95",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/mixture_overlap/test/seen_groups/metrics/absolute_error_p95"
+        }
+      },
+      {
+        "quantity": "mixture_overlap.test.unseen.row_count",
+        "comparison": "count",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/mixture_overlap/test/unseen_groups/row_count"
+        }
+      },
+      {
+        "quantity": "mixture_overlap.test.unseen.metrics.mae",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/mixture_overlap/test/unseen_groups/metrics/mae"
+        }
+      },
+      {
+        "quantity": "mixture_overlap.test.unseen.metrics.rmse",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/mixture_overlap/test/unseen_groups/metrics/rmse"
+        }
+      },
+      {
+        "quantity": "mixture_overlap.test.unseen.metrics.r2",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/mixture_overlap/test/unseen_groups/metrics/r2"
+        }
+      },
+      {
+        "quantity": "mixture_overlap.test.unseen.metrics.medae",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/mixture_overlap/test/unseen_groups/metrics/medae"
+        }
+      },
+      {
+        "quantity": "mixture_overlap.test.unseen.metrics.residual_mean",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/mixture_overlap/test/unseen_groups/metrics/residual_mean"
+        }
+      },
+      {
+        "quantity": "mixture_overlap.test.unseen.metrics.residual_standard_deviation",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/mixture_overlap/test/unseen_groups/metrics/residual_standard_deviation"
+        }
+      },
+      {
+        "quantity": "mixture_overlap.test.unseen.metrics.max_absolute_error",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/mixture_overlap/test/unseen_groups/metrics/max_absolute_error"
+        }
+      },
+      {
+        "quantity": "mixture_overlap.test.unseen.metrics.absolute_error_p50",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/mixture_overlap/test/unseen_groups/metrics/absolute_error_p50"
+        }
+      },
+      {
+        "quantity": "mixture_overlap.test.unseen.metrics.absolute_error_p90",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/mixture_overlap/test/unseen_groups/metrics/absolute_error_p90"
+        }
+      },
+      {
+        "quantity": "mixture_overlap.test.unseen.metrics.absolute_error_p95",
+        "comparison": "numeric",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/mixture_overlap/test/unseen_groups/metrics/absolute_error_p95"
+        }
+      }
+    ],
+    "decisions": [
+      {
+        "quantity": "search.decision_tree.pipeline_best_params",
+        "comparison": "exact",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/0/best_parameters"
+        }
+      },
+      {
+        "quantity": "search.hist_gradient_boosting.pipeline_best_params",
+        "comparison": "exact",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/1/best_parameters"
+        }
+      },
+      {
+        "quantity": "search.random_forest.pipeline_best_params",
+        "comparison": "exact",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/2/best_parameters"
+        }
+      },
+      {
+        "quantity": "search.ridge.pipeline_best_params",
+        "comparison": "exact",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/family_search/3/best_parameters"
+        }
+      },
+      {
+        "quantity": "selection.eligibility.hist_gradient_boosting",
+        "comparison": "exact",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/validation_ranking/0/eligible"
+        }
+      },
+      {
+        "quantity": "selection.eligibility.random_forest",
+        "comparison": "exact",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/validation_ranking/1/eligible"
+        }
+      },
+      {
+        "quantity": "selection.eligibility.decision_tree",
+        "comparison": "exact",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/validation_ranking/2/eligible"
+        }
+      },
+      {
+        "quantity": "selection.eligibility.ridge",
+        "comparison": "exact",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/validation_ranking/3/eligible"
+        }
+      },
+      {
+        "quantity": "selection.practical_tie",
+        "comparison": "exact",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/practical_tie"
+        }
+      },
+      {
+        "quantity": "selection.practical_tie_group",
+        "comparison": "exact",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/finalists"
+        }
+      },
+      {
+        "quantity": "selection.selected_model_id",
+        "comparison": "exact",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/selected_model_id"
+        }
+      },
+      {
+        "quantity": "selection.selected_estimator_class",
+        "comparison": "exact",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/selected_model_family"
+        }
+      },
+      {
+        "quantity": "selection.selected_pipeline_params",
+        "comparison": "exact",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/model_selection/selected_hyperparameters"
+        }
+      },
+      {
+        "quantity": "final_fit.estimator_effective_parameters",
+        "comparison": "exact",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/final_model/selected_estimator_effective_parameters"
+        }
+      },
+      {
+        "quantity": "final_fit.partitions",
+        "comparison": "exact",
+        "source": {
+          "path": "evidence/canonical-run.json",
+          "locator": "json_pointer:/final_model/training_partitions"
+        }
+      }
+    ],
+    "runtime_identity": []
+  },
+  "protocol_parameter_sources": [
+    {
+      "contract_pointer": "/dataset_identity/sha256",
+      "source": {
+        "path": "evidence/canonical-run.json",
+        "locator": "json_pointer:/dataset/source_sha256"
+      }
+    },
+    {
+      "contract_pointer": "/dataset_identity/size_bytes",
+      "source": {
+        "path": "evidence/canonical-run.json",
+        "locator": "json_pointer:/dataset/source_size_bytes"
+      }
+    },
+    {
+      "contract_pointer": "/dataset_identity/row_count",
+      "source": {
+        "path": "evidence/canonical-run.json",
+        "locator": "json_pointer:/dataset/source_row_count"
+      }
+    },
+    {
+      "contract_pointer": "/dataset_identity/column_count",
+      "source": {
+        "path": "evidence/canonical-run.json",
+        "locator": "json_pointer:/dataset/source_column_count"
+      }
+    },
+    {
+      "contract_pointer": "/features/feature_columns",
+      "source": {
+        "path": "evidence/canonical-run.json",
+        "locator": "json_pointer:/features/ordered_columns"
+      }
+    },
+    {
+      "contract_pointer": "/problem/target/column",
+      "source": {
+        "path": "evidence/canonical-run.json",
+        "locator": "json_pointer:/target/column"
+      }
+    },
+    {
+      "contract_pointer": "/problem/target/unit",
+      "source": {
+        "path": "evidence/canonical-run.json",
+        "locator": "json_pointer:/target/unit"
+      }
+    },
+    {
+      "contract_pointer": "/split/seeds",
+      "source": {
+        "path": "evidence/canonical-run.json",
+        "locator": "json_pointer:/split/stage_seeds"
+      }
+    },
+    {
+      "contract_pointer": "/split/fractions",
+      "source": {
+        "path": "evidence/canonical-run.json",
+        "locator": "json_pointer:/split/fractions"
+      }
+    },
+    {
+      "contract_pointer": "/split/stratify_by",
+      "source": {
+        "path": "evidence/canonical-run.json",
+        "locator": "json_pointer:/split/stratify_by"
+      }
+    },
+    {
+      "contract_pointer": "/split/shuffle",
+      "source": {
+        "path": "evidence/canonical-run.json",
+        "locator": "json_pointer:/split/shuffle"
+      }
+    },
+    {
+      "contract_pointer": "/cross_validation/n_splits",
+      "source": {
+        "path": "evidence/canonical-run.json",
+        "locator": "json_pointer:/cross_validation/n_splits"
+      }
+    },
+    {
+      "contract_pointer": "/cross_validation/shuffle",
+      "source": {
+        "path": "evidence/canonical-run.json",
+        "locator": "json_pointer:/cross_validation/shuffle"
+      }
+    },
+    {
+      "contract_pointer": "/cross_validation/random_state",
+      "source": {
+        "path": "evidence/canonical-run.json",
+        "locator": "json_pointer:/cross_validation/random_state"
+      }
+    },
+    {
+      "contract_pointer": "/metrics/primary",
+      "source": {
+        "path": "evidence/canonical-run.json",
+        "locator": "json_pointer:/model_selection/primary_metric"
+      }
+    },
+    {
+      "contract_pointer": "/selection/practical_tie/tolerance",
+      "source": {
+        "path": "evidence/canonical-run.json",
+        "locator": "json_pointer:/model_selection/practical_tie_tolerance"
+      }
+    },
+    {
+      "contract_pointer": "/baseline/fixed_params/strategy",
+      "source": {
+        "path": "evidence/canonical-run.json",
+        "locator": "json_pointer:/model_selection/baseline/strategy"
+      }
+    },
+    {
+      "contract_pointer": "/interpretive_evidence/group_overlap_diagnostic/group_columns",
+      "source": {
+        "path": "evidence/canonical-run.json",
+        "locator": "json_pointer:/mixture_overlap/group_columns"
+      }
+    },
+    {
+      "contract_pointer": "/scientific_environment/python",
+      "source": {
+        "path": "evidence/canonical-run.json",
+        "locator": "json_pointer:/runtime/python"
+      }
+    },
+    {
+      "contract_pointer": "/scientific_environment/core_packages/scikit-learn",
+      "source": {
+        "path": "evidence/canonical-run.json",
+        "locator": "json_pointer:/runtime/packages/scikit-learn"
+      }
+    },
+    {
+      "contract_pointer": "/scientific_environment/core_packages/pandas",
+      "source": {
+        "path": "evidence/canonical-run.json",
+        "locator": "json_pointer:/runtime/packages/pandas"
+      }
+    },
+    {
+      "contract_pointer": "/scientific_environment/core_packages/numpy",
+      "source": {
+        "path": "evidence/canonical-run.json",
+        "locator": "json_pointer:/runtime/packages/numpy"
+      }
+    },
+    {
+      "contract_pointer": "/scientific_environment/core_packages/scipy",
+      "source": {
+        "path": "evidence/canonical-run.json",
+        "locator": "json_pointer:/runtime/packages/scipy"
+      }
+    },
+    {
+      "contract_pointer": "/scientific_environment/core_packages/joblib",
+      "source": {
+        "path": "evidence/canonical-run.json",
+        "locator": "json_pointer:/runtime/packages/joblib"
+      }
+    },
+    {
+      "contract_pointer": "/candidates/0/search/space/alpha",
+      "source": {
+        "path": "evidence/canonical-run.json",
+        "locator": "json_pointer:/model_selection/family_search/3/search_space/model__alpha"
+      }
+    },
+    {
+      "contract_pointer": "/candidates/1/search/space/max_depth",
+      "source": {
+        "path": "evidence/canonical-run.json",
+        "locator": "json_pointer:/model_selection/family_search/0/search_space/model__max_depth"
+      }
+    },
+    {
+      "contract_pointer": "/candidates/1/search/space/min_samples_leaf",
+      "source": {
+        "path": "evidence/canonical-run.json",
+        "locator": "json_pointer:/model_selection/family_search/0/search_space/model__min_samples_leaf"
+      }
+    },
+    {
+      "contract_pointer": "/candidates/2/search/space/max_depth",
+      "source": {
+        "path": "evidence/canonical-run.json",
+        "locator": "json_pointer:/model_selection/family_search/2/search_space/model__max_depth"
+      }
+    },
+    {
+      "contract_pointer": "/candidates/2/search/space/min_samples_leaf",
+      "source": {
+        "path": "evidence/canonical-run.json",
+        "locator": "json_pointer:/model_selection/family_search/2/search_space/model__min_samples_leaf"
+      }
+    },
+    {
+      "contract_pointer": "/candidates/2/search/space/max_features",
+      "source": {
+        "path": "evidence/canonical-run.json",
+        "locator": "json_pointer:/model_selection/family_search/2/search_space/model__max_features"
+      }
+    },
+    {
+      "contract_pointer": "/candidates/3/search/space/learning_rate",
+      "source": {
+        "path": "evidence/canonical-run.json",
+        "locator": "json_pointer:/model_selection/family_search/1/search_space/model__learning_rate"
+      }
+    },
+    {
+      "contract_pointer": "/candidates/3/search/space/max_leaf_nodes",
+      "source": {
+        "path": "evidence/canonical-run.json",
+        "locator": "json_pointer:/model_selection/family_search/1/search_space/model__max_leaf_nodes"
+      }
+    },
+    {
+      "contract_pointer": "/candidates/3/search/space/min_samples_leaf",
+      "source": {
+        "path": "evidence/canonical-run.json",
+        "locator": "json_pointer:/model_selection/family_search/1/search_space/model__min_samples_leaf"
+      }
+    },
+    {
+      "contract_pointer": "/candidates/3/search/space/l2_regularization",
+      "source": {
+        "path": "evidence/canonical-run.json",
+        "locator": "json_pointer:/model_selection/family_search/1/search_space/model__l2_regularization"
+      }
+    }
+  ],
+  "evidence_gaps": [],
+  "protocol_integrity": {
+    "test_procedurally_isolated_in_canonical_run": true,
+    "historical_test_exposure": {
+      "exposed": true,
+      "description": "The seed-42/43 test partition was evaluated once by the study's original canonical run and once more by each governed from-scratch re-execution of the frozen contract (including the linux-x86_64 re-execution that produced canonical-run.json). No re-execution changed any development decision; the test partition is procedurally isolated, not unseen."
+    },
+    "statement": "Every selection decision derives from train-only CV and the validation partition; the test partition is evaluated exactly once per execution, after the final fit, and the mixture diagnostic reuses that single prediction descriptively."
+  },
+  "study_observations": [
+    {
+      "observation_id": "OBS-REFERENCE-PLATFORM",
+      "affects_reproduction": false,
+      "description": "The study's original canonical run executed on linux-aarch64. canonical-run.json was built from a from-scratch re-execution on linux-x86_64 in the same locked environment, which reproduced the model bytes (6e6a5a97...) and every decision; its reference_verification block lists the only differences against the committed executed notebooks: Ridge validation MAE/MedAE and CV-MAE std differ in the last digits (<= 1.4e-14)."
+    },
+    {
+      "observation_id": "OBS-ELIGIBILITY-EPSILON",
+      "affects_reproduction": false,
+      "description": "The study requires MAE improvement > eps*max(1,|baseline|) (~2.8e-15 MPa here); the contract declares strict improvement with margin 0. The two differ only for improvements below ~3e-15 MPa; the smallest observed improvement is 4.22 MPa (Ridge)."
+    }
+  ],
+  "limitations": [
+    "Educational shuffled row-level snapshot; no temporal, prospective or operational validity.",
+    "About three quarters of held-out rows share their mixture with fitting rows; performance claims are scoped to mixtures represented in training and generalization to new mixture designs is not established.",
+    "Unseen-mixture subsets are small (43 validation, 39 test rows), so their metrics are imprecise.",
+    "Associations, not causes: feature effects are predictive associations, not engineering design rules.",
+    "Row-level predictions and residuals are deliberately transient; only aggregate evidence is persisted."
+  ],
+  "authoring": {
+    "authored_by": "Atlas scientific reproduction contract authoring",
+    "authored_at": "2026-09-30T00:00:00Z",
+    "method": "Protocol declarations transcribed from the pinned study code and notebooks; every json_pointer expected value, protocol gate and pinned hash was materialized by pipeline.scientific_study_contract author from the pinned study checkout and re-checked by verify."
+  }
+}

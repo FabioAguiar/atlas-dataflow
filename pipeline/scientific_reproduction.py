@@ -18,15 +18,17 @@ Evidence lineages kept strictly apart:
 
 The engine is generic. Everything problem-specific is dispatched on the
 contract's ``problem.problem_type`` through a task adapter
-(``binary_classification`` or ``multiclass_classification``); nothing is
-dispatched on a dataset slug. The adapter owns target representation, the
-cross-validation scorers, candidate evaluation, the decision stage (a
-threshold policy for binary problems, an explicit *not applicable* record and
-the argmax rule for multiclass problems), and the final test evaluation.
+(``binary_classification``, ``multiclass_classification`` or
+``continuous_regression``); nothing is dispatched on a dataset slug. The
+adapter owns target representation, the cross-validation scorers, candidate
+evaluation, the decision stage (a threshold policy for binary problems, an
+explicit *not applicable* record and the argmax rule for multiclass problems,
+and a point prediction with every class concept recorded as not applicable
+for continuous regression), and the final test evaluation.
 Protocol stages shared by every problem type (dataset identity, preparation,
 split with membership evidence and gates, family search, family shortlist,
 feature-policy stage, practical-tie selection, final fit, comparison,
-status) live once in this module.
+status, descriptive group-overlap diagnostics) live once in this module.
 
 Every metric set the engine emits carries provenance (producer lineage,
 metric scope, run, study revision, dataset hash, partition and its membership
@@ -66,6 +68,8 @@ from pipeline import metric_identity, model_families, preparation_rules, scienti
 from pipeline.scientific_study_contract import (
     BINARY,
     MULTICLASS,
+    REGRESSION,
+    SCHEMA_VERSION_V3 as CONTRACT_SCHEMA_VERSION_V3,
     ScientificStudyContract,
     assess_protocol_support,
     load_scientific_study_contract,
@@ -75,17 +79,19 @@ from pipeline.scientific_study_contract import (
 
 REPORT_SCHEMA_VERSION_V1 = "scientific-reproduction-report.v1"
 REPORT_SCHEMA_VERSION = "scientific-reproduction-report.v2"
+REPORT_SCHEMA_VERSION_V3 = "scientific-reproduction-report.v3"
 _SCHEMA_DIR = Path(__file__).resolve().parent
 REPORT_SCHEMA_PATHS: Mapping[str, Path] = {
     REPORT_SCHEMA_VERSION_V1: _SCHEMA_DIR / "scientific-reproduction-report.schema.json",
     REPORT_SCHEMA_VERSION: _SCHEMA_DIR / "scientific-reproduction-report.v2.schema.json",
+    REPORT_SCHEMA_VERSION_V3: _SCHEMA_DIR / "scientific-reproduction-report.v3.schema.json",
 }
 REPORT_SCHEMA_PATH = REPORT_SCHEMA_PATHS[REPORT_SCHEMA_VERSION]
 REPORT_FILENAME = "reproduction-report.json"
 SEARCH_RESULTS_FILENAME = "search-results.json"
 RUNS_ROOT_RELATIVE = "pipeline/scientific-reproduction-runs"
 ENGINE_ID = "pipeline/scientific_reproduction.py"
-ENGINE_VERSION = "3"
+ENGINE_VERSION = "4"
 
 RUN_KIND = "scientific_reproduction_run"
 STUDY_RUN_KIND = "scientific_study_run"
@@ -123,6 +129,7 @@ SCOPE_FAMILY_SEARCH_CV = "family_search_cv"
 SCOPE_FEATURE_POLICY_CV = "feature_policy_cv"
 SCOPE_CANDIDATE_VALIDATION = "candidate_validation"
 SCOPE_FINAL_TEST = "scientific_final_test"
+SCOPE_INTERPRETIVE_DIAGNOSTIC = "interpretive_diagnostic"
 
 THRESHOLD_NOT_APPLICABLE_REASON = "multiclass_argmax_decision"
 
@@ -368,27 +375,31 @@ def apply_preparation(frame: Any, preparation: Mapping[str, Any]) -> tuple[Any, 
 # --------------------------------------------------------------------------
 
 
-def split_two_stage_stratified_with_membership(
-    frame: Any, split: Mapping[str, Any], identifier_columns: Sequence[str]
+def _split_two_stage_with_membership(
+    frame: Any, split: Mapping[str, Any], identifier_columns: Sequence[str], *, stratify_by: str | None
 ) -> tuple[dict[str, Any], dict[str, list[str]]]:
-    """Membership-ordered two-stage stratified holdout.
+    """Two-stage ``train_test_split`` holdout with partition membership evidence.
 
     Membership keys (identifier tuples, or technical row-occurrence tokens
-    when the source has no identifier) are computed on the whole source.
-    Rows are ordered by key before ``train_test_split`` so membership does not
-    depend on input row order; each partition is returned in source row order
-    together with the keys of its rows in that order.
+    when the source has no identifier) are computed on the whole source. With
+    ``order_by_identifier`` (the default) rows are ordered by key before
+    splitting so membership does not depend on input row order; otherwise
+    source positions are split directly. The second stage splits the
+    temporary partition with ``test / (validation + test)``. Each partition is
+    returned in source row order together with the keys of its rows in that
+    order. ``stratify_by=None`` splits without stratification.
     """
     from sklearn.model_selection import train_test_split
 
     fractions = split["fractions"]
-    stratify_by = split["stratify_by"]
     spec = membership_spec(split)
     working = frame.copy(deep=True)
     working["__source_position__"] = range(len(working))
+    ordered = split.get("order_by_identifier", True)
     keys: list[str] | None = None
-    if split.get("order_by_identifier", True):
+    if ordered or "membership" in split:
         keys = source_membership_keys(frame, spec, identifier_columns)
+    if ordered:
         working["__membership_key__"] = keys
         if working["__membership_key__"].duplicated().any():
             raise ScientificReproductionError("duplicate_identifier", "membership keys must be unique")
@@ -402,7 +413,7 @@ def split_two_stage_stratified_with_membership(
         test_size=temporary_fraction,
         random_state=split["seeds"]["train_vs_temporary"],
         shuffle=split.get("shuffle", True),
-        stratify=canonical[stratify_by],
+        stratify=canonical[stratify_by] if stratify_by is not None else None,
     )
     temporary = canonical.iloc[temporary_pos]
     validation_pos, test_pos = train_test_split(
@@ -410,7 +421,7 @@ def split_two_stage_stratified_with_membership(
         test_size=fractions["test"] / temporary_fraction,
         random_state=split["seeds"]["validation_vs_test"],
         shuffle=split.get("shuffle", True),
-        stratify=temporary[stratify_by],
+        stratify=temporary[stratify_by] if stratify_by is not None else None,
     )
 
     partitions: dict[str, Any] = {}
@@ -422,12 +433,39 @@ def split_two_stage_stratified_with_membership(
     return partitions, partition_keys
 
 
+def split_two_stage_stratified_with_membership(
+    frame: Any, split: Mapping[str, Any], identifier_columns: Sequence[str]
+) -> tuple[dict[str, Any], dict[str, list[str]]]:
+    """Two-stage holdout stratified on ``split.stratify_by`` in both stages."""
+    return _split_two_stage_with_membership(frame, split, identifier_columns, stratify_by=split["stratify_by"])
+
+
+def split_two_stage_random_with_membership(
+    frame: Any, split: Mapping[str, Any], identifier_columns: Sequence[str]
+) -> tuple[dict[str, Any], dict[str, list[str]]]:
+    """Two-stage shuffled holdout without stratification (``stratify=None``).
+
+    Row assignment never reads the target, so it serves continuous targets.
+    """
+    if split.get("stratify_by") is not None:
+        raise ScientificReproductionError("stratified_random_holdout",
+                                          "two_stage_random_holdout requires stratify_by = null")
+    return _split_two_stage_with_membership(frame, split, identifier_columns, stratify_by=None)
+
+
 def split_two_stage_stratified(frame: Any, split: Mapping[str, Any], identifier_columns: Sequence[str]) -> dict[str, Any]:
     """Backward-compatible splitter returning only the partitions."""
     return split_two_stage_stratified_with_membership(frame, split, identifier_columns)[0]
 
 
-_SPLITTERS = {"two_stage_stratified_holdout": split_two_stage_stratified_with_membership}
+_SPLITTERS = {
+    "two_stage_stratified_holdout": split_two_stage_stratified_with_membership,
+    "two_stage_random_holdout": split_two_stage_random_with_membership,
+}
+_SPLIT_ALGORITHMS = {
+    "two_stage_stratified_holdout": "sklearn.model_selection.train_test_split (two stages, stratified)",
+    "two_stage_random_holdout": "sklearn.model_selection.train_test_split (two stages, shuffled, stratify=None)",
+}
 
 
 def _handoff_spec(split: Mapping[str, Any]) -> dict[str, Any]:
@@ -541,12 +579,36 @@ def multiclass_scoring(metrics: Sequence[str]) -> dict[str, str]:
     return scoring
 
 
-def _cross_validator(spec: Mapping[str, Any]) -> Any:
-    from sklearn.model_selection import StratifiedKFold
+# Continuous-regression metric name -> (scorer key, sklearn scorer string),
+# derived from the canonical metric identity registry. A ``neg_`` key marks a
+# loss that scikit-learn scores negated; every reported value is flipped back
+# to its natural orientation (see ``_cv_summary``).
+REGRESSION_CV_SCORERS: Mapping[str, tuple[str, str]] = {
+    metric: (f"neg_{metric}" if scorer.startswith("neg_") else metric, scorer)
+    for metric, scorer in (
+        (name, metric_identity.resolve_scientific_metric(name).sklearn_scorer)
+        for name in ("mae", "rmse", "r2", "medae")
+    )
+}
 
-    if spec["kind"] != "stratified_k_fold":
+
+def regression_scoring(metrics: Sequence[str]) -> dict[str, str]:
+    scoring = {}
+    for metric in metrics:
+        if metric not in REGRESSION_CV_SCORERS:
+            raise ScientificReproductionError("unsupported_cv_scorer", metric)
+        key, scorer = REGRESSION_CV_SCORERS[metric]
+        scoring[key] = scorer
+    return scoring
+
+
+def _cross_validator(spec: Mapping[str, Any]) -> Any:
+    from sklearn.model_selection import KFold, StratifiedKFold
+
+    folds = {"stratified_k_fold": StratifiedKFold, "k_fold": KFold}.get(spec["kind"])
+    if folds is None:
         raise ScientificReproductionError("unsupported_cross_validation", spec["kind"])
-    return StratifiedKFold(n_splits=int(spec["n_splits"]), shuffle=bool(spec["shuffle"]), random_state=spec["random_state"])
+    return folds(n_splits=int(spec["n_splits"]), shuffle=bool(spec["shuffle"]), random_state=spec["random_state"])
 
 
 def _cv_summary(results: Mapping[str, Any], scoring: Mapping[str, Any], refit: str, index: int | None,
@@ -578,7 +640,13 @@ def _cv_summary(results: Mapping[str, Any], scoring: Mapping[str, Any], refit: s
 
 
 def run_candidate_search(candidate: Mapping[str, Any], contract: Mapping[str, Any], x_train: Any, y_train: Any, *,
-                         n_jobs: int, task_type: str, scoring: Mapping[str, Any] | None = None) -> dict[str, Any]:
+                         n_jobs: int, task_type: str, scoring: Mapping[str, Any] | None = None,
+                         refit: str | None = None) -> dict[str, Any]:
+    """Search one family on the training partition only.
+
+    ``refit`` is the scorer key the search refits on (default: the contract's
+    refit metric name, which is its own key for score-oriented metrics).
+    """
     from sklearn.model_selection import GridSearchCV, ParameterGrid, RandomizedSearchCV
 
     search = candidate["search"]
@@ -591,7 +659,7 @@ def run_candidate_search(candidate: Mapping[str, Any], contract: Mapping[str, An
     common = dict(
         estimator=pipeline,
         scoring=dict(scoring),
-        refit=contract["metrics"].get("refit", contract["metrics"]["primary"]),
+        refit=refit or contract["metrics"].get("refit", contract["metrics"]["primary"]),
         cv=_cross_validator(cv_spec),
         n_jobs=n_jobs,
         return_train_score=False,
@@ -629,25 +697,28 @@ def run_candidate_search(candidate: Mapping[str, Any], contract: Mapping[str, An
         sign = -1.0 if scorer.startswith("neg_") else 1.0
         return scorer.removeprefix("neg_"), sign * float(results[f"mean_test_{scorer}"][index])
 
+    # Report the refit metric in its natural orientation; ``neg_`` is only
+    # scikit-learn's scoring convention.
+    refit_name, best_score = natural(refit, best)
     summary: dict[str, Any] = {
         "candidate_count_executed": executed,
         "candidate_count_expected": expected,
         "best_index": best,
         "best_params": {name.removeprefix("model__"): _jsonable(value) for name, value in searcher.best_params_.items()},
-        "refit_metric": refit,
+        "refit_metric": refit_name,
         "search_strategy": type(searcher).__name__,
         "search_random_state": search.get("random_state") if search["kind"] == "randomized" else None,
         "search_duration_seconds": round(duration, 3),
-        "best_score": float(searcher.best_score_),
+        "best_score": best_score,
     }
     summary.update(_cv_summary(results, common["scoring"], refit, best, n_splits, z_value))
     table = [
         {
             "candidate_index": index,
             "params": {k.removeprefix("model__"): _jsonable(v) for k, v in params.items()},
-            f"rank_{refit}": int(results[f"rank_test_{refit}"][index]),
+            f"rank_{refit_name}": int(results[f"rank_test_{refit}"][index]),
             **{f"mean_{natural(s, index)[0]}": natural(s, index)[1] for s in common["scoring"]},
-            f"std_{refit}": float(results[f"std_test_{refit}"][index]),
+            f"std_{refit_name}": float(results[f"std_test_{refit}"][index]),
         }
         for index, params in enumerate(results["params"])
     ]
@@ -916,12 +987,23 @@ def select_leader_anchored_practical_tie(records: Sequence[Mapping[str, Any]], b
     interval_metric = tie.get("cv_interval_metric", tie["metric"])
     lower_field, upper_field = f"cv_{interval_metric}_ci_lower", f"cv_{interval_metric}_ci_upper"
 
+    tie_sign = -1.0 if metric_direction(tie["metric"]) == "min" else 1.0
+
+    def within_tolerance(other: Mapping[str, Any]) -> bool:
+        # Two float formulations a study may use; they can disagree at the
+        # boundary (abs(2.1 - 2.0) > 0.1 while 2.1 <= 2.0 + 0.1), so the
+        # contract declares which one it reproduces.
+        if tie.get("bound", "absolute_difference") == "leader_plus_tolerance":
+            if tie_sign < 0:
+                return float(other[leader_field]) <= float(leader[leader_field]) + tie["tolerance"]
+            return float(other[leader_field]) >= float(leader[leader_field]) - tie["tolerance"]
+        return abs(float(leader[leader_field]) - float(other[leader_field])) <= tie["tolerance"]
+
     def tied(other: Mapping[str, Any]) -> bool:
-        difference = abs(float(leader[leader_field]) - float(other[leader_field]))
         if not tie.get("requires_cv_interval_overlap", True):
-            return difference <= tie["tolerance"]
+            return within_tolerance(other)
         overlap = max(leader[lower_field], other[lower_field]) <= min(leader[upper_field], other[upper_field])
-        return difference <= tie["tolerance"] and overlap
+        return within_tolerance(other) and overlap
 
     group = [leader] + [r for r in eligible_rows[1:] if tied(r)]
     remaining = list(group)
@@ -951,7 +1033,8 @@ def select_leader_anchored_practical_tie(records: Sequence[Mapping[str, Any]], b
         "leader_model_id": leader["model_id"],
         "leader_minus_runner_up": (float(leader[leader_field]) - float(runner_up[leader_field])) if runner_up else None,
         "selected_model_id": remaining[0]["model_id"],
-        "deciding_criterion": criteria[-1]["criterion"] if criteria else "highest_validation_metric",
+        "deciding_criterion": criteria[-1]["criterion"] if criteria else (
+            "lowest_validation_metric" if leader_sign > 0 else "highest_validation_metric"),
         "criteria_applied": criteria,
         "records": rows,
         "outcome": "selected",
@@ -1219,7 +1302,206 @@ class MulticlassClassificationTask:
         }
 
 
-TASK_ADAPTERS = {BINARY: BinaryClassificationTask, MULTICLASS: MulticlassClassificationTask}
+def regression_metrics(y_true: Sequence[float], predictions: Sequence[float]) -> dict[str, float]:
+    """Point-error metrics and aggregate residual diagnostics, natural orientation.
+
+    Residual = observed - predicted; the residual standard deviation uses
+    ``ddof=1``; absolute-error percentiles use ``numpy.quantile`` (linear).
+    """
+    import numpy as np
+    from sklearn.metrics import mean_absolute_error, mean_squared_error, median_absolute_error, r2_score
+
+    truth, predicted = np.asarray(y_true, dtype=float), np.asarray(predictions, dtype=float)
+    if truth.shape != predicted.shape or truth.ndim != 1 or not len(truth):
+        raise ScientificReproductionError("misaligned_regression_vectors", "truth and predictions must be aligned 1-D vectors")
+    if not np.isfinite(truth).all() or not np.isfinite(predicted).all():
+        raise ScientificReproductionError("non_finite_regression_values", "truth and predictions must be finite")
+    residuals = truth - predicted
+    absolute = np.abs(residuals)
+    return {
+        "mae": float(mean_absolute_error(truth, predicted)),
+        "rmse": float(mean_squared_error(truth, predicted) ** 0.5),
+        "r2": float(r2_score(truth, predicted)),
+        "medae": float(median_absolute_error(truth, predicted)),
+        "residual_mean": float(residuals.mean()),
+        "residual_standard_deviation": float(residuals.std(ddof=1)) if len(residuals) > 1 else 0.0,
+        "max_absolute_error": float(absolute.max()),
+        "absolute_error_p50": float(np.quantile(absolute, 0.5)),
+        "absolute_error_p90": float(np.quantile(absolute, 0.9)),
+        "absolute_error_p95": float(np.quantile(absolute, 0.95)),
+        "row_count": int(len(truth)),
+    }
+
+
+def group_overlap_mask(reference_features: Any, evaluated_features: Any, group_columns: Sequence[str]) -> Any:
+    """Per evaluated row: does its group key (declared columns) occur in the reference rows?"""
+    import numpy as np
+    import pandas as pd
+
+    columns = list(group_columns)
+    reference = pd.MultiIndex.from_frame(reference_features.loc[:, columns].reset_index(drop=True))
+    evaluated = pd.MultiIndex.from_frame(evaluated_features.loc[:, columns].reset_index(drop=True))
+    return np.asarray(evaluated.isin(reference), dtype=bool)
+
+
+def group_overlap_diagnostic(reference_features: Any, evaluated_features: Any, y_true: Sequence[float],
+                             predictions: Sequence[float], spec: Mapping[str, Any], evaluation: Mapping[str, Any],
+                             subset_metrics: Any) -> dict[str, Any]:
+    """Descriptive split of one existing prediction by group overlap with the fitting rows.
+
+    It reuses predictions that were already made; it never fits, predicts,
+    selects or alters a partition. Subsets smaller than
+    ``minimum_subset_rows`` report their size without metrics.
+    """
+    import numpy as np
+
+    seen = group_overlap_mask(reference_features, evaluated_features, spec["group_columns"])
+    truth, predicted = np.asarray(y_true, dtype=float), np.asarray(predictions, dtype=float)
+    minimum = int(spec["minimum_subset_rows"])
+
+    def subset(mask: Any) -> dict[str, Any]:
+        rows = int(mask.sum())
+        if rows < minimum:
+            return {"status": "insufficient_rows_for_stable_subset_metric", "row_count": rows}
+        return {"status": "computed", "row_count": rows, "metrics": subset_metrics(truth[mask], predicted[mask])}
+
+    return {
+        "group_label": spec["group_label"],
+        "group_columns": list(spec["group_columns"]),
+        "evaluated_partition": evaluation["evaluated_partition"],
+        "reference_partitions": list(evaluation["reference_partitions"]),
+        "model": evaluation["model"],
+        "evaluated_row_count": int(len(seen)),
+        "seen_group_row_count": int(seen.sum()),
+        "unseen_group_row_count": int((~seen).sum()),
+        "seen_group_row_share": float(seen.mean()) if len(seen) else 0.0,
+        "full": {"status": "computed", "row_count": int(len(seen)), "metrics": subset_metrics(truth, predicted)},
+        "seen": subset(seen),
+        "unseen": subset(~seen),
+        "diagnostic_only": True,
+        "used_for_selection": False,
+    }
+
+
+CONTINUOUS_NOT_APPLICABLE_REASON = "continuous_regression_point_prediction"
+
+
+class ContinuousRegressionTask:
+    """Continuous numeric target: point prediction, error metrics, no class concept.
+
+    The target must be numeric, complete and finite and is kept as float64.
+    There is no class order, positive class or decision threshold; every place
+    a classification report carries one records an explicit not-applicable
+    entry instead.
+    """
+
+    problem_type = REGRESSION
+
+    def __init__(self, payload: Mapping[str, Any]) -> None:
+        self.payload = payload
+        self.target = dict(payload["problem"]["target"])
+        metrics = payload["metrics"]
+        self.cv_metrics = list(metrics.get("cv_scorers") or [m for m in metrics["evaluated"] if m in REGRESSION_CV_SCORERS])
+        self.refit_metric = metrics.get("refit", metrics["primary"])
+
+    def labels(self, frame: Any, column: str) -> Any:
+        import numpy as np
+        import pandas as pd
+
+        values = frame[column]
+        if not pd.api.types.is_numeric_dtype(values) or pd.api.types.is_bool_dtype(values):
+            raise ScientificReproductionError("non_numeric_regression_target", f"{column} must be numeric")
+        converted = values.astype("float64")
+        if converted.isna().any() or not np.isfinite(converted.to_numpy()).all():
+            raise ScientificReproductionError("incomplete_regression_target", f"{column} must be complete and finite")
+        return converted
+
+    def scoring(self) -> dict[str, Any]:
+        return regression_scoring(self.cv_metrics)
+
+    def refit_key(self) -> str:
+        if self.refit_metric not in REGRESSION_CV_SCORERS:
+            raise ScientificReproductionError("unsupported_cv_scorer", self.refit_metric)
+        return REGRESSION_CV_SCORERS[self.refit_metric][0]
+
+    def class_order_evidence(self) -> None:
+        return None
+
+    def partition_evidence(self, y: Any) -> dict[str, Any]:
+        y = self.labels(y.to_frame(name="target"), "target")
+        return {"target_summary": {"count": int(len(y)), "minimum": float(y.min()), "maximum": float(y.max()),
+                                   "mean": float(y.mean()), "median": float(y.median()),
+                                   "standard_deviation": float(y.std(ddof=1)) if len(y) > 1 else 0.0,
+                                   "diagnostic_only": True}}
+
+    def validation_threshold(self) -> dict[str, Any]:
+        return not_applicable(CONTINUOUS_NOT_APPLICABLE_REASON)
+
+    def subset_metrics(self, y_true: Any, predictions: Any) -> dict[str, float]:
+        return regression_metrics(y_true, predictions)
+
+    def evaluate(self, estimator: Any, x: Any, y: Any) -> Evaluation:
+        import numpy as np
+
+        predictions = np.asarray(estimator.predict(x), dtype=float)
+        return Evaluation(flat_metrics=regression_metrics(list(y), predictions), state={"predictions": predictions})
+
+    def decide(self, engine: "Reproduction", result: "ReproductionResult", selected_id: str,
+               validation: Evaluation, y_val: Any) -> dict[str, Any]:
+        result.actuals["decision"] = {"rule": "continuous_point_prediction", "threshold_applicable": False,
+                                      "positive_class_applicable": False, "class_order_applicable": False}
+        return {"rule": "continuous_point_prediction", "threshold": not_applicable(CONTINUOUS_NOT_APPLICABLE_REASON),
+                "provenance": RUN_KIND}
+
+    def final_evaluation(self, engine: "Reproduction", result: "ReproductionResult", *, selected_id: str,
+                         pipeline: Any, x_test: Any, y_test: Any, decision: Mapping[str, Any],
+                         fit_rows: int, test_membership: str, context: Mapping[str, Any]) -> None:
+        # Exactly one prediction on the test partition; every test quantity,
+        # including the descriptive diagnostics, derives from it.
+        evaluation = self.evaluate(pipeline, x_test, y_test)
+        result.actuals["final_test"] = {"evaluation_count": 1, "prediction_call_count": 1, "fit_rows": fit_rows,
+                                        "row_count": int(len(y_test)), "metrics": evaluation.flat_metrics}
+        result.stages["final_test_predictions"] = evaluation.state["predictions"]
+        result.metric_sets.append(engine._metric_set(
+            result, metric_set_id=f"final_test.{selected_id}", scope=SCOPE_FINAL_TEST, partition="test",
+            membership=test_membership, model_id=selected_id, threshold=decision["threshold"],
+            metrics=evaluation.flat_metrics, feature_policy=context.get("feature_policy"),
+            fit_partitions=context.get("fit_partitions"),
+        ))
+
+    def problem_section(self) -> dict[str, Any]:
+        problem = self.payload["problem"]
+        return {
+            "problem_type": self.problem_type,
+            "target_column": self.target["column"],
+            "target": {key: self.target[key] for key in ("semantics", "unit", "value_representation", "value_validation")
+                       if key in self.target},
+            "classes": None,
+            "positive_class": not_applicable("continuous_regression_has_no_positive_class"),
+            "decision_rule": {"kind": "continuous_point_prediction"},
+            "class_order": None,
+            "classification_concepts": dict(problem["classification_concepts"]),
+        }
+
+    def thresholds_section(self, result: "ReproductionResult") -> dict[str, Any]:
+        return {
+            "applicable": False,
+            "reason": CONTINUOUS_NOT_APPLICABLE_REASON,
+            "decision_rule": {"kind": "continuous_point_prediction"},
+            "positive_class": not_applicable("continuous_regression_has_no_positive_class"),
+            "class_order": not_applicable("continuous_regression_has_no_class_order"),
+            "scientific_policy": {"provenance": "scientific_study_contract",
+                                  "rule": not_applicable("continuous_regression_has_no_classification_threshold")},
+            "atlas_native_operational": {
+                "provenance": NATIVE_TRAINING_RUN_KIND,
+                "value": None,
+                "note": "Not part of this run. A native continuous-regression release has no decision threshold.",
+            },
+        }
+
+
+TASK_ADAPTERS = {BINARY: BinaryClassificationTask, MULTICLASS: MulticlassClassificationTask,
+                 REGRESSION: ContinuousRegressionTask}
 
 
 def task_adapter(payload: Mapping[str, Any]) -> Any:
@@ -1384,6 +1666,13 @@ def _class_counts(series: Any) -> dict[str, int]:
     return {_key(k): int(v) for k, v in series.value_counts().items()}
 
 
+def _target_evidence(task: Any, y: Any) -> dict[str, Any]:
+    """Per-partition target evidence: class counts, or a continuous-target summary."""
+    if hasattr(task, "partition_evidence"):
+        return task.partition_evidence(y)
+    return {"class_counts": _class_counts(y)}
+
+
 @dataclass
 class ReproductionResult:
     plan: "Reproduction"
@@ -1428,8 +1717,23 @@ class ReproductionResult:
         candidates_expected = [c["model_id"] for c in payload["candidates"]]
         split = payload["split"]
         membership = membership_spec(split)
+        report_version = (REPORT_SCHEMA_VERSION_V3 if payload["schema_version"] == CONTRACT_SCHEMA_VERSION_V3
+                          else REPORT_SCHEMA_VERSION)
+        if task is not None and hasattr(task, "problem_section"):
+            problem_section = task.problem_section()
+        else:
+            problem_section = {
+                "problem_type": problem["problem_type"],
+                "target_column": problem["target"]["column"],
+                "classes": problem["target"].get("classes"),
+                "positive_class": problem["target"].get("positive_class"),
+                "decision_rule": problem.get("decision_rule") or {"kind": "probability_threshold"},
+                "class_order": ({**task.class_order_evidence(),
+                                 "fitted_estimator_class_order": self.actuals.get("final_test", {}).get("estimator_class_order")}
+                                if task is not None and task.class_order_evidence() else None),
+            }
         report = {
-            "schema_version": REPORT_SCHEMA_VERSION,
+            "schema_version": report_version,
             "artifact_kind": "scientific_reproduction_report",
             "run_identity": {
                 "run_kind": RUN_KIND,
@@ -1482,19 +1786,10 @@ class ReproductionResult:
                 "gaps": self.plan.protocol_gaps,
             },
             "source_verification": self.plan.source_verification,
-            "problem": {
-                "problem_type": problem["problem_type"],
-                "target_column": problem["target"]["column"],
-                "classes": problem["target"].get("classes"),
-                "positive_class": problem["target"].get("positive_class"),
-                "decision_rule": problem.get("decision_rule") or {"kind": "probability_threshold"},
-                "class_order": ({**task.class_order_evidence(),
-                                 "fitted_estimator_class_order": self.actuals.get("final_test", {}).get("estimator_class_order")}
-                                if task is not None and task.class_order_evidence() else None),
-            },
+            "problem": problem_section,
             "split": {
                 "kind": split["kind"],
-                "algorithm": "sklearn.model_selection.train_test_split (two stages, stratified)",
+                "algorithm": _SPLIT_ALGORITHMS.get(split["kind"], split["kind"]),
                 "fractions": split["fractions"],
                 "stratify_by": split["stratify_by"],
                 "seeds_used": dict(split["seeds"]),
@@ -1544,6 +1839,8 @@ class ReproductionResult:
                 "supersedes": None,
             },
         }
+        if report_version == REPORT_SCHEMA_VERSION_V3:
+            report["interpretive_diagnostics"] = _jsonable(self.stages.get("interpretive_diagnostics"))
         return report
 
 
@@ -1632,6 +1929,7 @@ class Reproduction:
             )
         actuals = result.actuals
         scoring = task.scoring()
+        refit_key = task.refit_key() if hasattr(task, "refit_key") else None
 
         raw = load_dataset(self.dataset_path, payload["dataset_identity"])
         actuals["dataset"] = {"sha256": result.dataset_verification["observed_sha256"],
@@ -1657,7 +1955,7 @@ class Reproduction:
         actuals["partitions"] = {
             name: {
                 "rows": len(frame),
-                "class_counts": _class_counts(frame[target_column]),
+                **_target_evidence(task, frame[target_column]),
                 "membership_sha256": memberships[name],
                 **({"partition_sha256": partition_hashes[name]} if partition_hashes else {}),
             }
@@ -1700,7 +1998,7 @@ class Reproduction:
         for candidate in payload["candidates"]:
             model_id = candidate["model_id"]
             outcome = run_candidate_search(candidate, payload, x_train, y_train, n_jobs=jobs,
-                                           task_type=task_type, scoring=scoring)
+                                           task_type=task_type, scoring=scoring, refit=refit_key)
             result.candidate_models_executed.append(model_id)
             summary = outcome["summary"]
             search_outcomes[model_id] = outcome
@@ -1761,7 +2059,7 @@ class Reproduction:
             result.stages["selection_candidate_space"] = "searched_families"
 
         cv_folds = _cross_validator(payload["cross_validation"])
-        refit = payload["metrics"].get("refit", payload["metrics"]["primary"])
+        refit = refit_key or payload["metrics"].get("refit", payload["metrics"]["primary"])
         z_value = float(payload["selection"].get("practical_tie", {}).get("cv_interval_z", 1.96))
         validation_evals: dict[str, Evaluation] = {}
         variant_cv: dict[str, dict[str, float]] = {}
@@ -1881,9 +2179,9 @@ class Reproduction:
         final_x = pd.concat([partitions[p].loc[:, columns] for p in fit_partitions], axis=0, ignore_index=True)
         final_y = pd.concat([task.labels(partitions[p], target_column) for p in fit_partitions], axis=0, ignore_index=True)
         result.stages["final_fit"] = {"partitions": fit_partitions, "rows": len(final_x),
-                                      "class_counts": _class_counts(final_y), "feature_policy": selected_variant["feature_policy"],
+                                      **_target_evidence(task, final_y), "feature_policy": selected_variant["feature_policy"],
                                       "feature_count": len(columns)}
-        actuals["final_fit"] = {"rows": len(final_x), "class_counts": _class_counts(final_y), "partitions": fit_partitions}
+        actuals["final_fit"] = {"rows": len(final_x), **_target_evidence(task, final_y), "partitions": fit_partitions}
         row_gate = payload["final_evaluation"].get("fit_row_count_gate")
         if row_gate and not self._gate(result, "final_evaluation.fit_row_count", row_gate["expected_rows"], len(final_x),
                                        row_gate["source"]):
@@ -1901,7 +2199,62 @@ class Reproduction:
                      "final_features": final_x,
                      "selected_validation_confusion": selected_eval.detail.get("confusion_matrix")},
         )
+        self._interpretive_diagnostics(result, task, partitions=partitions, columns=columns,
+                                       selected_id=selected_id, selected_eval=selected_eval,
+                                       final_x=final_x, fit_partitions=fit_partitions, memberships=memberships)
         return True
+
+    def _interpretive_diagnostics(self, result: ReproductionResult, task: Any, *, partitions: Mapping[str, Any],
+                                  columns: Sequence[str], selected_id: str, selected_eval: Evaluation, final_x: Any,
+                                  fit_partitions: Sequence[str], memberships: Mapping[str, str]) -> None:
+        """Descriptive group-overlap diagnostics over predictions already made.
+
+        Runs after the final test evaluation and consumes only the selected
+        candidate's validation prediction and the single test prediction, so it
+        cannot influence the split, search, selection, or any fit.
+        """
+        spec = (self.contract.payload.get("interpretive_evidence") or {}).get("group_overlap_diagnostic")
+        if not spec:
+            return
+        target_column = self.contract.payload["problem"]["target"]["column"]
+        evaluations = []
+        for evaluation in spec["evaluations"]:
+            name = evaluation["evaluated_partition"]
+            if evaluation["model"] == "selected_candidate_fitted_on_train":
+                predictions = selected_eval.state["predictions"]
+            else:
+                predictions = result.stages["final_test_predictions"]
+            if list(evaluation["reference_partitions"]) == list(fit_partitions):
+                reference = final_x
+            else:
+                import pandas as pd
+
+                reference = pd.concat([partitions[p].loc[:, list(columns)] for p in evaluation["reference_partitions"]],
+                                      axis=0, ignore_index=True)
+            evaluated = partitions[name].loc[:, list(columns)]
+            outcome = group_overlap_diagnostic(reference, evaluated, task.labels(partitions[name], target_column),
+                                               predictions, spec, evaluation, task.subset_metrics)
+            evaluations.append(outcome)
+            label = f"{spec['group_label']}_overlap"
+            result.actuals.setdefault(label, {})[name] = {
+                "evaluated_row_count": outcome["evaluated_row_count"],
+                "seen": outcome["seen"], "unseen": outcome["unseen"]}
+            for subset in ("seen", "unseen"):
+                if outcome[subset]["status"] == "computed":
+                    result.metric_sets.append(self._metric_set(
+                        result, metric_set_id=f"diagnostic.{label}.{name}.{subset}", scope=SCOPE_INTERPRETIVE_DIAGNOSTIC,
+                        partition=name, membership=memberships[name], model_id=selected_id,
+                        threshold=task.validation_threshold(), metrics=outcome[subset]["metrics"],
+                        fit_partitions=list(evaluation["reference_partitions"]),
+                    ))
+        result.stages["interpretive_diagnostics"] = {
+            "diagnostic_only": True,
+            "used_for_selection": False,
+            "kind": spec["kind"],
+            "executed_after": "final_test_evaluation",
+            "evaluations": evaluations,
+            "interpretation": list(spec["interpretation"]),
+        }
 
 
 def build_reproduction(
@@ -2052,8 +2405,10 @@ def answer_reproduction_questions(report: Mapping[str, Any]) -> dict[str, Any]:
         "final_reproduction_status": report["reproduction_status"]["status"],
         "unanswered": unanswered,
     }
-    if report.get("schema_version") == REPORT_SCHEMA_VERSION:
+    if report.get("schema_version") in (REPORT_SCHEMA_VERSION, REPORT_SCHEMA_VERSION_V3):
         answers.update(_answer_v2_questions(report))
+    if report.get("schema_version") == REPORT_SCHEMA_VERSION_V3:
+        answers.update(_answer_v3_questions(report))
     return answers
 
 
@@ -2097,6 +2452,22 @@ def _answer_v2_questions(report: Mapping[str, Any]) -> dict[str, Any]:
         "did_dataset_sha_match": expected_match("dataset.sha256"),
         "evidence_tiers": report["reproduction_status"].get("evidence_tiers"),
         "historical_test_exposure": (report.get("protocol_integrity") or {}).get("historical_test_exposure"),
+    }
+
+
+def _answer_v3_questions(report: Mapping[str, Any]) -> dict[str, Any]:
+    problem = report.get("problem") or {}
+    diagnostics = report.get("interpretive_diagnostics") or {}
+    return {
+        "problem_type": problem.get("problem_type"),
+        "classification_concepts": problem.get("classification_concepts"),
+        "which_diagnostics_were_reproduced": [
+            {"group_label": e["group_label"], "evaluated_partition": e["evaluated_partition"],
+             "reference_partitions": e["reference_partitions"], "seen_rows": e["seen_group_row_count"],
+             "unseen_rows": e["unseen_group_row_count"]}
+            for e in diagnostics.get("evaluations", [])
+        ],
+        "were_diagnostics_used_for_selection": diagnostics.get("used_for_selection") if diagnostics else None,
     }
 
 
@@ -2171,7 +2542,8 @@ def describe_lineage_separation(report: Mapping[str, Any], *, repo_root: Path) -
     if native_contract is not None:
         membership = (report.get("split") or {}).get("membership") or {"kind": "identifier"}
         seeds = (report.get("split") or {}).get("seeds_used")
-        scientific_split = (f"two_stage_stratified_holdout ({membership.get('kind')}-ordered, seeds "
+        split_kind = (report.get("split") or {}).get("kind", "two_stage_stratified_holdout")
+        scientific_split = (f"{split_kind} ({membership.get('kind')} membership, seeds "
                             f"{seeds if seeds else 'from the study contract'})")
         differences.append({
             "fact": "split",
@@ -2186,6 +2558,12 @@ def describe_lineage_separation(report: Mapping[str, Any], *, repo_root: Path) -
                 "atlas_native": release_metrics.get("final_test_evaluation", {}).get("row_count"),
                 "scientific_reproduction": observed.get("test", {}).get("rows"),
             })
+        differences.append({
+            "fact": "partition_membership",
+            "atlas_native": "assigned by the native splitter of pipeline.training; not recorded by this reproduction",
+            "scientific_reproduction": {name: part.get("membership_sha256") for name, part in observed.items()} or None,
+            "consequence": "different row memberships: the two test metrics are measured on different rows",
+        })
         differences.append({
             "fact": "primary_metric",
             "atlas_native": native_contract.get("primary_metric"),

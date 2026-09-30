@@ -38,6 +38,18 @@ def _source(cell_type: str | None = None) -> str:
     )
 
 
+SCIENTIFIC_REPRODUCTION_SECTION = "## 18. Scientific Reproduction lineage (separate from Atlas Native Training)"
+
+
+def _native_source(cell_type: str | None = None) -> str:
+    """Source of the Atlas Native Forecasting cells only (everything before Section 18)."""
+    cells = _notebook()["cells"]
+    boundary = next(i for i, cell in enumerate(cells) if "".join(cell["source"]).startswith(SCIENTIFIC_REPRODUCTION_SECTION))
+    return "\n".join(
+        "".join(cell["source"]) for cell in cells[:boundary] if cell_type is None or cell["cell_type"] == cell_type
+    )
+
+
 def _called_names() -> set[str]:
     names: set[str] = set()
     for cell in _notebook()["cells"]:
@@ -332,8 +344,11 @@ def test_notebook_authors_reviewed_fixed_forecasting_training_policy_intent():
     assert 'selection_mode="fixed_configuration"' in code
     assert "model_selection_performed=False," in code
     assert 'model_family="deterministic_seasonal_trend_ols"' in code
+    # The native lineage never searches or selects; the separate Scientific
+    # Reproduction section (18+) only presents the engine's selection evidence.
+    native_code = _native_source("code")
     for forbidden in ("GridSearch", "AutoML", "HoltWinters", "SARIMA", "practical_tie"):
-        assert forbidden not in code
+        assert forbidden not in native_code
 
 
 def test_notebook_authors_reviewed_forecasting_history_input_policy_intent():
@@ -751,13 +766,19 @@ def test_notebook_validates_s0274_forecasting_metric_diagnostics():
         assert forbidden not in metric_diagnostics_source
 
 
-def test_notebook_checks_scientific_continuity_without_hardcoding_into_evidence():
+def test_native_training_is_never_gated_on_external_scientific_metrics():
+    """The cross-lineage continuity gate is gone: native assembly never blocks on study values.
+
+    The authoritative comparison with the Dataset Study is the separate
+    Scientific Reproduction lineage (Section 18 onward).
+    """
     code = _source("code")
-    assert "SCIENTIFIC_CONTINUITY_REFERENCE_VALUES = {" in code
-    assert '"mae": 1.526584,' in code
-    assert '"rmse": 1.859967,' in code
-    assert '"seasonal_mase": 0.555495,' in code
-    assert '"scientific_continuity_mismatch"' in code
+    for removed in ("SCIENTIFIC_CONTINUITY_REFERENCE_VALUES", "SCIENTIFIC_CONTINUITY_ABSOLUTE_TOLERANCE",
+                    '"scientific_continuity_mismatch"', '"scientific_continuity_metric_missing"',
+                    "1.526584", "1.859967", "0.555495"):
+        assert removed not in code
+    assert '"blocks_on_external_study_metrics": False,' in code
+    assert '"scientific_comparison_lineage": "scientific_reproduction_run",' in code
     assert 'assert "scientific_continuity" not in training_metrics' in code
 
 

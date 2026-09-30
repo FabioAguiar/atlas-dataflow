@@ -10,6 +10,7 @@ Há dois casos reais:
 |---|---|---|---|---|
 | `dataset-study-telco-customer-churn` | `43ced1fbb76f` | classificação binária | `scientific-study-contract.v1` | `reproduced_within_tolerance` |
 | `dataset-study-dry-bean` | `e3e697c1b60f` | classificação multiclasse (7 classes) + seleção em duas etapas | `scientific-study-contract.v2` | `reproduced_within_tolerance` ([detalhes](scientific-reproduction-dry-bean.md)) |
+| `dataset-study-concrete-compressives-strength` | `b223370e0f44` | regressão contínua (MPa) | `scientific-study-contract.v3` | `reproduced_exact` (ver §7b) |
 
 A infraestrutura é genérica. O código despacha pelo `problem.problem_type` (adapters `binary_classification`, `multiclass_classification` e `continuous_regression`) e não tem nenhum caminho `if telco`, `if dry-bean` ou `if concrete`; testes garantem que os módulos do motor não citam datasets. O que é específico de cada estudo vive apenas no contrato versionado, na evidência pinada, no notebook de integração e nos artefatos de reprodução.
 
@@ -196,6 +197,24 @@ Ambiente de reprodução: CPython 3.13.12, linux-x86_64, scikit-learn 1.9.1, pan
 | Status | **`reproduced_within_tolerance`**; única razão: ambiente `compatible`, não `exact` |
 
 Teste final (HGB, fit em 5.986 linhas, uma avaliação): AP 0,641283 · ROC-AUC 0,840151 · Brier 0,139422 · Log loss 0,420650. A 0,50: TP 140, FP 84, TN 692, FN 141. No threshold da política: TP 226, FP 215, TN 561, FN 55. Tudo igual ao estudo.
+
+## 7b. Resultado real da reprodução Concrete
+
+O estudo não versionava evidência estruturada: os artefatos ficam no `.gitignore`, as métricas de teste só aparecem com 4 casas no README e os digests de membership não existiam. O estudo ganhou `evidence/canonical-run.json` (commit `b223370e0f44`), uma projeção determinística dos artefatos persistidos de uma reexecução do zero dos Notebooks 01–04 no ambiente travado (CPython 3.12.13 + `pylock.toml`) em linux-x86_64. A execução canônica original foi em linux-aarch64. A reexecução reproduziu byte a byte o modelo (`6e6a5a97…`) e todas as decisões. O bloco `reference_verification` do manifesto lista as únicas diferenças em relação aos notebooks executados versionados: os últimos dígitos de MAE/MedAE de validação e do desvio padrão do CV-MAE do Ridge (≤ 1,4e-14).
+
+| Pergunta | Resposta |
+|---|---|
+| Contrato | `pipeline/scientific-studies/concrete-compressive-strength/study-b223370e0f44/` (`verify`: `synchronized`, 15/15 arquivos, 164/164 localizadores, 34/34 parâmetros) |
+| Dataset | UCI 165, SHA-256 `2f6e6320…e1be`, 48.501 bytes, 1.030 × 9, verificado (os mesmos bytes já registrados pela linhagem nativa, mas lidos apenas do `atlas_local_path` científico) |
+| Split | `two_stage_random_holdout`, seeds 42/43, `stratify=None`: 721/154/155; gate de membership aprovado |
+| Busca | KFold(5, shuffle, 42) só em train; Ridge 4, DT 12, RF 12, HGB 24 = 52 configurações |
+| Seleção | elegíveis HGB, RF, DT, Ridge; sem empate prático; HGB com `l2_regularization=1.0, learning_rate=0.1, max_leaf_nodes=15, min_samples_leaf=10` |
+| Teste final | fit em 875 linhas, uma avaliação em 155: MAE 2,5822 · RMSE 4,2104 · R² 0,9387 · MedAE 1,6363 |
+| Mistura | validação 111 vistas / 43 não vistas; teste 116 / 39; descritivo, nunca usado na seleção |
+| Comparação | 160 quantidades: 160 exatas (120 métricas numéricas com delta 0), 0 dentro só da tolerância, 0 divergentes, 0 ausentes |
+| Ambiente | `exact` em interpretador, pacotes centrais e plataforma da evidência pinada; o lock completo não foi instalado no Atlas e `byte_identical_runtime` fica `null` |
+
+As métricas nativas do Concrete (`release-20260820-001`, MAE de teste 2,0453) vêm de outro split e de outra seleção. Não são diretamente comparáveis, e o treino nativo não foi alterado.
 
 ## 8. Reprodução científica × treino nativo Atlas
 

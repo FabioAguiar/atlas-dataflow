@@ -286,7 +286,7 @@ HISTORICAL = sorted(p.relative_to(REPO_ROOT).as_posix() for p in
                     + list((REPO_ROOT / "pipeline/scientific-reproduction-runs").rglob("reproduction-report.json")))
 
 
-@pytest.mark.parametrize("relative", [p for p in HISTORICAL if "concrete" not in p])
+@pytest.mark.parametrize("relative", [p for p in HISTORICAL if "concrete" not in p and "nottem" not in p])
 def test_historical_contracts_and_reports_keep_their_version_and_validate(relative):
     payload = json.loads((REPO_ROOT / relative).read_text(encoding="utf-8"))
     if relative.endswith("scientific-study-contract.json"):
@@ -299,7 +299,7 @@ def test_historical_contracts_and_reports_keep_their_version_and_validate(relati
         assert sr.validate_report_schema(payload) == []
 
 
-@pytest.mark.parametrize("relative", [p for p in HISTORICAL if "concrete" not in p])
+@pytest.mark.parametrize("relative", [p for p in HISTORICAL if "concrete" not in p and "nottem" not in p])
 def test_historical_scientific_artifacts_are_byte_intact(relative):
     """Committed contracts/reports are write-once: the working tree equals the committed blob."""
     committed = subprocess.run(["git", "-C", str(REPO_ROOT), "show", f"HEAD:{relative}"],

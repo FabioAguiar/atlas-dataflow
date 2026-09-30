@@ -1,0 +1,3229 @@
+{
+  "schema_version": "scientific-study-contract.v4",
+  "artifact_kind": "scientific_study_contract",
+  "study_identity": {
+    "study_id": "dataset-study-nottingham-monthly-temperatures",
+    "dataset_slug": "nottem",
+    "protocol_kind": "univariate_forecasting_expanding_window_model_selection.v1",
+    "study_revision_label": "study-79c6abccbf65",
+    "title": "Nottingham Monthly Temperatures -- Dataset Study"
+  },
+  "source_repository": {
+    "url": "https://github.com/FabioAguiar/dataset-study-nottingham-monthly-temperatures",
+    "revision": "79c6abccbf65bb622fd013288182bedf5aaf7f52",
+    "revision_committed_at": "2026-09-28T09:35:54+00:00",
+    "pinned_files": [
+      {
+        "path": "reproducibility/canonical-run.json",
+        "role": "canonical_run_structured_reference_evidence"
+      },
+      {
+        "path": "README.md",
+        "role": "published_protocol_results_and_holdout_exposure_narrative"
+      },
+      {
+        "path": ".python-version",
+        "role": "scientific_interpreter_contract"
+      },
+      {
+        "path": "pyproject.toml",
+        "role": "declared_dependency_contract"
+      },
+      {
+        "path": "pylock.toml",
+        "role": "scientific_environment_lock"
+      },
+      {
+        "path": "scripts/canonical_run.py",
+        "role": "canonical_run_builder_and_verifier"
+      },
+      {
+        "path": "scripts/download_data.py",
+        "role": "rdataset_source_materialization"
+      },
+      {
+        "path": "scripts/forecasting_exploration_handoff.py",
+        "role": "temporal_contract_and_holdout_exposure_record"
+      },
+      {
+        "path": "scripts/prepare_data.py",
+        "role": "deterministic_partition_csv_fingerprint_implementation"
+      },
+      {
+        "path": "scripts/forecasting_preparation.py",
+        "role": "monthly_period_translation_partitions_and_fold_local_scale"
+      },
+      {
+        "path": "scripts/forecasting_model_selection.py",
+        "role": "frozen_catalog_backtest_failure_eligibility_and_selection"
+      },
+      {
+        "path": "scripts/forecasting_finalization.py",
+        "role": "final_fit_single_holdout_evaluation_and_baseline_reference"
+      },
+      {
+        "path": "scripts/forecasting_inference.py",
+        "role": "read_only_inference_consumer_outside_the_reproduced_protocol"
+      },
+      {
+        "path": "notebooks/01_data_understanding_and_exploration.ipynb",
+        "role": "full_series_exploration_rev_001_exposure"
+      },
+      {
+        "path": "notebooks/02_data_preparation.ipynb",
+        "role": "temporal_preparation_and_holdout_sealing"
+      },
+      {
+        "path": "notebooks/03_model_selection_and_evaluation.ipynb",
+        "role": "expanding_window_model_selection"
+      },
+      {
+        "path": "notebooks/04_final_model_and_bundle.ipynb",
+        "role": "final_fit_and_single_holdout_evaluation"
+      },
+      {
+        "path": "notebooks/05_inference_demo.ipynb",
+        "role": "read_only_inference_demo_outside_the_reproduced_protocol"
+      }
+    ]
+  },
+  "canonical_run": {
+    "path": "reproducibility/canonical-run.json",
+    "schema_version": "canonical-run.v1",
+    "artifact_type": "canonical_reference_run"
+  },
+  "dataset_identity": {
+    "source_provider": "statsmodels.datasets.get_rdataset",
+    "source_repository": "Rdatasets",
+    "source_reference": "datasets::nottem",
+    "dataset_name": "Nottingham Castle monthly average air temperature",
+    "file_name": "dataset.csv",
+    "sha256": "2908bd6f8235992fefffe4040266c3242e624eb372f2684b4acf54a9e434ca8b",
+    "size_bytes": 4531,
+    "size_bytes_provenance": "Derived from the SHA-256-pinned bytes: the canonical run records the source SHA-256, row count and column order but no byte size.",
+    "row_count": 240,
+    "column_count": 2,
+    "source_columns": [
+      "time",
+      "value"
+    ],
+    "read_format": "csv",
+    "read_options": {},
+    "atlas_local_path": "data/scientific-studies/nottem/dataset.csv",
+    "study_source_path": "data/raw/nottem/dataset.csv",
+    "acquisition_note": "The study materializes dataset.csv as pandas DataFrame.to_csv(index=False) of statsmodels.datasets.get_rdataset('nottem', 'datasets').data (LF line endings, pandas float rendering). The file is gitignored in Atlas; the engine executes only when SHA-256 and size match. It is not the Atlas-native raw file (data/raw/nottem/dataset.csv is written by pipeline.dataset_acquisition as CRLF source strings), and the reproduction never reads the native boundary or a study checkout."
+  },
+  "scientific_environment": {
+    "python": "3.13.13",
+    "implementation": "CPython",
+    "platform": "linux-aarch64",
+    "core_packages": {
+      "statsmodels": "0.15.0",
+      "pandas": "3.0.6",
+      "numpy": "2.5.3",
+      "scipy": "1.18.1"
+    },
+    "lock": {
+      "path": "pylock.toml",
+      "format": "pep751",
+      "python_version_file": ".python-version"
+    },
+    "compatibility_policy": {
+      "python": "same_minor",
+      "core_packages": "same_minor",
+      "platform": "difference_is_compatible",
+      "rationale": "The protocol depends on statsmodels OLS, Holt-Winters, AutoReg and SARIMAX estimation (scipy optimizers, numpy linear algebra) and on pandas PeriodIndex/CSV semantics, stable within a minor release line. The canonical run executed on Linux-aarch64 (recorded by the study as platform.system()-machine; Atlas records sys.platform-machine); a different CPU architecture is a compatible difference whose numerical consequences are bounded by the tolerance policy, never an 'exact' environment. joblib (locked 1.6.0) only serializes the study's final model, which a reproduction never loads, so it is not a core package."
+    }
+  },
+  "problem": {
+    "problem_type": "univariate_forecasting",
+    "study_problem_identity": {
+      "problem_type": "time_series_forecasting",
+      "forecasting_mode": "univariate"
+    },
+    "forecasting_mode": "univariate",
+    "target": {
+      "column": "temperature",
+      "source_column": "value",
+      "semantics": "Monthly average air temperature at Nottingham Castle",
+      "unit": "degrees Fahrenheit",
+      "value_representation": "float",
+      "value_validation": "numeric_complete_finite"
+    },
+    "exogenous_predictors": 0,
+    "classification_concepts": {
+      "applicable": false,
+      "reason": "univariate_forecasting_has_no_class_concepts"
+    }
+  },
+  "temporal_source": {
+    "kind": "fractional_year_monthly",
+    "time_column": "time",
+    "value_column": "value",
+    "period_column": "period",
+    "target_column": "temperature",
+    "frequency": "M",
+    "tolerance": 1e-08,
+    "start": "1920-01",
+    "end": "1939-12",
+    "observations": 240,
+    "rows_sorted_or_filled": false
+  },
+  "forecast": {
+    "horizon": 12,
+    "frequency": "M",
+    "seasonal_period": 12,
+    "output": "full_horizon_point_vector_per_origin",
+    "intervals_required": false
+  },
+  "temporal_protocol": {
+    "development": {
+      "end": "1938-12",
+      "observations": 228,
+      "sha256": "99edc5c894004f630394da068e19acaf1b5e610d3aab8717e8af3463358135aa",
+      "start": "1920-01"
+    },
+    "final_holdout": {
+      "end": "1939-12",
+      "observations": 12,
+      "sha256": "4379a7e8dad2879ca90ff9137707920e2e6a64095ece8b8587ad9da972aaf0c3",
+      "start": "1939-01",
+      "sealed": true,
+      "used_for_backtesting": false,
+      "used_for_selection": false,
+      "evaluation_count": 1
+    },
+    "partition_fingerprint": {
+      "kind": "period_value_csv_sha256",
+      "columns": [
+        "period",
+        "temperature"
+      ],
+      "float_format": "%.15g",
+      "line_terminator": "\n"
+    },
+    "backtesting": {
+      "mode": "expanding_window",
+      "initial_training_observations": 120,
+      "forecast_horizon": 12,
+      "origin_step_observations": 12,
+      "fold_count": 9,
+      "validation_forecast_count": 108,
+      "validation_targets_overlap": false,
+      "shuffle": false,
+      "refit_policy": "fit_from_scratch_per_fold",
+      "forecast_vector_before_target_access": true,
+      "validation_feedback_within_fold": false,
+      "final_holdout_in_backtest": false,
+      "fold_schedule": [
+        {
+          "fold": 1,
+          "train_start": "1920-01",
+          "training_observations": 120,
+          "forecast_origin": "1929-12",
+          "validation_start": "1930-01",
+          "validation_end": "1930-12",
+          "validation_observations": 12
+        },
+        {
+          "fold": 2,
+          "train_start": "1920-01",
+          "training_observations": 132,
+          "forecast_origin": "1930-12",
+          "validation_start": "1931-01",
+          "validation_end": "1931-12",
+          "validation_observations": 12
+        },
+        {
+          "fold": 3,
+          "train_start": "1920-01",
+          "training_observations": 144,
+          "forecast_origin": "1931-12",
+          "validation_start": "1932-01",
+          "validation_end": "1932-12",
+          "validation_observations": 12
+        },
+        {
+          "fold": 4,
+          "train_start": "1920-01",
+          "training_observations": 156,
+          "forecast_origin": "1932-12",
+          "validation_start": "1933-01",
+          "validation_end": "1933-12",
+          "validation_observations": 12
+        },
+        {
+          "fold": 5,
+          "train_start": "1920-01",
+          "training_observations": 168,
+          "forecast_origin": "1933-12",
+          "validation_start": "1934-01",
+          "validation_end": "1934-12",
+          "validation_observations": 12
+        },
+        {
+          "fold": 6,
+          "train_start": "1920-01",
+          "training_observations": 180,
+          "forecast_origin": "1934-12",
+          "validation_start": "1935-01",
+          "validation_end": "1935-12",
+          "validation_observations": 12
+        },
+        {
+          "fold": 7,
+          "train_start": "1920-01",
+          "training_observations": 192,
+          "forecast_origin": "1935-12",
+          "validation_start": "1936-01",
+          "validation_end": "1936-12",
+          "validation_observations": 12
+        },
+        {
+          "fold": 8,
+          "train_start": "1920-01",
+          "training_observations": 204,
+          "forecast_origin": "1936-12",
+          "validation_start": "1937-01",
+          "validation_end": "1937-12",
+          "validation_observations": 12
+        },
+        {
+          "fold": 9,
+          "train_start": "1920-01",
+          "training_observations": 216,
+          "forecast_origin": "1937-12",
+          "validation_start": "1938-01",
+          "validation_end": "1938-12",
+          "validation_observations": 12
+        }
+      ],
+      "fold_schedule_provenance": "Derived deterministically from the pinned backtesting parameters (development start, initial training, origin step, horizon, fold count); the canonical run does not version the per-fold schedule. Enforced as a protocol gate and corroborated by the README (validation years 1930 -> 1938)."
+    }
+  },
+  "metrics": {
+    "primary": "mae",
+    "evaluated": [
+      {
+        "metric_id": "mae",
+        "study_name": "mae",
+        "role": "primary"
+      },
+      {
+        "metric_id": "rmse",
+        "study_name": "rmse",
+        "role": "secondary"
+      },
+      {
+        "metric_id": "seasonal_mase",
+        "study_name": "seasonal_mase_12",
+        "parameters": {
+          "seasonal_period": 12
+        },
+        "scale_policy": "fold_training_history_only; final holdout: full development history",
+        "role": "secondary"
+      }
+    ],
+    "aggregation": "pooled_mean_over_all_out_of_sample_forecasts_of_a_specification",
+    "diagnostics": [
+      {
+        "field": "fold_mae_std",
+        "kind": "fold_metric_population_std",
+        "metric": "mae",
+        "role": "tie_breaker"
+      },
+      {
+        "field": "short_horizon_mae_h1_h6",
+        "kind": "horizon_window_metric",
+        "metric": "mae",
+        "horizons": [
+          1,
+          6
+        ],
+        "role": "diagnostic"
+      },
+      {
+        "field": "long_horizon_mae_h7_h12",
+        "kind": "horizon_window_metric",
+        "metric": "mae",
+        "horizons": [
+          7,
+          12
+        ],
+        "role": "tie_breaker"
+      }
+    ],
+    "excluded": [
+      {
+        "metric": "mape",
+        "reason": "Fahrenheit has an arbitrary zero point; percentage errors are not scale-meaningful."
+      },
+      {
+        "metric": "smape",
+        "reason": "Fahrenheit has an arbitrary zero point; percentage errors are not scale-meaningful."
+      }
+    ]
+  },
+  "candidates": [
+    {
+      "candidate_id": "seasonal_naive_12",
+      "role": "primary_baseline",
+      "family": "seasonal_naive",
+      "study_family": "SeasonalNaive",
+      "constructor": "seasonal_naive_forecast",
+      "complexity_rank": 0,
+      "seasonal_period": 12,
+      "fixed_params": {},
+      "multi_step_strategy": "direct_known_history_lookup_12_steps",
+      "policies": {
+        "learned_parameter_scope": "none",
+        "preprocessing_policy": "original_target_scale_no_global_learned_preprocessing",
+        "differencing_policy": "none",
+        "trend_policy": "none",
+        "seasonal_policy": "known_history_lag_12",
+        "exogenous_policy": "none_deterministic_calendar_is_not_source_exogenous"
+      }
+    },
+    {
+      "candidate_id": "naive_last_value",
+      "role": "secondary_baseline",
+      "family": "naive_last_value",
+      "study_family": "NaiveLastValue",
+      "constructor": "naive_last_value_forecast",
+      "complexity_rank": 1,
+      "seasonal_period": 12,
+      "fixed_params": {},
+      "multi_step_strategy": "constant_last_training_value_12_steps",
+      "policies": {
+        "learned_parameter_scope": "none",
+        "preprocessing_policy": "original_target_scale_no_global_learned_preprocessing",
+        "differencing_policy": "none",
+        "trend_policy": "none",
+        "seasonal_policy": "none",
+        "exogenous_policy": "none_deterministic_calendar_is_not_source_exogenous"
+      }
+    },
+    {
+      "candidate_id": "seasonal_trend_ols",
+      "role": "candidate",
+      "family": "deterministic_seasonal_trend_ols",
+      "study_family": "DeterministicSeasonalTrendOLS",
+      "constructor": "statsmodels.regression.linear_model.OLS",
+      "complexity_rank": 2,
+      "seasonal_period": 12,
+      "fixed_params": {
+        "intercept": true,
+        "linear_time_trend": true,
+        "calendar_month_dummies": 11,
+        "reference_month": "January"
+      },
+      "multi_step_strategy": "direct_known_calendar_design_12_steps",
+      "policies": {
+        "learned_parameter_scope": "fit_from_scratch_on_each_training_fold_only",
+        "preprocessing_policy": "original_target_scale_no_global_learned_preprocessing",
+        "differencing_policy": "none",
+        "trend_policy": "linear_time_trend",
+        "seasonal_policy": "11_calendar_month_dummies_january_reference",
+        "exogenous_policy": "none_deterministic_calendar_is_not_source_exogenous"
+      }
+    },
+    {
+      "candidate_id": "holt_winters_additive_no_trend",
+      "role": "candidate",
+      "family": "exponential_smoothing",
+      "study_family": "ExponentialSmoothing",
+      "constructor": "statsmodels.tsa.holtwinters.ExponentialSmoothing",
+      "complexity_rank": 3,
+      "seasonal_period": 12,
+      "fixed_params": {
+        "trend": null,
+        "damped_trend": false,
+        "seasonal": "add",
+        "seasonal_periods": 12,
+        "initialization_method": "estimated",
+        "use_boxcox": false
+      },
+      "multi_step_strategy": "native_forecast_12",
+      "policies": {
+        "learned_parameter_scope": "fit_from_scratch_on_each_training_fold_only",
+        "preprocessing_policy": "original_target_scale_no_global_learned_preprocessing",
+        "differencing_policy": "none",
+        "trend_policy": "none",
+        "seasonal_policy": "additive_estimated_period_12",
+        "exogenous_policy": "none_deterministic_calendar_is_not_source_exogenous"
+      }
+    },
+    {
+      "candidate_id": "holt_winters_additive_damped_trend",
+      "role": "candidate",
+      "family": "exponential_smoothing",
+      "study_family": "ExponentialSmoothing",
+      "constructor": "statsmodels.tsa.holtwinters.ExponentialSmoothing",
+      "complexity_rank": 4,
+      "seasonal_period": 12,
+      "fixed_params": {
+        "trend": "add",
+        "damped_trend": true,
+        "seasonal": "add",
+        "seasonal_periods": 12,
+        "initialization_method": "estimated",
+        "use_boxcox": false
+      },
+      "multi_step_strategy": "native_forecast_12",
+      "policies": {
+        "learned_parameter_scope": "fit_from_scratch_on_each_training_fold_only",
+        "preprocessing_policy": "original_target_scale_no_global_learned_preprocessing",
+        "differencing_policy": "none",
+        "trend_policy": "additive_damped",
+        "seasonal_policy": "additive_estimated_period_12",
+        "exogenous_policy": "none_deterministic_calendar_is_not_source_exogenous"
+      }
+    },
+    {
+      "candidate_id": "holt_winters_additive_trend",
+      "role": "candidate",
+      "family": "exponential_smoothing",
+      "study_family": "ExponentialSmoothing",
+      "constructor": "statsmodels.tsa.holtwinters.ExponentialSmoothing",
+      "complexity_rank": 5,
+      "seasonal_period": 12,
+      "fixed_params": {
+        "trend": "add",
+        "damped_trend": false,
+        "seasonal": "add",
+        "seasonal_periods": 12,
+        "initialization_method": "estimated",
+        "use_boxcox": false
+      },
+      "multi_step_strategy": "native_forecast_12",
+      "policies": {
+        "learned_parameter_scope": "fit_from_scratch_on_each_training_fold_only",
+        "preprocessing_policy": "original_target_scale_no_global_learned_preprocessing",
+        "differencing_policy": "none",
+        "trend_policy": "additive_undamped",
+        "seasonal_policy": "additive_estimated_period_12",
+        "exogenous_policy": "none_deterministic_calendar_is_not_source_exogenous"
+      }
+    },
+    {
+      "candidate_id": "autoreg_lag_1_12_ct",
+      "role": "candidate",
+      "family": "autoreg",
+      "study_family": "AutoReg",
+      "constructor": "statsmodels.tsa.ar_model.AutoReg",
+      "complexity_rank": 6,
+      "seasonal_period": 12,
+      "fixed_params": {
+        "lags": [
+          1,
+          12
+        ],
+        "trend": "ct",
+        "seasonal": false
+      },
+      "multi_step_strategy": "recursive_12_step",
+      "policies": {
+        "learned_parameter_scope": "fit_from_scratch_on_each_training_fold_only",
+        "preprocessing_policy": "original_target_scale_no_global_learned_preprocessing",
+        "differencing_policy": "none",
+        "trend_policy": "constant_and_linear_time",
+        "seasonal_policy": "none",
+        "exogenous_policy": "none_deterministic_calendar_is_not_source_exogenous"
+      }
+    },
+    {
+      "candidate_id": "autoreg_lag_1_2_12_ct",
+      "role": "candidate",
+      "family": "autoreg",
+      "study_family": "AutoReg",
+      "constructor": "statsmodels.tsa.ar_model.AutoReg",
+      "complexity_rank": 7,
+      "seasonal_period": 12,
+      "fixed_params": {
+        "lags": [
+          1,
+          2,
+          12
+        ],
+        "trend": "ct",
+        "seasonal": false
+      },
+      "multi_step_strategy": "recursive_12_step",
+      "policies": {
+        "learned_parameter_scope": "fit_from_scratch_on_each_training_fold_only",
+        "preprocessing_policy": "original_target_scale_no_global_learned_preprocessing",
+        "differencing_policy": "none",
+        "trend_policy": "constant_and_linear_time",
+        "seasonal_policy": "none",
+        "exogenous_policy": "none_deterministic_calendar_is_not_source_exogenous"
+      }
+    },
+    {
+      "candidate_id": "sarima_100_100_12",
+      "role": "candidate",
+      "family": "sarimax",
+      "study_family": "SARIMAX",
+      "constructor": "statsmodels.tsa.statespace.sarimax.SARIMAX",
+      "complexity_rank": 8,
+      "seasonal_period": 12,
+      "fixed_params": {
+        "order": [
+          1,
+          0,
+          0
+        ],
+        "seasonal_order": [
+          1,
+          0,
+          0,
+          12
+        ],
+        "trend": "ct",
+        "enforce_stationarity": true,
+        "enforce_invertibility": true
+      },
+      "multi_step_strategy": "native_state_space_12_step",
+      "policies": {
+        "learned_parameter_scope": "fit_from_scratch_on_each_training_fold_only",
+        "preprocessing_policy": "original_target_scale_no_global_learned_preprocessing",
+        "differencing_policy": "none",
+        "trend_policy": "constant_and_linear_time",
+        "seasonal_policy": "seasonal_ar_1_period_12",
+        "exogenous_policy": "none_deterministic_calendar_is_not_source_exogenous"
+      }
+    },
+    {
+      "candidate_id": "sarima_100_011_12",
+      "role": "candidate",
+      "family": "sarimax",
+      "study_family": "SARIMAX",
+      "constructor": "statsmodels.tsa.statespace.sarimax.SARIMAX",
+      "complexity_rank": 9,
+      "seasonal_period": 12,
+      "fixed_params": {
+        "order": [
+          1,
+          0,
+          0
+        ],
+        "seasonal_order": [
+          0,
+          1,
+          1,
+          12
+        ],
+        "trend": "n",
+        "enforce_stationarity": true,
+        "enforce_invertibility": true
+      },
+      "multi_step_strategy": "native_state_space_12_step",
+      "policies": {
+        "learned_parameter_scope": "fit_from_scratch_on_each_training_fold_only",
+        "preprocessing_policy": "original_target_scale_no_global_learned_preprocessing",
+        "differencing_policy": "internal_fold_local_seasonal_difference_D1_period_12",
+        "trend_policy": "none",
+        "seasonal_policy": "seasonal_difference_and_ma_1_period_12",
+        "exogenous_policy": "none_deterministic_calendar_is_not_source_exogenous"
+      }
+    }
+  ],
+  "failure_policy": {
+    "programming_error_types": [
+      "TypeError",
+      "AttributeError",
+      "NameError",
+      "ImportError",
+      "KeyError"
+    ],
+    "programming_error_action": "abort_backtest",
+    "baseline_failure_action": "abort_backtest",
+    "specification_failure_action": "mark_ineligible",
+    "explicit_non_convergence": "specification_failure",
+    "invalid_forecast_output": "specification_failure",
+    "study_guard_failure_kind": "ForecastingModelSelectionError",
+    "warnings": "recorded_not_failures"
+  },
+  "selection": {
+    "kind": "forecasting_pooled_metric_practical_tie",
+    "partition": "expanding_window_backtest",
+    "eligibility": {
+      "complete_forecast_count": 108,
+      "failure_free": true,
+      "required_finite_fields": [
+        "pooled_mae",
+        "pooled_rmse",
+        "pooled_seasonal_mase",
+        "fold_mae_std",
+        "long_horizon_mae_h7_h12"
+      ],
+      "baseline_margin_required": false,
+      "baselines_rankable": true
+    },
+    "leader": {
+      "field": "pooled_mae",
+      "direction": "min",
+      "study_name": "mae"
+    },
+    "practical_tie": {
+      "field": "pooled_mae",
+      "tolerance": 0.05,
+      "bound": "leader_plus_tolerance",
+      "unit": "degrees Fahrenheit",
+      "study_name": "practical_tie_tolerance_f"
+    },
+    "tie_breakers": [
+      {
+        "field": "pooled_seasonal_mase",
+        "direction": "min",
+        "study_name": "pooled_seasonal_mase"
+      },
+      {
+        "field": "pooled_rmse",
+        "direction": "min",
+        "study_name": "pooled_rmse"
+      },
+      {
+        "field": "fold_mae_std",
+        "direction": "min",
+        "study_name": "fold_mae_std"
+      },
+      {
+        "field": "long_horizon_mae_h7_h12",
+        "direction": "min",
+        "study_name": "long_horizon_mae_h7_h12"
+      },
+      {
+        "field": "complexity_rank",
+        "direction": "min",
+        "study_name": "complexity_rank"
+      },
+      {
+        "field": "candidate_id",
+        "direction": "lexical_min",
+        "study_name": "candidate_id"
+      }
+    ],
+    "tie_break_mode": "lexicographic_tuple",
+    "ranking": {
+      "kind": "selected_first_then_leader_field_then_candidate_id",
+      "includes": "eligible_only"
+    }
+  },
+  "finalization": {
+    "kind": "refit_selected_on_development_single_holdout_forecast",
+    "fit_scope": "development",
+    "forecast_origin": "1938-12",
+    "forecast_periods": 12,
+    "holdout_evaluation_count": 1,
+    "model_frozen_before_holdout_open": true,
+    "retuning_after_holdout": false,
+    "seasonal_mase_scale": "full_development_history",
+    "primary_baseline_reference": {
+      "role": "primary_baseline",
+      "computed_after_final_evaluation": true,
+      "used_for_adjustment": false
+    }
+  },
+  "tolerance_policy": {
+    "numeric_absolute": 1e-09,
+    "count_absolute": 0,
+    "declared_before_first_reproduction": true,
+    "exact_elements": [
+      "dataset SHA-256, rows and source columns",
+      "target identity, unit, frequency and forecast horizon",
+      "development and final-holdout start, end, observations and SHA-256",
+      "backtesting mode, initial training, horizon, origin step, fold count, forecast count, overlap policy and the per-fold schedule (gate)",
+      "candidate catalog, roles, families, complexity ranks, constructors and fixed parameters",
+      "eligibility, failure counts and failure kinds per specification",
+      "primary metric, practical-tie tolerance and tie-break order",
+      "finalists, full ranking, selected candidate, family and specification",
+      "final fit observations, forecast origin, forecast periods and holdout evaluation count",
+      "protocol-integrity facts enforced by the runner"
+    ],
+    "rationale": "Reference values are recorded at full float precision in reproducibility/canonical-run.json. 1e-9 is the study's own canonical-run verification tolerance (scripts/canonical_run.py METRIC_TOLERANCE), more than seven orders of magnitude below the 0.05 degF practical-tie tolerance, so no difference inside it can change a scientific decision. Identities, hashes, counts, periods, parameters and decisions are compared exactly; only floating-point quantities use the numeric tolerance."
+  },
+  "expected_evidence": {
+    "values": [
+      {
+        "quantity": "dataset.rows",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/dataset/source_row_count"
+        }
+      },
+      {
+        "quantity": "target.forecast_horizon",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/target/forecast_horizon"
+        }
+      },
+      {
+        "quantity": "protocol.development.observations",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/protocol/development/observations"
+        }
+      },
+      {
+        "quantity": "protocol.final_holdout.observations",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/protocol/final_holdout/observations"
+        }
+      },
+      {
+        "quantity": "protocol.backtesting.initial_training_observations",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/protocol/backtesting/initial_training_months"
+        }
+      },
+      {
+        "quantity": "protocol.backtesting.forecast_horizon",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/protocol/backtesting/forecast_horizon"
+        }
+      },
+      {
+        "quantity": "protocol.backtesting.origin_step_observations",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/protocol/backtesting/origin_step_months"
+        }
+      },
+      {
+        "quantity": "protocol.backtesting.fold_count",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/protocol/backtesting/fold_count"
+        }
+      },
+      {
+        "quantity": "protocol.backtesting.validation_forecast_count",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/protocol/backtesting/validation_forecast_count"
+        }
+      },
+      {
+        "quantity": "protocol.holdout_evaluation_count",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/protocol/holdout_evaluation_count"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.seasonal_naive_12.complexity_rank",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/0/complexity_rank"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.seasonal_naive_12.failure_count",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/0/failure_count"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.seasonal_naive_12.pooled_mae",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/0/pooled_mae"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.seasonal_naive_12.pooled_rmse",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/0/pooled_rmse"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.seasonal_naive_12.pooled_seasonal_mase",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/0/pooled_seasonal_mase"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.seasonal_naive_12.fold_mae_std",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/0/fold_mae_std"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.seasonal_naive_12.long_horizon_mae_h7_h12",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/0/long_horizon_mae_h7_h12"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.naive_last_value.complexity_rank",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/1/complexity_rank"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.naive_last_value.failure_count",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/1/failure_count"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.naive_last_value.pooled_mae",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/1/pooled_mae"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.naive_last_value.pooled_rmse",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/1/pooled_rmse"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.naive_last_value.pooled_seasonal_mase",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/1/pooled_seasonal_mase"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.naive_last_value.fold_mae_std",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/1/fold_mae_std"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.naive_last_value.long_horizon_mae_h7_h12",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/1/long_horizon_mae_h7_h12"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.seasonal_trend_ols.complexity_rank",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/2/complexity_rank"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.seasonal_trend_ols.failure_count",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/2/failure_count"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.seasonal_trend_ols.pooled_mae",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/2/pooled_mae"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.seasonal_trend_ols.pooled_rmse",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/2/pooled_rmse"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.seasonal_trend_ols.pooled_seasonal_mase",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/2/pooled_seasonal_mase"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.seasonal_trend_ols.fold_mae_std",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/2/fold_mae_std"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.seasonal_trend_ols.long_horizon_mae_h7_h12",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/2/long_horizon_mae_h7_h12"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.holt_winters_additive_no_trend.complexity_rank",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/3/complexity_rank"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.holt_winters_additive_no_trend.failure_count",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/3/failure_count"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.holt_winters_additive_no_trend.pooled_mae",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/3/pooled_mae"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.holt_winters_additive_no_trend.pooled_rmse",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/3/pooled_rmse"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.holt_winters_additive_no_trend.pooled_seasonal_mase",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/3/pooled_seasonal_mase"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.holt_winters_additive_no_trend.fold_mae_std",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/3/fold_mae_std"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.holt_winters_additive_no_trend.long_horizon_mae_h7_h12",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/3/long_horizon_mae_h7_h12"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.holt_winters_additive_damped_trend.complexity_rank",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/4/complexity_rank"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.holt_winters_additive_damped_trend.failure_count",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/4/failure_count"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.holt_winters_additive_damped_trend.pooled_mae",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/4/pooled_mae"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.holt_winters_additive_damped_trend.pooled_rmse",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/4/pooled_rmse"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.holt_winters_additive_damped_trend.pooled_seasonal_mase",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/4/pooled_seasonal_mase"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.holt_winters_additive_damped_trend.fold_mae_std",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/4/fold_mae_std"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.holt_winters_additive_damped_trend.long_horizon_mae_h7_h12",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/4/long_horizon_mae_h7_h12"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.holt_winters_additive_trend.complexity_rank",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/5/complexity_rank"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.holt_winters_additive_trend.failure_count",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/5/failure_count"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.holt_winters_additive_trend.pooled_mae",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/5/pooled_mae"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.holt_winters_additive_trend.pooled_rmse",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/5/pooled_rmse"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.holt_winters_additive_trend.pooled_seasonal_mase",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/5/pooled_seasonal_mase"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.holt_winters_additive_trend.fold_mae_std",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/5/fold_mae_std"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.holt_winters_additive_trend.long_horizon_mae_h7_h12",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/5/long_horizon_mae_h7_h12"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.autoreg_lag_1_12_ct.complexity_rank",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/6/complexity_rank"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.autoreg_lag_1_12_ct.failure_count",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/6/failure_count"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.autoreg_lag_1_12_ct.pooled_mae",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/6/pooled_mae"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.autoreg_lag_1_12_ct.pooled_rmse",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/6/pooled_rmse"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.autoreg_lag_1_12_ct.pooled_seasonal_mase",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/6/pooled_seasonal_mase"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.autoreg_lag_1_12_ct.fold_mae_std",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/6/fold_mae_std"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.autoreg_lag_1_12_ct.long_horizon_mae_h7_h12",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/6/long_horizon_mae_h7_h12"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.autoreg_lag_1_2_12_ct.complexity_rank",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/7/complexity_rank"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.autoreg_lag_1_2_12_ct.failure_count",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/7/failure_count"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.autoreg_lag_1_2_12_ct.pooled_mae",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/7/pooled_mae"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.autoreg_lag_1_2_12_ct.pooled_rmse",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/7/pooled_rmse"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.autoreg_lag_1_2_12_ct.pooled_seasonal_mase",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/7/pooled_seasonal_mase"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.autoreg_lag_1_2_12_ct.fold_mae_std",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/7/fold_mae_std"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.autoreg_lag_1_2_12_ct.long_horizon_mae_h7_h12",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/7/long_horizon_mae_h7_h12"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.sarima_100_100_12.complexity_rank",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/8/complexity_rank"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.sarima_100_100_12.failure_count",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/8/failure_count"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.sarima_100_011_12.complexity_rank",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/9/complexity_rank"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.sarima_100_011_12.failure_count",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/9/failure_count"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.sarima_100_011_12.pooled_mae",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/9/pooled_mae"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.sarima_100_011_12.pooled_rmse",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/9/pooled_rmse"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.sarima_100_011_12.pooled_seasonal_mase",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/9/pooled_seasonal_mase"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.sarima_100_011_12.fold_mae_std",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/9/fold_mae_std"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.sarima_100_011_12.long_horizon_mae_h7_h12",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/9/long_horizon_mae_h7_h12"
+        }
+      },
+      {
+        "quantity": "model_selection.best_leader_value",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/2/pooled_mae"
+        }
+      },
+      {
+        "quantity": "selected_backtest.mae",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/selected_backtest_metrics/mae"
+        }
+      },
+      {
+        "quantity": "selected_backtest.rmse",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/selected_backtest_metrics/rmse"
+        }
+      },
+      {
+        "quantity": "selected_backtest.seasonal_mase",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/selected_backtest_metrics/seasonal_mase_12"
+        }
+      },
+      {
+        "quantity": "final_holdout.metrics.mae",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_holdout/metrics/mae"
+        }
+      },
+      {
+        "quantity": "final_holdout.primary_baseline_metrics.mae",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_holdout/primary_baseline_metrics/mae"
+        }
+      },
+      {
+        "quantity": "final_holdout.metrics.rmse",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_holdout/metrics/rmse"
+        }
+      },
+      {
+        "quantity": "final_holdout.primary_baseline_metrics.rmse",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_holdout/primary_baseline_metrics/rmse"
+        }
+      },
+      {
+        "quantity": "final_holdout.metrics.seasonal_mase",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_holdout/metrics/seasonal_mase_12"
+        }
+      },
+      {
+        "quantity": "final_holdout.primary_baseline_metrics.seasonal_mase",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_holdout/primary_baseline_metrics/seasonal_mase_12"
+        }
+      },
+      {
+        "quantity": "final_holdout.forecasts.h01.y_pred",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_holdout/forecasts/0/y_pred"
+        }
+      },
+      {
+        "quantity": "final_holdout.forecasts.h02.y_pred",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_holdout/forecasts/1/y_pred"
+        }
+      },
+      {
+        "quantity": "final_holdout.forecasts.h03.y_pred",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_holdout/forecasts/2/y_pred"
+        }
+      },
+      {
+        "quantity": "final_holdout.forecasts.h04.y_pred",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_holdout/forecasts/3/y_pred"
+        }
+      },
+      {
+        "quantity": "final_holdout.forecasts.h05.y_pred",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_holdout/forecasts/4/y_pred"
+        }
+      },
+      {
+        "quantity": "final_holdout.forecasts.h06.y_pred",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_holdout/forecasts/5/y_pred"
+        }
+      },
+      {
+        "quantity": "final_holdout.forecasts.h07.y_pred",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_holdout/forecasts/6/y_pred"
+        }
+      },
+      {
+        "quantity": "final_holdout.forecasts.h08.y_pred",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_holdout/forecasts/7/y_pred"
+        }
+      },
+      {
+        "quantity": "final_holdout.forecasts.h09.y_pred",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_holdout/forecasts/8/y_pred"
+        }
+      },
+      {
+        "quantity": "final_holdout.forecasts.h10.y_pred",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_holdout/forecasts/9/y_pred"
+        }
+      },
+      {
+        "quantity": "final_holdout.forecasts.h11.y_pred",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_holdout/forecasts/10/y_pred"
+        }
+      },
+      {
+        "quantity": "final_holdout.forecasts.h12.y_pred",
+        "comparison": "numeric",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_holdout/forecasts/11/y_pred"
+        }
+      },
+      {
+        "quantity": "final_model.training_observations",
+        "comparison": "count",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_model/training_observations"
+        }
+      }
+    ],
+    "decisions": [
+      {
+        "quantity": "dataset.sha256",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/dataset/source_sha256"
+        }
+      },
+      {
+        "quantity": "dataset.source_columns",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/dataset/source_column_order"
+        }
+      },
+      {
+        "quantity": "target.column",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/target/column"
+        }
+      },
+      {
+        "quantity": "target.unit",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/target/unit"
+        }
+      },
+      {
+        "quantity": "target.semantics",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/target/semantics"
+        }
+      },
+      {
+        "quantity": "target.frequency",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/target/frequency"
+        }
+      },
+      {
+        "quantity": "target.problem_type",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/target/problem_type"
+        }
+      },
+      {
+        "quantity": "target.forecasting_mode",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/target/forecasting_mode"
+        }
+      },
+      {
+        "quantity": "protocol.development.start",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/protocol/development/start"
+        }
+      },
+      {
+        "quantity": "protocol.development.end",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/protocol/development/end"
+        }
+      },
+      {
+        "quantity": "protocol.development.sha256",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/protocol/development/sha256"
+        }
+      },
+      {
+        "quantity": "protocol.final_holdout.start",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/protocol/final_holdout/start"
+        }
+      },
+      {
+        "quantity": "protocol.final_holdout.end",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/protocol/final_holdout/end"
+        }
+      },
+      {
+        "quantity": "protocol.final_holdout.sha256",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/protocol/final_holdout/sha256"
+        }
+      },
+      {
+        "quantity": "protocol.backtesting.mode",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/protocol/backtesting/mode"
+        }
+      },
+      {
+        "quantity": "protocol.backtesting.validation_targets_overlap",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/protocol/backtesting/validation_targets_overlap"
+        }
+      },
+      {
+        "quantity": "protocol.holdout_used_in_selection",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/protocol/holdout_used_in_selection"
+        }
+      },
+      {
+        "quantity": "protocol.holdout_used_for_adjustment",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/protocol/holdout_used_for_adjustment"
+        }
+      },
+      {
+        "quantity": "protocol.model_frozen_before_holdout_open",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/protocol/model_frozen_before_holdout_open"
+        }
+      },
+      {
+        "quantity": "model_selection.catalog",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/catalog"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.seasonal_naive_12.role",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/0/role"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.seasonal_naive_12.family",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/0/family"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.seasonal_naive_12.eligible",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/0/eligible"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.seasonal_naive_12.failure_kinds",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/0/failure_kinds"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.naive_last_value.role",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/1/role"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.naive_last_value.family",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/1/family"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.naive_last_value.eligible",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/1/eligible"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.naive_last_value.failure_kinds",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/1/failure_kinds"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.seasonal_trend_ols.role",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/2/role"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.seasonal_trend_ols.family",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/2/family"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.seasonal_trend_ols.eligible",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/2/eligible"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.seasonal_trend_ols.failure_kinds",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/2/failure_kinds"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.holt_winters_additive_no_trend.role",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/3/role"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.holt_winters_additive_no_trend.family",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/3/family"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.holt_winters_additive_no_trend.eligible",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/3/eligible"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.holt_winters_additive_no_trend.failure_kinds",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/3/failure_kinds"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.holt_winters_additive_damped_trend.role",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/4/role"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.holt_winters_additive_damped_trend.family",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/4/family"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.holt_winters_additive_damped_trend.eligible",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/4/eligible"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.holt_winters_additive_damped_trend.failure_kinds",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/4/failure_kinds"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.holt_winters_additive_trend.role",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/5/role"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.holt_winters_additive_trend.family",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/5/family"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.holt_winters_additive_trend.eligible",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/5/eligible"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.holt_winters_additive_trend.failure_kinds",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/5/failure_kinds"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.autoreg_lag_1_12_ct.role",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/6/role"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.autoreg_lag_1_12_ct.family",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/6/family"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.autoreg_lag_1_12_ct.eligible",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/6/eligible"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.autoreg_lag_1_12_ct.failure_kinds",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/6/failure_kinds"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.autoreg_lag_1_2_12_ct.role",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/7/role"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.autoreg_lag_1_2_12_ct.family",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/7/family"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.autoreg_lag_1_2_12_ct.eligible",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/7/eligible"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.autoreg_lag_1_2_12_ct.failure_kinds",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/7/failure_kinds"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.sarima_100_100_12.role",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/8/role"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.sarima_100_100_12.family",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/8/family"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.sarima_100_100_12.eligible",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/8/eligible"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.sarima_100_100_12.failure_kinds",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/8/failure_kinds"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.sarima_100_011_12.role",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/9/role"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.sarima_100_011_12.family",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/9/family"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.sarima_100_011_12.eligible",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/9/eligible"
+        }
+      },
+      {
+        "quantity": "model_selection.candidates.sarima_100_011_12.failure_kinds",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/candidates/9/failure_kinds"
+        }
+      },
+      {
+        "quantity": "model_selection.primary_metric",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/primary_metric"
+        }
+      },
+      {
+        "quantity": "model_selection.practical_tie_tolerance",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/practical_tie_tolerance_f"
+        }
+      },
+      {
+        "quantity": "model_selection.tie_break_order",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/tie_break_order"
+        }
+      },
+      {
+        "quantity": "model_selection.finalists",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/finalists"
+        }
+      },
+      {
+        "quantity": "model_selection.ranking",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/ranking"
+        }
+      },
+      {
+        "quantity": "model_selection.selected_candidate_id",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/selected_candidate_id"
+        }
+      },
+      {
+        "quantity": "model_selection.selected_family",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/selected_family"
+        }
+      },
+      {
+        "quantity": "model_selection.selected_specification",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/model_selection/selected_specification"
+        }
+      },
+      {
+        "quantity": "model_selection.specifications.seasonal_naive_12",
+        "comparison": "exact",
+        "source": {
+          "path": "scripts/forecasting_model_selection.py",
+          "locator": "file_text",
+          "rendered_text": "_spec(\"seasonal_naive_12\", \"primary_baseline\", \"SeasonalNaive\", 0, \"seasonal_naive_forecast\", {}"
+        },
+        "expected": {
+          "constructor": "seasonal_naive_forecast",
+          "fixed_params": {}
+        }
+      },
+      {
+        "quantity": "model_selection.specifications.naive_last_value",
+        "comparison": "exact",
+        "source": {
+          "path": "scripts/forecasting_model_selection.py",
+          "locator": "file_text",
+          "rendered_text": "_spec(\"naive_last_value\", \"secondary_baseline\", \"NaiveLastValue\", 1, \"naive_last_value_forecast\", {}"
+        },
+        "expected": {
+          "constructor": "naive_last_value_forecast",
+          "fixed_params": {}
+        }
+      },
+      {
+        "quantity": "model_selection.specifications.seasonal_trend_ols",
+        "comparison": "exact",
+        "source": {
+          "path": "scripts/forecasting_model_selection.py",
+          "locator": "file_text",
+          "rendered_text": "_spec(\"seasonal_trend_ols\", \"candidate\", \"DeterministicSeasonalTrendOLS\", 2, \"statsmodels.regression.linear_model.OLS\",\n          {\"intercept\": True, \"linear_time_trend\": True, \"calendar_month_dummies\": 11, \"reference_month\": \"January\"}"
+        },
+        "expected": {
+          "constructor": "statsmodels.regression.linear_model.OLS",
+          "fixed_params": {
+            "intercept": true,
+            "linear_time_trend": true,
+            "calendar_month_dummies": 11,
+            "reference_month": "January"
+          }
+        }
+      },
+      {
+        "quantity": "model_selection.specifications.holt_winters_additive_no_trend",
+        "comparison": "exact",
+        "source": {
+          "path": "scripts/forecasting_model_selection.py",
+          "locator": "file_text",
+          "rendered_text": "_spec(\"holt_winters_additive_no_trend\", \"candidate\", \"ExponentialSmoothing\", 3, \"statsmodels.tsa.holtwinters.ExponentialSmoothing\",\n          {\"trend\": None, \"damped_trend\": False, \"seasonal\": \"add\", \"seasonal_periods\": 12, \"initialization_method\": \"estimated\", \"use_boxcox\": False}"
+        },
+        "expected": {
+          "constructor": "statsmodels.tsa.holtwinters.ExponentialSmoothing",
+          "fixed_params": {
+            "trend": null,
+            "damped_trend": false,
+            "seasonal": "add",
+            "seasonal_periods": 12,
+            "initialization_method": "estimated",
+            "use_boxcox": false
+          }
+        }
+      },
+      {
+        "quantity": "model_selection.specifications.holt_winters_additive_damped_trend",
+        "comparison": "exact",
+        "source": {
+          "path": "scripts/forecasting_model_selection.py",
+          "locator": "file_text",
+          "rendered_text": "_spec(\"holt_winters_additive_damped_trend\", \"candidate\", \"ExponentialSmoothing\", 4, \"statsmodels.tsa.holtwinters.ExponentialSmoothing\",\n          {\"trend\": \"add\", \"damped_trend\": True, \"seasonal\": \"add\", \"seasonal_periods\": 12, \"initialization_method\": \"estimated\", \"use_boxcox\": False}"
+        },
+        "expected": {
+          "constructor": "statsmodels.tsa.holtwinters.ExponentialSmoothing",
+          "fixed_params": {
+            "trend": "add",
+            "damped_trend": true,
+            "seasonal": "add",
+            "seasonal_periods": 12,
+            "initialization_method": "estimated",
+            "use_boxcox": false
+          }
+        }
+      },
+      {
+        "quantity": "model_selection.specifications.holt_winters_additive_trend",
+        "comparison": "exact",
+        "source": {
+          "path": "scripts/forecasting_model_selection.py",
+          "locator": "file_text",
+          "rendered_text": "_spec(\"holt_winters_additive_trend\", \"candidate\", \"ExponentialSmoothing\", 5, \"statsmodels.tsa.holtwinters.ExponentialSmoothing\",\n          {\"trend\": \"add\", \"damped_trend\": False, \"seasonal\": \"add\", \"seasonal_periods\": 12, \"initialization_method\": \"estimated\", \"use_boxcox\": False}"
+        },
+        "expected": {
+          "constructor": "statsmodels.tsa.holtwinters.ExponentialSmoothing",
+          "fixed_params": {
+            "trend": "add",
+            "damped_trend": false,
+            "seasonal": "add",
+            "seasonal_periods": 12,
+            "initialization_method": "estimated",
+            "use_boxcox": false
+          }
+        }
+      },
+      {
+        "quantity": "model_selection.specifications.autoreg_lag_1_12_ct",
+        "comparison": "exact",
+        "source": {
+          "path": "scripts/forecasting_model_selection.py",
+          "locator": "file_text",
+          "rendered_text": "_spec(\"autoreg_lag_1_12_ct\", \"candidate\", \"AutoReg\", 6, \"statsmodels.tsa.ar_model.AutoReg\",\n          {\"lags\": [1, 12], \"trend\": \"ct\", \"seasonal\": False}"
+        },
+        "expected": {
+          "constructor": "statsmodels.tsa.ar_model.AutoReg",
+          "fixed_params": {
+            "lags": [
+              1,
+              12
+            ],
+            "trend": "ct",
+            "seasonal": false
+          }
+        }
+      },
+      {
+        "quantity": "model_selection.specifications.autoreg_lag_1_2_12_ct",
+        "comparison": "exact",
+        "source": {
+          "path": "scripts/forecasting_model_selection.py",
+          "locator": "file_text",
+          "rendered_text": "_spec(\"autoreg_lag_1_2_12_ct\", \"candidate\", \"AutoReg\", 7, \"statsmodels.tsa.ar_model.AutoReg\",\n          {\"lags\": [1, 2, 12], \"trend\": \"ct\", \"seasonal\": False}"
+        },
+        "expected": {
+          "constructor": "statsmodels.tsa.ar_model.AutoReg",
+          "fixed_params": {
+            "lags": [
+              1,
+              2,
+              12
+            ],
+            "trend": "ct",
+            "seasonal": false
+          }
+        }
+      },
+      {
+        "quantity": "model_selection.specifications.sarima_100_100_12",
+        "comparison": "exact",
+        "source": {
+          "path": "scripts/forecasting_model_selection.py",
+          "locator": "file_text",
+          "rendered_text": "_spec(\"sarima_100_100_12\", \"candidate\", \"SARIMAX\", 8, \"statsmodels.tsa.statespace.sarimax.SARIMAX\",\n          {\"order\": [1, 0, 0], \"seasonal_order\": [1, 0, 0, 12], \"trend\": \"ct\", \"enforce_stationarity\": True, \"enforce_invertibility\": True}"
+        },
+        "expected": {
+          "constructor": "statsmodels.tsa.statespace.sarimax.SARIMAX",
+          "fixed_params": {
+            "order": [
+              1,
+              0,
+              0
+            ],
+            "seasonal_order": [
+              1,
+              0,
+              0,
+              12
+            ],
+            "trend": "ct",
+            "enforce_stationarity": true,
+            "enforce_invertibility": true
+          }
+        }
+      },
+      {
+        "quantity": "model_selection.specifications.sarima_100_011_12",
+        "comparison": "exact",
+        "source": {
+          "path": "scripts/forecasting_model_selection.py",
+          "locator": "file_text",
+          "rendered_text": "_spec(\"sarima_100_011_12\", \"candidate\", \"SARIMAX\", 9, \"statsmodels.tsa.statespace.sarimax.SARIMAX\",\n          {\"order\": [1, 0, 0], \"seasonal_order\": [0, 1, 1, 12], \"trend\": \"n\", \"enforce_stationarity\": True, \"enforce_invertibility\": True}"
+        },
+        "expected": {
+          "constructor": "statsmodels.tsa.statespace.sarimax.SARIMAX",
+          "fixed_params": {
+            "order": [
+              1,
+              0,
+              0
+            ],
+            "seasonal_order": [
+              0,
+              1,
+              1,
+              12
+            ],
+            "trend": "n",
+            "enforce_stationarity": true,
+            "enforce_invertibility": true
+          }
+        }
+      },
+      {
+        "quantity": "final_holdout.forecast_origin",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_holdout/forecast_origin"
+        }
+      },
+      {
+        "quantity": "final_holdout.forecasts.h01.forecast_period",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_holdout/forecasts/0/forecast_period"
+        }
+      },
+      {
+        "quantity": "final_holdout.forecasts.h02.forecast_period",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_holdout/forecasts/1/forecast_period"
+        }
+      },
+      {
+        "quantity": "final_holdout.forecasts.h03.forecast_period",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_holdout/forecasts/2/forecast_period"
+        }
+      },
+      {
+        "quantity": "final_holdout.forecasts.h04.forecast_period",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_holdout/forecasts/3/forecast_period"
+        }
+      },
+      {
+        "quantity": "final_holdout.forecasts.h05.forecast_period",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_holdout/forecasts/4/forecast_period"
+        }
+      },
+      {
+        "quantity": "final_holdout.forecasts.h06.forecast_period",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_holdout/forecasts/5/forecast_period"
+        }
+      },
+      {
+        "quantity": "final_holdout.forecasts.h07.forecast_period",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_holdout/forecasts/6/forecast_period"
+        }
+      },
+      {
+        "quantity": "final_holdout.forecasts.h08.forecast_period",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_holdout/forecasts/7/forecast_period"
+        }
+      },
+      {
+        "quantity": "final_holdout.forecasts.h09.forecast_period",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_holdout/forecasts/8/forecast_period"
+        }
+      },
+      {
+        "quantity": "final_holdout.forecasts.h10.forecast_period",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_holdout/forecasts/9/forecast_period"
+        }
+      },
+      {
+        "quantity": "final_holdout.forecasts.h11.forecast_period",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_holdout/forecasts/10/forecast_period"
+        }
+      },
+      {
+        "quantity": "final_holdout.forecasts.h12.forecast_period",
+        "comparison": "exact",
+        "source": {
+          "path": "reproducibility/canonical-run.json",
+          "locator": "json_pointer:/final_holdout/forecasts/11/forecast_period"
+        }
+      }
+    ],
+    "runtime_identity": []
+  },
+  "protocol_parameter_sources": [
+    {
+      "contract_pointer": "/dataset_identity/sha256",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/dataset/source_sha256"
+      }
+    },
+    {
+      "contract_pointer": "/dataset_identity/row_count",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/dataset/source_row_count"
+      }
+    },
+    {
+      "contract_pointer": "/dataset_identity/source_columns",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/dataset/source_column_order"
+      }
+    },
+    {
+      "contract_pointer": "/dataset_identity/source_reference",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/dataset/source_reference"
+      }
+    },
+    {
+      "contract_pointer": "/dataset_identity/source_repository",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/dataset/repository"
+      }
+    },
+    {
+      "contract_pointer": "/dataset_identity/source_provider",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/dataset/provider"
+      }
+    },
+    {
+      "contract_pointer": "/dataset_identity/dataset_name",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/dataset/name"
+      }
+    },
+    {
+      "contract_pointer": "/dataset_identity/study_source_path",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/dataset/source_file"
+      }
+    },
+    {
+      "contract_pointer": "/problem/study_problem_identity/problem_type",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/target/problem_type"
+      }
+    },
+    {
+      "contract_pointer": "/problem/study_problem_identity/forecasting_mode",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/target/forecasting_mode"
+      }
+    },
+    {
+      "contract_pointer": "/problem/forecasting_mode",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/target/forecasting_mode"
+      }
+    },
+    {
+      "contract_pointer": "/problem/target/column",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/target/column"
+      }
+    },
+    {
+      "contract_pointer": "/problem/target/unit",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/target/unit"
+      }
+    },
+    {
+      "contract_pointer": "/problem/target/semantics",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/target/semantics"
+      }
+    },
+    {
+      "contract_pointer": "/temporal_source/frequency",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/target/frequency"
+      }
+    },
+    {
+      "contract_pointer": "/temporal_source/observations",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/dataset/source_row_count"
+      }
+    },
+    {
+      "contract_pointer": "/temporal_source/start",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/protocol/development/start"
+      }
+    },
+    {
+      "contract_pointer": "/temporal_source/end",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/protocol/final_holdout/end"
+      }
+    },
+    {
+      "contract_pointer": "/forecast/horizon",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/target/forecast_horizon"
+      }
+    },
+    {
+      "contract_pointer": "/forecast/frequency",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/target/frequency"
+      }
+    },
+    {
+      "contract_pointer": "/forecast/seasonal_period",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/model_selection/selected_specification/seasonal_period"
+      }
+    },
+    {
+      "contract_pointer": "/metrics/primary",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/model_selection/primary_metric"
+      }
+    },
+    {
+      "contract_pointer": "/selection/practical_tie/tolerance",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/model_selection/practical_tie_tolerance_f"
+      }
+    },
+    {
+      "contract_pointer": "/finalization/forecast_origin",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/final_holdout/forecast_origin"
+      }
+    },
+    {
+      "contract_pointer": "/finalization/holdout_evaluation_count",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/protocol/holdout_evaluation_count"
+      }
+    },
+    {
+      "contract_pointer": "/finalization/model_frozen_before_holdout_open",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/protocol/model_frozen_before_holdout_open"
+      }
+    },
+    {
+      "contract_pointer": "/protocol_integrity/holdout_exposure/final_holdout_exploration_blind",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/protocol/final_holdout_exploration_blind"
+      }
+    },
+    {
+      "contract_pointer": "/protocol_integrity/holdout_exposure/final_holdout_exposure_review",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/protocol/final_holdout_exposure_review"
+      }
+    },
+    {
+      "contract_pointer": "/protocol_integrity/holdout_exposure/holdout_evaluation_count",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/protocol/holdout_evaluation_count"
+      }
+    },
+    {
+      "contract_pointer": "/scientific_environment/python",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/runtime/python"
+      }
+    },
+    {
+      "contract_pointer": "/scientific_environment/implementation",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/runtime/implementation"
+      }
+    },
+    {
+      "contract_pointer": "/scientific_environment/lock/path",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/runtime/lock_file"
+      }
+    },
+    {
+      "contract_pointer": "/scientific_environment/lock/python_version_file",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/runtime/python_version_file"
+      }
+    },
+    {
+      "contract_pointer": "/superseded_reference/status",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/superseded_reference/status"
+      }
+    },
+    {
+      "contract_pointer": "/temporal_protocol/development/start",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/protocol/development/start"
+      }
+    },
+    {
+      "contract_pointer": "/temporal_protocol/development/end",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/protocol/development/end"
+      }
+    },
+    {
+      "contract_pointer": "/temporal_protocol/development/observations",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/protocol/development/observations"
+      }
+    },
+    {
+      "contract_pointer": "/temporal_protocol/development/sha256",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/protocol/development/sha256"
+      }
+    },
+    {
+      "contract_pointer": "/temporal_protocol/final_holdout/start",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/protocol/final_holdout/start"
+      }
+    },
+    {
+      "contract_pointer": "/temporal_protocol/final_holdout/end",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/protocol/final_holdout/end"
+      }
+    },
+    {
+      "contract_pointer": "/temporal_protocol/final_holdout/observations",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/protocol/final_holdout/observations"
+      }
+    },
+    {
+      "contract_pointer": "/temporal_protocol/final_holdout/sha256",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/protocol/final_holdout/sha256"
+      }
+    },
+    {
+      "contract_pointer": "/temporal_protocol/backtesting/mode",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/protocol/backtesting/mode"
+      }
+    },
+    {
+      "contract_pointer": "/temporal_protocol/backtesting/initial_training_observations",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/protocol/backtesting/initial_training_months"
+      }
+    },
+    {
+      "contract_pointer": "/temporal_protocol/backtesting/forecast_horizon",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/protocol/backtesting/forecast_horizon"
+      }
+    },
+    {
+      "contract_pointer": "/temporal_protocol/backtesting/origin_step_observations",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/protocol/backtesting/origin_step_months"
+      }
+    },
+    {
+      "contract_pointer": "/temporal_protocol/backtesting/fold_count",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/protocol/backtesting/fold_count"
+      }
+    },
+    {
+      "contract_pointer": "/temporal_protocol/backtesting/validation_forecast_count",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/protocol/backtesting/validation_forecast_count"
+      }
+    },
+    {
+      "contract_pointer": "/temporal_protocol/backtesting/validation_targets_overlap",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/protocol/backtesting/validation_targets_overlap"
+      }
+    },
+    {
+      "contract_pointer": "/scientific_environment/core_packages/statsmodels",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/runtime/packages/statsmodels"
+      }
+    },
+    {
+      "contract_pointer": "/scientific_environment/core_packages/pandas",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/runtime/packages/pandas"
+      }
+    },
+    {
+      "contract_pointer": "/scientific_environment/core_packages/numpy",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/runtime/packages/numpy"
+      }
+    },
+    {
+      "contract_pointer": "/scientific_environment/core_packages/scipy",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/runtime/packages/scipy"
+      }
+    },
+    {
+      "contract_pointer": "/candidates/0/candidate_id",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/model_selection/catalog/0"
+      }
+    },
+    {
+      "contract_pointer": "/candidates/0/role",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/model_selection/candidates/0/role"
+      }
+    },
+    {
+      "contract_pointer": "/candidates/0/study_family",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/model_selection/candidates/0/family"
+      }
+    },
+    {
+      "contract_pointer": "/candidates/0/complexity_rank",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/model_selection/candidates/0/complexity_rank"
+      }
+    },
+    {
+      "contract_pointer": "/candidates/1/candidate_id",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/model_selection/catalog/1"
+      }
+    },
+    {
+      "contract_pointer": "/candidates/1/role",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/model_selection/candidates/1/role"
+      }
+    },
+    {
+      "contract_pointer": "/candidates/1/study_family",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/model_selection/candidates/1/family"
+      }
+    },
+    {
+      "contract_pointer": "/candidates/1/complexity_rank",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/model_selection/candidates/1/complexity_rank"
+      }
+    },
+    {
+      "contract_pointer": "/candidates/2/candidate_id",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/model_selection/catalog/2"
+      }
+    },
+    {
+      "contract_pointer": "/candidates/2/role",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/model_selection/candidates/2/role"
+      }
+    },
+    {
+      "contract_pointer": "/candidates/2/study_family",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/model_selection/candidates/2/family"
+      }
+    },
+    {
+      "contract_pointer": "/candidates/2/complexity_rank",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/model_selection/candidates/2/complexity_rank"
+      }
+    },
+    {
+      "contract_pointer": "/candidates/3/candidate_id",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/model_selection/catalog/3"
+      }
+    },
+    {
+      "contract_pointer": "/candidates/3/role",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/model_selection/candidates/3/role"
+      }
+    },
+    {
+      "contract_pointer": "/candidates/3/study_family",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/model_selection/candidates/3/family"
+      }
+    },
+    {
+      "contract_pointer": "/candidates/3/complexity_rank",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/model_selection/candidates/3/complexity_rank"
+      }
+    },
+    {
+      "contract_pointer": "/candidates/4/candidate_id",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/model_selection/catalog/4"
+      }
+    },
+    {
+      "contract_pointer": "/candidates/4/role",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/model_selection/candidates/4/role"
+      }
+    },
+    {
+      "contract_pointer": "/candidates/4/study_family",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/model_selection/candidates/4/family"
+      }
+    },
+    {
+      "contract_pointer": "/candidates/4/complexity_rank",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/model_selection/candidates/4/complexity_rank"
+      }
+    },
+    {
+      "contract_pointer": "/candidates/5/candidate_id",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/model_selection/catalog/5"
+      }
+    },
+    {
+      "contract_pointer": "/candidates/5/role",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/model_selection/candidates/5/role"
+      }
+    },
+    {
+      "contract_pointer": "/candidates/5/study_family",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/model_selection/candidates/5/family"
+      }
+    },
+    {
+      "contract_pointer": "/candidates/5/complexity_rank",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/model_selection/candidates/5/complexity_rank"
+      }
+    },
+    {
+      "contract_pointer": "/candidates/6/candidate_id",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/model_selection/catalog/6"
+      }
+    },
+    {
+      "contract_pointer": "/candidates/6/role",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/model_selection/candidates/6/role"
+      }
+    },
+    {
+      "contract_pointer": "/candidates/6/study_family",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/model_selection/candidates/6/family"
+      }
+    },
+    {
+      "contract_pointer": "/candidates/6/complexity_rank",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/model_selection/candidates/6/complexity_rank"
+      }
+    },
+    {
+      "contract_pointer": "/candidates/7/candidate_id",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/model_selection/catalog/7"
+      }
+    },
+    {
+      "contract_pointer": "/candidates/7/role",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/model_selection/candidates/7/role"
+      }
+    },
+    {
+      "contract_pointer": "/candidates/7/study_family",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/model_selection/candidates/7/family"
+      }
+    },
+    {
+      "contract_pointer": "/candidates/7/complexity_rank",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/model_selection/candidates/7/complexity_rank"
+      }
+    },
+    {
+      "contract_pointer": "/candidates/8/candidate_id",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/model_selection/catalog/8"
+      }
+    },
+    {
+      "contract_pointer": "/candidates/8/role",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/model_selection/candidates/8/role"
+      }
+    },
+    {
+      "contract_pointer": "/candidates/8/study_family",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/model_selection/candidates/8/family"
+      }
+    },
+    {
+      "contract_pointer": "/candidates/8/complexity_rank",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/model_selection/candidates/8/complexity_rank"
+      }
+    },
+    {
+      "contract_pointer": "/candidates/9/candidate_id",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/model_selection/catalog/9"
+      }
+    },
+    {
+      "contract_pointer": "/candidates/9/role",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/model_selection/candidates/9/role"
+      }
+    },
+    {
+      "contract_pointer": "/candidates/9/study_family",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/model_selection/candidates/9/family"
+      }
+    },
+    {
+      "contract_pointer": "/candidates/9/complexity_rank",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/model_selection/candidates/9/complexity_rank"
+      }
+    },
+    {
+      "contract_pointer": "/candidates/2/constructor",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/model_selection/selected_specification/constructor"
+      }
+    },
+    {
+      "contract_pointer": "/candidates/2/fixed_params",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/model_selection/selected_specification/fixed_hyperparameters"
+      }
+    },
+    {
+      "contract_pointer": "/candidates/2/multi_step_strategy",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/model_selection/selected_specification/multi_step_strategy"
+      }
+    },
+    {
+      "contract_pointer": "/candidates/2/seasonal_period",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/model_selection/selected_specification/seasonal_period"
+      }
+    },
+    {
+      "contract_pointer": "/candidates/2/policies/learned_parameter_scope",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/model_selection/selected_specification/learned_parameter_scope"
+      }
+    },
+    {
+      "contract_pointer": "/candidates/2/policies/preprocessing_policy",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/model_selection/selected_specification/preprocessing_policy"
+      }
+    },
+    {
+      "contract_pointer": "/candidates/2/policies/differencing_policy",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/model_selection/selected_specification/differencing_policy"
+      }
+    },
+    {
+      "contract_pointer": "/candidates/2/policies/trend_policy",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/model_selection/selected_specification/trend_policy"
+      }
+    },
+    {
+      "contract_pointer": "/candidates/2/policies/seasonal_policy",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/model_selection/selected_specification/seasonal_policy"
+      }
+    },
+    {
+      "contract_pointer": "/candidates/2/policies/exogenous_policy",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/model_selection/selected_specification/exogenous_policy"
+      }
+    },
+    {
+      "contract_pointer": "/selection/tie_breakers/0/study_name",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/model_selection/tie_break_order/0"
+      }
+    },
+    {
+      "contract_pointer": "/selection/tie_breakers/1/study_name",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/model_selection/tie_break_order/1"
+      }
+    },
+    {
+      "contract_pointer": "/selection/tie_breakers/2/study_name",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/model_selection/tie_break_order/2"
+      }
+    },
+    {
+      "contract_pointer": "/selection/tie_breakers/3/study_name",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/model_selection/tie_break_order/3"
+      }
+    },
+    {
+      "contract_pointer": "/selection/tie_breakers/4/study_name",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/model_selection/tie_break_order/4"
+      }
+    },
+    {
+      "contract_pointer": "/selection/tie_breakers/5/study_name",
+      "source": {
+        "path": "reproducibility/canonical-run.json",
+        "locator": "json_pointer:/model_selection/tie_break_order/5"
+      }
+    }
+  ],
+  "evidence_gaps": [
+    {
+      "gap_id": "GAP-FOLD-SCHEDULE-DERIVED",
+      "severity": "informational",
+      "description": "canonical-run.json pins the backtesting parameters but not the per-fold schedule or the fold-local seasonal scales; the contract derives the schedule from the pinned parameters, enforces it as a gate, and the report records the reproduced fold scales without a reference."
+    },
+    {
+      "gap_id": "GAP-FOLD-AND-HORIZON-METRICS",
+      "severity": "informational",
+      "description": "Fold-level metrics, horizon-wise MAE and out-of-sample forecast rows are not versioned by the study; the reproduction reports them (backtest-forecasts.json) without an expected side."
+    },
+    {
+      "gap_id": "GAP-NON-SELECTED-SPECIFICATIONS-SOURCE-ONLY",
+      "severity": "informational",
+      "description": "canonical-run.json records the complete specification only for the selected candidate; the fixed parameters of the other nine are pinned through scripts/forecasting_model_selection.py (file_text locators)."
+    },
+    {
+      "gap_id": "GAP-FAILURE-DETAIL",
+      "severity": "informational",
+      "description": "The study records failure counts and failure kinds per specification, not which folds failed or why; the reproduction reports its own per-fold failure categories."
+    }
+  ],
+  "protocol_integrity": {
+    "holdout_procedurally_isolated": true,
+    "holdout_exposure": {
+      "final_holdout_exploration_blind": false,
+      "final_holdout_exposure_review": "REV-001",
+      "exposed_before": "notebook_01_full_series_exploration",
+      "used_for_scoring_tuning_or_selection": false,
+      "model_frozen_before_final_evaluation": true,
+      "holdout_evaluation_count": 1,
+      "description": "Notebook 01 explored the complete 1920-01..1939-12 series retrospectively (including STL strengths and CUSUM stability with a trend + calendar-month design) before the 1939 holdout was prospectively sealed from Notebook 02 onward, and those full-series diagnostics informed the design of the frozen catalog. The holdout was never used to score, tune or select, the model was frozen before the single final evaluation, and it was evaluated once -- but it is not an exploration-blind external test set in the strongest sense (study review REV-001)."
+    },
+    "statement": "Every selection decision derives from the development-only expanding-window backtest; the 1939 holdout is opened once, after the selected specification is refitted on the full development window and its 12-month forecast exists, and nothing is adjusted afterwards."
+  },
+  "study_observations": [
+    {
+      "observation_id": "OBS-REFERENCE-PLATFORM",
+      "affects_reproduction": false,
+      "description": "The canonical run executed on Linux-aarch64 with CPython 3.13.13 and the locked packages; a reproduction on another architecture or interpreter patch is at best 'compatible'."
+    },
+    {
+      "observation_id": "OBS-GUARD-FAILURE-VOCABULARY",
+      "affects_reproduction": false,
+      "description": "The study reports failures by exception class name. Its own guard exception (ForecastingModelSelectionError) covers explicit optimizer non-convergence and invalid forecast output; Atlas records those as guard categories and reports them in the study vocabulary through failure_policy.study_guard_failure_kind. Any other exception keeps its type name."
+    },
+    {
+      "observation_id": "OBS-MODEL-STATE-NOT-REPRODUCED",
+      "affects_reproduction": false,
+      "description": "The study's joblib artifact and model_state_fingerprint describe its own serialized model; a reproduction never loads or re-creates them, so byte-identical model state is not claimed."
+    },
+    {
+      "observation_id": "OBS-SUPERSEDED-REFERENCE",
+      "affects_reproduction": false,
+      "description": "canonical-run.json keeps a superseded, unlocked execution (statsmodels 0.14.6, AutoReg old_names keyword) as provenance only; it is not a reproduction target."
+    }
+  ],
+  "superseded_reference": {
+    "status": "superseded_not_canonical",
+    "reproduction_target": false,
+    "source": {
+      "path": "reproducibility/canonical-run.json",
+      "locator": "json_pointer:/superseded_reference/status",
+      "rendered_text": "\"superseded_not_canonical\""
+    },
+    "summary": "A previous unlocked execution (Python 3.12.13, statsmodels 0.14.6) whose catalog still used the AutoReg old_names keyword; a clean statsmodels 0.15 install silently made both AutoReg candidates ineligible. Kept by the study as traceable provenance; the reproduction targets only the current locked canonical run."
+  },
+  "limitations": [
+    "Educational univariate study of one short monthly series (240 observations); no operational or climate claim.",
+    "The 1939 holdout is procedurally sealed but not exploration-blind (REV-001).",
+    "Twelve holdout points give an imprecise final-evaluation estimate; the backtest (108 forecasts per specification) carries the selection evidence.",
+    "Numerical optimizers (Holt-Winters, SARIMAX) may differ in their last digits across CPU architectures; agreement is established within the declared tolerance, not byte identity."
+  ],
+  "authoring": {
+    "authored_by": "atlas-dataflow scientific reproduction authoring",
+    "authored_at": "2026-09-30T12:43:10Z",
+    "method": "python -m pipeline.scientific_study_contract author: every json_pointer expected value, protocol parameter source and pinned-file hash is read from the pinned study checkout; file_text items carry their rendered source text",
+    "draft_path": "pipeline/scientific-studies/nottem/study-79c6abccbf65/authoring/contract-draft.json"
+  }
+}

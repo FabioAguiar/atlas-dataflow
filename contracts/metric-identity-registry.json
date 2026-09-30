@@ -1,6 +1,6 @@
 {
   "schema_version": "metric-identity-registry.v1",
-  "description": "Canonical Atlas metric identity authority. metric_id is the canonical identifier used by execution contracts (primary_metric/secondary_metrics). Every layer resolves metric names through this registry: native training (aliases.training), scientific reproduction (aliases.scientific), and the public API projection (aliases.public is the published key; aliases.public_input lists additional raw names the public projection accepts). direction states whether a higher or lower value is better; sklearn_scorer is the scikit-learn scorer string used when a metric drives estimator scoring (null when no built-in scorer exists); positive_class_sensitive marks binary metrics whose value depends on which class is positive, so a scorer must be bound to the governed positive class. Adding a metric is a change to this file only; historical artifacts keep the names they were written with.",
+  "description": "Canonical Atlas metric identity authority. metric_id is the canonical identifier used by execution contracts (primary_metric/secondary_metrics). Every layer resolves metric names through this registry: native training (aliases.training), scientific reproduction (aliases.scientific), and the public API projection (aliases.public is the published key; aliases.public_input lists additional raw names the public projection accepts). direction states whether a higher or lower value is better; sklearn_scorer is the scikit-learn scorer string used when a metric drives estimator scoring (null when no built-in scorer exists); positive_class_sensitive marks binary metrics whose value depends on which class is positive, so a scorer must be bound to the governed positive class. parameters, when present, declares the arguments a metric needs to be well defined (a caller must supply every required parameter; a study-specific name such as seasonal_mase_12 maps to metric_id plus parameters, never to a new identity). Adding a metric is a change to this file only; historical artifacts keep the names they were written with.",
   "metrics": [
     {
       "metric_id": "roc_auc",
@@ -400,9 +400,18 @@
         "training": [
           "seasonal_mase"
         ],
-        "scientific": [],
+        "scientific": [
+          "seasonal_mase"
+        ],
         "public": "seasonal_mase",
         "public_input": []
+      },
+      "parameters": {
+        "seasonal_period": {
+          "required": true,
+          "kind": "positive_integer",
+          "description": "Seasonal lag m of the in-sample seasonal naive scale mean(|y_t - y_{t-m}|), computed only from the training history available at each forecast origin."
+        }
       }
     }
   ]

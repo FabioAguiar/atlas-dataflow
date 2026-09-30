@@ -9,6 +9,15 @@ description = "Minimal editable package boundary for Atlas DataFlow notebook pip
 requires-python = ">=3.11"
 dependencies = []
 
+[project.optional-dependencies]
+# Offline Scientific Reproduction of univariate forecasting studies
+# (pipeline/forecasting_models.py executes the statsmodels constructors a
+# Dataset Study declares). Never part of the serving API image, which is built
+# from api/pyproject.toml. A study's full lock is provenance only: the
+# reproduction runtime is classified against the contract's core packages, so
+# this range only admits the minor line the pinned contract is compatible with.
+scientific-forecasting = ["statsmodels>=0.15,<0.16"]
+
 [tool.setuptools]
 include-package-data = false
 

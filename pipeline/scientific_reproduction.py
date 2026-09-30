@@ -17,9 +17,18 @@ Evidence lineages kept strictly apart:
                                   never creates, modifies, or activates one.
 
 The engine is generic. Everything problem-specific is dispatched on the
-contract's ``problem.problem_type`` through a task adapter
-(``binary_classification``, ``multiclass_classification`` or
-``continuous_regression``); nothing is dispatched on a dataset slug. The
+contract's ``problem.problem_type``; nothing is dispatched on a dataset slug.
+Two protocol runners share this module's identity, environment, comparison,
+tolerance, status, lineage and write-once report infrastructure:
+
+* the tabular runner (``Reproduction`` below) with a task adapter per
+  ``binary_classification``, ``multiclass_classification`` and
+  ``continuous_regression``;
+* the temporal runner for ``univariate_forecasting``
+  (``pipeline.scientific_forecasting.ForecastingReproduction``), which
+  executes an expanding-window backtest instead of a split, search and refit.
+
+``build_reproduction`` chooses the runner from the contract. The
 adapter owns target representation, the cross-validation scorers, candidate
 evaluation, the decision stage (a threshold policy for binary problems, an
 explicit *not applicable* record and the argmax rule for multiclass problems,
@@ -70,8 +79,10 @@ from pipeline.scientific_study_contract import (
     MULTICLASS,
     REGRESSION,
     SCHEMA_VERSION_V3 as CONTRACT_SCHEMA_VERSION_V3,
+    SCHEMA_VERSION_V4 as CONTRACT_SCHEMA_VERSION_V4,
     ScientificStudyContract,
     assess_protocol_support,
+    is_forecasting_contract,
     load_scientific_study_contract,
     verify_against_study_checkout,
 )
@@ -80,18 +91,21 @@ from pipeline.scientific_study_contract import (
 REPORT_SCHEMA_VERSION_V1 = "scientific-reproduction-report.v1"
 REPORT_SCHEMA_VERSION = "scientific-reproduction-report.v2"
 REPORT_SCHEMA_VERSION_V3 = "scientific-reproduction-report.v3"
+REPORT_SCHEMA_VERSION_V4 = "scientific-reproduction-report.v4"
 _SCHEMA_DIR = Path(__file__).resolve().parent
 REPORT_SCHEMA_PATHS: Mapping[str, Path] = {
     REPORT_SCHEMA_VERSION_V1: _SCHEMA_DIR / "scientific-reproduction-report.schema.json",
     REPORT_SCHEMA_VERSION: _SCHEMA_DIR / "scientific-reproduction-report.v2.schema.json",
     REPORT_SCHEMA_VERSION_V3: _SCHEMA_DIR / "scientific-reproduction-report.v3.schema.json",
+    REPORT_SCHEMA_VERSION_V4: _SCHEMA_DIR / "scientific-reproduction-report.v4.schema.json",
 }
 REPORT_SCHEMA_PATH = REPORT_SCHEMA_PATHS[REPORT_SCHEMA_VERSION]
 REPORT_FILENAME = "reproduction-report.json"
 SEARCH_RESULTS_FILENAME = "search-results.json"
+BACKTEST_FORECASTS_FILENAME = "backtest-forecasts.json"
 RUNS_ROOT_RELATIVE = "pipeline/scientific-reproduction-runs"
 ENGINE_ID = "pipeline/scientific_reproduction.py"
-ENGINE_VERSION = "4"
+ENGINE_VERSION = "5"
 
 RUN_KIND = "scientific_reproduction_run"
 STUDY_RUN_KIND = "scientific_study_run"
@@ -1718,8 +1732,9 @@ class ReproductionResult:
         candidates_expected = [c["model_id"] for c in payload["candidates"]]
         split = payload["split"]
         membership = membership_spec(split)
-        report_version = (REPORT_SCHEMA_VERSION_V3 if payload["schema_version"] == CONTRACT_SCHEMA_VERSION_V3
-                          else REPORT_SCHEMA_VERSION)
+        report_version = {CONTRACT_SCHEMA_VERSION_V3: REPORT_SCHEMA_VERSION_V3,
+                          CONTRACT_SCHEMA_VERSION_V4: REPORT_SCHEMA_VERSION_V4}.get(payload["schema_version"],
+                                                                                   REPORT_SCHEMA_VERSION)
         if task is not None and hasattr(task, "problem_section"):
             problem_section = task.problem_section()
         else:
@@ -1840,7 +1855,7 @@ class ReproductionResult:
                 "supersedes": None,
             },
         }
-        if report_version == REPORT_SCHEMA_VERSION_V3:
+        if report_version in (REPORT_SCHEMA_VERSION_V3, REPORT_SCHEMA_VERSION_V4):
             report["interpretive_diagnostics"] = _jsonable(self.stages.get("interpretive_diagnostics"))
         return report
 
@@ -2271,7 +2286,13 @@ def build_reproduction(
     dataset_path: Path | None = None,
     study_checkout: Path | None = None,
     runtime: Mapping[str, Any] | None = None,
-) -> Reproduction:
+) -> Any:
+    """Plan a reproduction with the protocol runner the contract requires.
+
+    Returns the tabular ``Reproduction`` or, for a forecasting contract, the
+    temporal ``ForecastingReproduction``; both expose ``run()`` and a result
+    with ``build_report()``.
+    """
     payload = contract.payload
     env = payload["scientific_environment"]
     captured = dict(runtime) if runtime is not None else scientific_environment.capture_runtime_environment(sorted(env["core_packages"]))
@@ -2282,7 +2303,12 @@ def build_reproduction(
             "status": "not_performed",
             "reason": "no study checkout was supplied; the contract's pinned hashes were not re-checked in this run",
         }
-    return Reproduction(
+    runner: Any = Reproduction
+    if is_forecasting_contract(payload):
+        from pipeline.scientific_forecasting import ForecastingReproduction
+
+        runner = ForecastingReproduction
+    return runner(
         contract=contract,
         repo_root=Path(repo_root),
         dataset_path=Path(dataset_path) if dataset_path else Path(repo_root) / payload["dataset_identity"]["atlas_local_path"],
@@ -2318,11 +2344,14 @@ def _dump(payload: Any) -> bytes:
     return (json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False, allow_nan=False) + "\n").encode("utf-8")
 
 
-def write_reproduction_report(report: Mapping[str, Any], *, repo_root: Path, search_results: Mapping[str, Any] | None = None) -> dict[str, Any]:
+def write_reproduction_report(report: Mapping[str, Any], *, repo_root: Path, search_results: Mapping[str, Any] | None = None,
+                              backtest_forecasts: Mapping[str, Any] | None = None) -> dict[str, Any]:
     """Persist a reproduction run as write-once evidence.
 
     The run directory must not exist; nothing outside it is written, and an
-    existing run is never overwritten.
+    existing run is never overwritten. ``search_results`` (tabular) and
+    ``backtest_forecasts`` (forecasting: every out-of-sample forecast row) are
+    optional sidecars referenced from the report by path and SHA-256.
     """
     errors = validate_report_schema(report)
     if errors:
@@ -2348,6 +2377,13 @@ def write_reproduction_report(report: Mapping[str, Any], *, repo_root: Path, sea
             "path": f"{relative_dir}/{SEARCH_RESULTS_FILENAME}",
             "sha256": _sha256_bytes(search_bytes),
         }
+    if backtest_forecasts is not None:
+        forecast_bytes = _dump({"run_id": run_id, "backtest_forecasts": _jsonable(backtest_forecasts)})
+        (run_dir / BACKTEST_FORECASTS_FILENAME).write_bytes(forecast_bytes)
+        final_report["backtest_forecasts_reference"] = {
+            "path": f"{relative_dir}/{BACKTEST_FORECASTS_FILENAME}",
+            "sha256": _sha256_bytes(forecast_bytes),
+        }
     report_bytes = _dump(final_report)
     (run_dir / REPORT_FILENAME).write_bytes(report_bytes)
     return {"run_directory": relative_dir, "report_path": f"{relative_dir}/{REPORT_FILENAME}", "report_sha256": _sha256_bytes(report_bytes)}
@@ -2368,6 +2404,8 @@ def answer_reproduction_questions(report: Mapping[str, Any]) -> dict[str, Any]:
     Any question the report cannot answer is listed under ``unanswered``
     rather than guessed.
     """
+    if (report.get("problem") or {}).get("problem_type") == "univariate_forecasting":
+        return _answer_forecasting_report(report)
     comparison = report.get("comparison") or {"values": [], "decisions": []}
     compared = comparison["values"] + comparison["decisions"]
     unanswered = [
@@ -2417,6 +2455,38 @@ def answer_reproduction_questions(report: Mapping[str, Any]) -> dict[str, Any]:
     if report.get("schema_version") == REPORT_SCHEMA_VERSION_V3:
         answers.update(_answer_v3_questions(report))
     return answers
+
+
+def _answer_forecasting_report(report: Mapping[str, Any]) -> dict[str, Any]:
+    from pipeline.scientific_forecasting import answer_forecasting_questions
+
+    comparison = report.get("comparison") or {"values": [], "decisions": []}
+    compared = comparison["values"] + comparison["decisions"]
+    study = report["evidence_lineage"][STUDY_RUN_KIND]
+    return {
+        "which_scientific_revision_was_reproduced": study["study_revision"],
+        "which_canonical_run_artifact_was_used": study.get("canonical_run"),
+        "which_dataset_revision_was_used": {"sha256": report["dataset"].get("observed_sha256"),
+                                            "matches_pinned_identity": report["dataset"]["verified"]},
+        "which_scientific_environment_produced_the_reference": report["environment"]["scientific_reference"],
+        "did_the_environment_match": report["environment"]["compatibility"]["classification"],
+        "which_models_were_expected": [c["candidate_id"] for c in report.get("candidate_catalog") or []],
+        "which_selection_rule_was_executed": ((report.get("selection") or {}).get("rule") or {}).get("kind"),
+        "threshold": {"applicable": False, "reason": (report.get("problem") or {}).get("threshold", {}).get("reason")},
+        "scientific_expected_metrics": {c["quantity"]: c["expected"] for c in compared},
+        "atlas_reproduced_metrics": {c["quantity"]: c["actual"] for c in compared},
+        "deltas": {c["quantity"]: c["delta"] for c in compared if c.get("delta") is not None},
+        "matched": [c["quantity"] for c in compared if c["outcome"] == OUTCOME_EXACT],
+        "within_tolerance_only": [c["quantity"] for c in compared if c["outcome"] == OUTCOME_WITHIN],
+        "exceeded_tolerance_or_mismatched": [c["quantity"] for c in compared
+                                             if c["outcome"] in (OUTCOME_OUTSIDE, OUTCOME_MISMATCH)],
+        "not_produced": [c["quantity"] for c in compared if c["outcome"] == OUTCOME_MISSING],
+        "all_within_tolerance": comparison.get("all_within_tolerance"),
+        "unsupported": report["protocol_support"]["gaps"],
+        "final_reproduction_status": report["reproduction_status"]["status"],
+        "unanswered": [{"gap_id": g["gap_id"], "description": g["description"]} for g in report.get("evidence_gaps", [])],
+        **answer_forecasting_questions(report),
+    }
 
 
 def _answer_v2_questions(report: Mapping[str, Any]) -> dict[str, Any]:
@@ -2492,6 +2562,10 @@ def describe_lineage_separation(report: Mapping[str, Any], *, repo_root: Path) -
     provenance, and the view states which protocol facts differ so values are
     never presented as interchangeable.
     """
+    if (report.get("problem") or {}).get("problem_type") == "univariate_forecasting":
+        from pipeline.scientific_forecasting import describe_forecasting_lineage_separation
+
+        return describe_forecasting_lineage_separation(report, repo_root=repo_root)
     root = Path(repo_root)
     slug = report["run_identity"]["dataset_slug"]
     registry = json.loads((root / "registry/datasets.json").read_text(encoding="utf-8"))
@@ -2620,7 +2694,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         study_checkout=Path(args.study_checkout) if args.study_checkout else None,
     )
     result = reproduction.run(run_id=args.run_id, n_jobs=args.n_jobs, allow_incompatible_environment=args.allow_incompatible_environment)
-    written = write_reproduction_report(result.build_report(), repo_root=root, search_results=result.search_results or None)
+    written = write_reproduction_report(result.build_report(), repo_root=root, search_results=result.search_results or None,
+                                        backtest_forecasts=getattr(result, "backtest_forecasts", None) or None)
     report = json.loads((root / written["report_path"]).read_text(encoding="utf-8"))
     print(json.dumps({"report": written, "status": report["reproduction_status"]["status"],
                       "reasons": report["reproduction_status"]["reasons"]}, indent=2))

@@ -4,19 +4,20 @@ Esta página descreve a camada que permite ao Atlas responder, de forma verific�
 
 > O Atlas consegue reproduzir o protocolo científico desta revisão específica do Dataset Study?
 
-Há dois casos reais:
+Há quatro casos reais:
 
 | Estudo | Revisão | Problema | Contrato | Status da reprodução |
 |---|---|---|---|---|
 | `dataset-study-telco-customer-churn` | `43ced1fbb76f` | classificação binária | `scientific-study-contract.v1` | `reproduced_within_tolerance` |
 | `dataset-study-dry-bean` | `e3e697c1b60f` | classificação multiclasse (7 classes) + seleção em duas etapas | `scientific-study-contract.v2` | `reproduced_within_tolerance` ([detalhes](scientific-reproduction-dry-bean.md)) |
 | `dataset-study-concrete-compressives-strength` | `b223370e0f44` | regressão contínua (MPa) | `scientific-study-contract.v3` | `reproduced_exact` (ver §7b) |
+| `dataset-study-nottingham-monthly-temperatures` | `79c6abccbf65` | forecasting univariado mensal (°F) | `scientific-study-contract.v4` | `divergent` — seleção, especificação escolhida e as 12 previsões finais reproduzidas; métricas de Holt-Winters/SARIMA não selecionados fora de 1e-9 (ver §7c) |
 
-A infraestrutura é genérica. O código despacha pelo `problem.problem_type` (adapters `binary_classification`, `multiclass_classification` e `continuous_regression`) e não tem nenhum caminho `if telco`, `if dry-bean` ou `if concrete`; testes garantem que os módulos do motor não citam datasets. O que é específico de cada estudo vive apenas no contrato versionado, na evidência pinada, no notebook de integração e nos artefatos de reprodução.
+A infraestrutura é genérica. O código despacha pelo `problem.problem_type` (adapters `binary_classification`, `multiclass_classification` e `continuous_regression` no runner tabular; `univariate_forecasting` no runner temporal) e não tem nenhum caminho `if telco`, `if dry-bean`, `if concrete` ou `if nottem`; testes garantem que os módulos do motor não citam datasets. O que é específico de cada estudo vive apenas no contrato versionado, na evidência pinada, no notebook de integração e nos artefatos de reprodução.
 
 **Dataset novo ≠ branch de produção novo.** Integrar um estudo novo de um tipo de problema e protocolo já suportados é escrever um contrato, não código. Um *tipo de problema ou protocolo* novo (por exemplo, regressão contínua com split não estratificado e `KFold`) pode exigir evolução **genérica** do motor: um adapter por `problem_type`, um `split.kind` ou `cross_validation.kind` novo, uma família no registry, uma identidade de métrica. Essa evolução é reutilizável por qualquer estudo futuro compatível e nunca ramifica pelo slug do dataset.
 
-Tipos de problema suportados pela reprodução científica: **classificação binária**, **classificação multiclasse** e **regressão contínua**. Forecasting (séries temporais) **não** é suportado pela reprodução científica e continua aparecendo como `atlas_capability_missing`.
+Tipos de problema suportados pela reprodução científica: **classificação binária**, **classificação multiclasse**, **regressão contínua** e **forecasting univariado**. O forecasting é executado por um **runner temporal separado do tabular** (`pipeline/scientific_forecasting.py`): não há split aleatório, validação cruzada nem busca de hiperparâmetros, e sim um holdout final selado, backtesting expanding-window e um catálogo congelado de especificações. Identidade do dataset, classificação de ambiente, comparação com a evidência esperada, tolerância, status, linhagens e o relatório write-once são a mesma infraestrutura dos dois runners.
 
 ## 1. Linhagens de evidência
 
@@ -53,6 +54,12 @@ Regras aplicadas pelo código e pelos testes:
 | `pipeline/scientific-reproduction-runs/dry-bean/repro-20260929T163341Z/` | evidência | primeira reprodução real do Dry Bean |
 | `pipeline/scientific-study-contract.v3.schema.json` | schema | `scientific-study-contract.v3`: v2 (binário + multiclasse, inalterados) + `continuous_regression` |
 | `pipeline/scientific-reproduction-report.v3.schema.json` | schema | `scientific-reproduction-report.v3`: v2 + regressão, com `interpretive_diagnostics` (os relatórios v1/v2 continuam válidos nos seus schemas) |
+| `pipeline/scientific-study-contract.v4.schema.json` | schema | `scientific-study-contract.v4`: ramo tabular idêntico ao v3 + ramo `univariate_forecasting` |
+| `pipeline/scientific-reproduction-report.v4.schema.json` | schema | `scientific-reproduction-report.v4`: ramo tabular idêntico ao v3 + relatório temporal |
+| `pipeline/scientific_forecasting.py` | módulo | runner temporal (`ForecastingReproduction`): tradução do índice, partições seladas, backtesting, elegibilidade, seleção, finalização, relatório |
+| `pipeline/forecasting_models.py` | módulo | um adapter sem estado por família de forecasting (fit do zero + vetor completo de previsão) |
+| `pipeline/scientific-studies/nottem/study-79c6abccbf65/` | contrato | contrato Nottingham + rascunho de autoria |
+| `pipeline/scientific-reproduction-runs/nottem/repro-20260930T125644Z/` | evidência | `reproduction-report.json` + `backtest-forecasts.json` (todas as previsões fora da amostra) |
 
 `pipeline/training.py` passou a resolver as classes de estimador pelo registry. Os argumentos de construção nativos não mudaram (`LogisticRegression(max_iter=1000, …)` etc.), e o conjunto nativo `SUPPORTED_MODEL_FAMILIES` também não.
 
@@ -108,6 +115,29 @@ Outras novidades: membership `technical_row_occurrence` (hash da linha + ordinal
 | `interpretive_evidence.group_overlap_diagnostic` | diagnóstico **descritivo**: divide o erro de uma predição já feita por "grupo visto / não visto" nas partições de ajuste (colunas de grupo declaradas). Roda depois da avaliação única de teste e nunca alimenta split, busca, seleção ou ajuste |
 
 O adapter `ContinuousRegressionTask` valida o alvo (numérico, completo, finito, mantido em float64), calcula MAE, RMSE, R², MedAE e diagnósticos agregados de resíduo (média, desvio padrão com `ddof=1`, erro absoluto máximo, percentis 50/90/95 do erro absoluto) sem persistir predições linha a linha, reajusta o pipeline congelado em train + validation e prediz o teste exatamente uma vez. Relatórios v3 registram `positive_class`, `class_order` e threshold como não aplicáveis em todo `metric_set`. A família `ridge` (`sklearn.linear_model.Ridge`) existe só para a reprodução científica (não é treinável nativamente nem aceita em contratos de resultado governados). `dummy_prior` identifica a família de baseline não-aprendiz; a estratégia (`prior`, `median`) é sempre a declarada em `fixed_params`.
+
+### Contrato v4 (forecasting univariado)
+
+`scientific-study-contract.v4` mantém o ramo tabular do v3 sem mudanças (um contrato v2/v3 reetiquetado como v4 valida igual) e acrescenta um ramo discriminado por `problem.problem_type = univariate_forecasting`, com protocolo `univariate_forecasting_expanding_window_model_selection.v1`. Ele representa o forecasting de forma nativa e **não tem** `features`, `split`, `cross_validation`, `preprocessing`, classes, classe positiva nem threshold (o schema rejeita):
+
+| Conceito | Representação |
+|---|---|
+| vocabulário do estudo | `problem.study_problem_identity` preserva `time_series_forecasting` / `univariate`; a tabela única `STUDY_PROBLEM_IDENTITIES` mapeia para a capacidade Atlas `univariate_forecasting` |
+| fonte temporal | `temporal_source` (`fractional_year_monthly`: `ano = floor(t)`, `mês = rint((t − ano)·12)`, tolerância declarada; nunca ordena, preenche ou embaralha) |
+| partições | `temporal_protocol.development` e `final_holdout` com início, fim, observações e SHA-256 dos bytes `period,target` (`%.15g`, LF); gate antes de qualquer fit |
+| backtesting | `expanding_window` com treino inicial, horizonte, passo de origem, número de folds, contagem de previsões, política de sobreposição e a agenda por fold (gate) |
+| catálogo | `candidates[]`: `candidate_id`, papel (`primary_baseline`, `secondary_baseline`, `candidate`), família Atlas, nome da família no estudo, construtor, `complexity_rank`, período sazonal, `fixed_params`, estratégia multi-step e políticas |
+| métricas | `mae`, `rmse`, `seasonal_mase` do registry canônico; `seasonal_mase_12` do estudo é `seasonal_mase` com `seasonal_period = 12` (parâmetro declarado no registry); diagnósticos declarados (`fold_mae_std`, janelas de horizonte) |
+| falhas | `failure_policy`: tipos de erro de programação que abortam, falha de baseline aborta, falha legítima de fit/forecast (inclusive não convergência explícita) torna a especificação inelegível; o rótulo do estudo para suas falhas de guarda é declarado |
+| seleção | `forecasting_pooled_metric_practical_tie`: MAE agregado menor é melhor, empate prático `≤ melhor + tolerância`, desempate lexicográfico declarado, ranking "selecionado primeiro"; sem margem sobre baseline |
+| finalização | refit único no desenvolvimento, congelamento, uma previsão, holdout aberto uma vez, escala MASE do desenvolvimento completo, referência do baseline calculada depois |
+| exposição do holdout | `protocol_integrity.holdout_exposure` (por exemplo `final_holdout_exploration_blind = false`, revisão do estudo) |
+
+**Runner temporal.** `build_reproduction` escolhe `ForecastingReproduction` para um contrato de forecasting. Cada especificação é ajustada do zero em cada fold só com o histórico de treino; o vetor completo de previsões é produzido antes de qualquer alvo do fold ser lido; nenhum alvo de validação realimenta o fold; a escala do seasonal MASE vem só do histórico do fold. O holdout fica num objeto selado (`SealedHoldout`) e um guarda (`FinalizationGuard`) impõe *fit → freeze → forecast → abrir holdout → avaliar*, cada etapa uma vez. O relatório v4 traz protocolo temporal, catálogo, execução por fold (status, categoria de falha, warnings), resultados agregados, traço da seleção, fit final, previsão final, avaliação, referência do baseline, `metric_sets` com proveniência temporal, comparação, `divergence_scope` (descritivo, nunca relaxa o status), exposição do holdout, referência superada e separação de linhagens.
+
+**Famílias.** `pipeline/model_families.py` continua a autoridade única: as famílias `seasonal_naive`, `naive_last_value`, `exponential_smoothing`, `autoreg`, `sarimax` e `deterministic_seasonal_trend_ols` registram o construtor científico e os nomes reconhecidos; `pipeline/forecasting_models.py` tem exatamente um adapter por família (testado). Só `deterministic_seasonal_trend_ols` é treinável nativamente e governada em release; as demais são apenas científicas.
+
+**Dependência.** A reprodução de forecasting exige statsmodels, declarado como extra opcional `scientific-forecasting` no `pyproject.toml` da raiz (`statsmodels>=0.15,<0.16`). A imagem da API instala apenas `api/pyproject.toml` e não recebe statsmodels. O lock do estudo não é instalado nem fundido; sem statsmodels o ambiente é `incompatible` e a reprodução não executa.
 
 **Autoria sem transcrição.** `python -m pipeline.scientific_study_contract author --draft … --study-checkout … --output …` preenche valores esperados, gates e hashes a partir do checkout pinado, por JSON pointer. `verify` reconfere o contrato contra o checkout.
 
@@ -216,6 +246,30 @@ O estudo não versionava evidência estruturada: os artefatos ficam no `.gitigno
 
 As métricas nativas do Concrete (`release-20260820-001`, MAE de teste 2,0453) vêm de outro split e de outra seleção. Não são diretamente comparáveis, e o treino nativo não foi alterado.
 
+## 7c. Resultado real da reprodução Nottingham
+
+O estudo já versiona `reproducibility/canonical-run.json` (commit `79c6abccbf65`) com identidade da fonte, protocolo temporal, hashes das partições, catálogo completo, elegibilidade, métricas agregadas, finalistas, ranking, especificação selecionada, métricas finais, baseline e as 12 previsões finais. **Nenhuma mudança no estudo foi necessária.** A agenda por fold não é versionada; o contrato a deriva dos parâmetros pinados e a aplica como gate (lacuna informacional `GAP-FOLD-SCHEDULE-DERIVED`).
+
+| Pergunta | Resposta |
+|---|---|
+| Contrato | `pipeline/scientific-studies/nottem/study-79c6abccbf65/` (`verify`: `synchronized`, 18/18 arquivos, 189/189 localizadores, 109/109 parâmetros, sem lacuna de capacidade) |
+| Dataset | `datasets::nottem` via `get_rdataset(...).to_csv(index=False)`, SHA-256 `2908bd6f…ca8b`, 4.531 bytes, 240 × 2; lido só de `data/scientific-studies/nottem/dataset.csv` (o arquivo nativo `data/raw/nottem/dataset.csv` tem outros bytes, CRLF) |
+| Protocolo | desenvolvimento 1920-01 → 1938-12 (228), holdout 1939 (12); 9 folds expanding-window (120 / 12 / 12), 108 previsões por especificação, sem sobreposição; gates de partição e agenda aprovados |
+| Catálogo | as 10 especificações executadas; 9 elegíveis; `sarima_100_100_12` inelegível por não convergência explícita (`ForecastingModelSelectionError` no vocabulário do estudo) |
+| Seleção | finalistas `seasonal_trend_ols`, `holt_winters_additive_no_trend`, `sarima_100_011_12`, `holt_winters_additive_damped_trend`, `holt_winters_additive_trend`; critério decisivo: seasonal MASE agregado; **`seasonal_trend_ols` selecionado de forma independente**; ranking completo idêntico |
+| Final | OLS reajustado nas 228 observações, origem 1938-12, holdout avaliado uma vez: MAE 1,526584 · RMSE 1,859967 · seasonal MASE(12) 0,555495; as 12 previsões iguais ao canônico (|Δ| ≤ 1e-13) |
+| Comparação | 189 quantidades: 168 exatas, 0 só dentro da tolerância, **21 fora da tolerância**, 0 ausentes |
+| Ambiente | `compatible`: CPython 3.13.12 (referência 3.13.13) em linux-x86_64 (referência linux-aarch64); statsmodels 0.15.0, pandas 3.0.6, numpy 2.5.3 e scipy 1.18.1 idênticos |
+| Status | **`divergent`** (a tolerância 1e-9 do próprio estudo não foi afrouxada) |
+
+As 21 divergências ficam todas em especificações **não selecionadas** estimadas por otimizador: as métricas agregadas das três Holt-Winters (|Δ| de 1,4e-7 a 9,8e-4), de `sarima_100_011_12` (|Δ| de 1,3e-8 a 9,9e-8) e a contagem de falhas de `sarima_100_100_12` (8 folds em vez de 7). Baselines, OLS e AutoReg coincidem até ~1e-14, e nenhuma decisão muda (`divergence_scope`: seleção, evidência da especificação escolhida e evidência final concordam). Dois diagnósticos, fora do runtime do Atlas, apoiam a atribuição ao runtime numérico e não à implementação: (1) o próprio código do estudo, executado neste mesmo runtime x86_64, produz **exatamente** os valores do Atlas (inclusive as 8 falhas); (2) sob emulação linux-aarch64 (qemu-user, CPython 3.13.7), o runner do Atlas reproduz as **7** falhas do canônico, mas os valores de Holt-Winters/SARIMA mudam de novo — são sensíveis ao runtime e nenhum dos runtimes disponíveis é o de referência. A reprodução exata exige um runner linux-aarch64 real com CPython 3.13.13.
+
+A exposição do holdout é preservada: o Notebook 01 do estudo explorou a série inteira antes de o holdout ser selado (`final_holdout_exploration_blind = false`, `REV-001`). O holdout nunca foi usado para pontuar, ajustar ou selecionar e foi avaliado uma vez, mas não é um conjunto de teste externo cego à exploração. A execução não bloqueada e superada do estudo (statsmodels 0.14.6, `old_names`) é proveniência, não alvo.
+
+### Nottingham: linhagem científica × treino nativo
+
+Ao contrário de Telco e Concrete, os números das duas linhagens quase coincidem: mesma geometria desenvolvimento/holdout, mesma agenda expanding-window e o modelo nativo fixo tem a forma da especificação `seasonal_trend_ols` (a implementação nativa é do Atlas; a científica executa o OLS do statsmodels). Diferenças de 4e-16 a 5e-14 nas métricas de backtest e de holdout. Mesmo assim são experimentos diferentes: o nativo **assume** a especificação (`fixed_configuration`, `model_selection_performed = false`); a reprodução **avalia as 10 especificações e a seleciona**. O antigo gate do notebook nativo que bloqueava a montagem do candidato quando as métricas nativas se afastavam de valores arredondados do estudo foi removido; a comparação científica agora é só esta linhagem.
+
 ## 8. Reprodução científica × treino nativo Atlas
 
 | Fato | Atlas nativo (`release-20260830-001`) | Reprodução científica |
@@ -232,7 +286,7 @@ Os hiperparâmetros do HGB nativo coincidem com os selecionados pelo estudo, mas
 
 ## 9. Avaliação preliminar dos outros estudos
 
-| Aspecto | Dry Bean (`e3e697c`) | Concrete (`d8b4fe0`) | Nottingham (`79c6abc`) |
+| Aspecto | Dry Bean (`e3e697c`) | Concrete (`d8b4fe0`) | Nottingham (`79c6abc`, implementado — §7c) |
 |---|---|---|---|
 | Problema | multiclasse (7 classes) | regressão | forecasting univariado mensal |
 | Python / sklearn | 3.13.13 / 1.9.0 | **3.12.13** / 1.9.0 | 3.13.13 / sem sklearn; **statsmodels 0.15.0** |
@@ -248,7 +302,7 @@ Os hiperparâmetros do HGB nativo coincidem com os selecionados pelo estudo, mas
 
 - Dry Bean: **implementado nesta evolução** (métricas multiclasse, membership por ocorrência de linha, shortlist e etapa de políticas de features). Ver [scientific-reproduction-dry-bean.md](scientific-reproduction-dry-bean.md).
 - Concrete: **implementado genericamente** como capacidade `continuous_regression` (contrato v3, família `ridge`, `k_fold`, `two_stage_random_holdout`, identidade `medae`, diagnóstico de sobreposição de grupos).
-- Nottingham: famílias statsmodels e baselines ingênuos; backtesting expanding-window; holdout temporal.
+- Nottingham: **implementado genericamente** como capacidade `univariate_forecasting` (contrato v4, runner temporal, adapters statsmodels e baselines ingênuos, backtesting expanding-window, holdout selado, identidade parametrizada `seasonal_mase`).
 
 **Extensão de contrato provavelmente necessária:** `split.kind` não estratificado e temporal; `membership_kind` sem identificador; estágio de seleção de políticas de features (Dry Bean); `cross_validation.kind = k_fold` e `expanding_window_backtest`; `search.kind = none` com especificação fixa por candidato (Nottingham).
 
@@ -256,7 +310,8 @@ Os hiperparâmetros do HGB nativo coincidem com os selecionados pelo estudo, mas
 
 ## 10. Limitações restantes
 
-- O protocolo tabular suportado cobre classificação binária, multiclasse e regressão contínua (`tabular_holdout_model_selection.v1`/`.v2`). Forecasting continua fora de escopo e aparece como `atlas_capability_missing`.
+- O protocolo tabular cobre classificação binária, multiclasse e regressão contínua (`tabular_holdout_model_selection.v1`/`.v2`); o temporal cobre forecasting univariado mensal com backtesting expanding-window (`univariate_forecasting_expanding_window_model_selection.v1`). Frequências não mensais, janelas deslizantes, intervalos de previsão e forecasting multivariado aparecem como `atlas_capability_missing`.
+- Especificações estimadas por otimizador (Holt-Winters, SARIMA) são sensíveis ao runtime numérico; no Nottingham isso produz `divergent` em linux-x86_64 sem mudar nenhuma decisão.
 - A regra de desempate Dry Bean do estudo é um mínimo lexicográfico, e o motor aplica os critérios em sequência. Um teste com 300 casos aleatórios confirma a equivalência. Com valores iguais a menos de 1e-12, a filtragem sequencial trata como empate o que a comparação exata do estudo distinguiria.
 - A referência do Telco vem de outputs de notebook (6 casas) e do README, porque o estudo não versiona seus artefatos estruturados.
 - A reprodução não é `exact`: não há runner linux-aarch64 com CPython 3.13.13 neste ambiente.
@@ -267,6 +322,6 @@ Os hiperparâmetros do HGB nativo coincidem com os selecionados pelo estudo, mas
 
 1. Nos Dataset Studies, versionar um `canonical-run.json` também no Telco (como Dry Bean e Nottingham já fazem), incluindo membership SHA e melhores hiperparâmetros por família, para que a referência deixe de depender de texto renderizado.
 2. Executar a reprodução em linux-aarch64 com CPython 3.13.13 para buscar `reproduced_exact`.
-3. ~~Adicionar `multiclass_classification` (Dry Bean)~~ e ~~`continuous_regression` (Concrete)~~: feitos. Próximo candidato: forecasting (Nottingham), que exige um executor temporal separado do tabular.
+3. ~~Adicionar `multiclass_classification` (Dry Bean)~~, ~~`continuous_regression` (Concrete)~~ e ~~`univariate_forecasting` (Nottingham)~~: feitos. Para o Nottingham, reexecutar num runner linux-aarch64 real com CPython 3.13.13 para separar de vez a sensibilidade de plataforma.
 4. Pinar o SHA-256 da fonte bruta também na linhagem nativa e dar proveniência de linhagem às métricas nativas em uma versão nova de schema, sem reescrever artefatos antigos.
 5. Orquestrar as etapas do motor (já funções determinísticas com entradas e saídas JSON) quando o Airflow for introduzido.

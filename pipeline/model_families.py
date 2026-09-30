@@ -36,6 +36,22 @@ classification studies, ``median`` for a regression study) is always the
 contract's declared ``fixed_params["strategy"]``. Reusing the identifier keeps
 one family per estimator class (``family_for_estimator_class``) and every
 historical contract valid.
+
+Univariate forecasting families are not scikit-learn estimators. For them the
+table records the *scientific forecasting* identity instead:
+
+* ``forecasting_constructor``: the third-party constructor a scientific
+  forecasting adapter (``pipeline.forecasting_models``) calls, or ``None`` for
+  a closed-form rule (seasonal naive, last value);
+* ``forecasting_family_names``: the family names a Dataset Study may use for
+  the family in its own vocabulary. A family with names is resolvable by the
+  scientific forecasting reproduction; ``pipeline.forecasting_models`` holds
+  exactly one executable adapter per such family (tested).
+
+Being resolvable by the scientific reproduction never makes a family natively
+trainable or release-governed. ``deterministic_seasonal_trend_ols`` is both:
+native training keeps its own implementation (``pipeline.training``), and the
+scientific adapter executes the constructor a study declares.
 """
 
 from __future__ import annotations
@@ -76,6 +92,12 @@ class ModelFamily:
     display_name: str | None = None
     native_training: Mapping[str, frozenset[str]] = field(default_factory=dict)
     governed_result_problem_types: frozenset[str] = frozenset()
+    forecasting_constructor: str | None = None
+    forecasting_family_names: tuple[str, ...] = ()
+
+    @property
+    def scientific_forecasting(self) -> bool:
+        return bool(self.forecasting_family_names)
 
     def natively_trainable(self, problem_type: str, selection_mode: str | None = None) -> bool:
         modes = self.native_training.get(problem_type)
@@ -184,6 +206,41 @@ MODEL_FAMILIES: Mapping[str, ModelFamily] = {
             display_name="Deterministic Seasonal-Trend OLS",
             native_training={UNIVARIATE_FORECASTING: frozenset({FIXED_CONFIGURATION})},
             governed_result_problem_types=frozenset({UNIVARIATE_FORECASTING}),
+            forecasting_constructor="statsmodels.regression.linear_model.OLS",
+            forecasting_family_names=("DeterministicSeasonalTrendOLS",),
+        ),
+        ModelFamily(
+            family_id="seasonal_naive",
+            estimators={},
+            description="Closed-form seasonal naive forecast; scientific reproduction only.",
+            forecasting_family_names=("SeasonalNaive",),
+        ),
+        ModelFamily(
+            family_id="naive_last_value",
+            estimators={},
+            description="Closed-form last-value forecast; scientific reproduction only.",
+            forecasting_family_names=("NaiveLastValue",),
+        ),
+        ModelFamily(
+            family_id="exponential_smoothing",
+            estimators={},
+            description="Holt-Winters exponential smoothing; scientific reproduction only.",
+            forecasting_constructor="statsmodels.tsa.holtwinters.ExponentialSmoothing",
+            forecasting_family_names=("ExponentialSmoothing",),
+        ),
+        ModelFamily(
+            family_id="autoreg",
+            estimators={},
+            description="Autoregression with deterministic terms; scientific reproduction only.",
+            forecasting_constructor="statsmodels.tsa.ar_model.AutoReg",
+            forecasting_family_names=("AutoReg",),
+        ),
+        ModelFamily(
+            family_id="sarimax",
+            estimators={},
+            description="Seasonal ARIMA state-space model; scientific reproduction only.",
+            forecasting_constructor="statsmodels.tsa.statespace.sarimax.SARIMAX",
+            forecasting_family_names=("SARIMAX",),
         ),
     )
 }
@@ -234,6 +291,11 @@ def get_family(family_id: str) -> ModelFamily:
             f"model family {family_id!r} is not registered in pipeline.model_families",
         )
     return family
+
+
+def scientific_forecasting_family_ids() -> tuple[str, ...]:
+    """Families the scientific forecasting reproduction can resolve, in registry order."""
+    return tuple(family_id for family_id, family in MODEL_FAMILIES.items() if family.scientific_forecasting)
 
 
 def supported_family_ids(task_type: str) -> list[str]:

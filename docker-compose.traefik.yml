@@ -1,0 +1,35 @@
+# Production Traefik routing definition.
+#
+# IMPORTANT:
+# - Routers are intentionally disabled until production DNS resolves correctly.
+# - The service must also be attached to the external `coolify` network through
+#   docker-compose.coolify-network.yml.
+# - No host port is published by this override.
+#
+# Activation requires an explicit later change:
+#   traefik.enable: "false" -> "true"
+
+services:
+  web:
+    labels:
+      traefik.enable: "false"
+      traefik.docker.network: "coolify"
+
+      # HTTP -> HTTPS
+      traefik.http.middlewares.atlas-dataflow-redirect-https.redirectscheme.scheme: "https"
+      traefik.http.middlewares.atlas-dataflow-redirect-https.redirectscheme.permanent: "true"
+
+      traefik.http.routers.atlas-dataflow-http.entrypoints: "http"
+      traefik.http.routers.atlas-dataflow-http.rule: "Host(`atlas-dataflow.fabioaguiar.dev`)"
+      traefik.http.routers.atlas-dataflow-http.middlewares: "atlas-dataflow-redirect-https"
+      traefik.http.routers.atlas-dataflow-http.service: "atlas-dataflow-web"
+
+      # HTTPS
+      traefik.http.routers.atlas-dataflow-https.entrypoints: "https"
+      traefik.http.routers.atlas-dataflow-https.rule: "Host(`atlas-dataflow.fabioaguiar.dev`)"
+      traefik.http.routers.atlas-dataflow-https.tls: "true"
+      traefik.http.routers.atlas-dataflow-https.tls.certresolver: "letsencrypt"
+      traefik.http.routers.atlas-dataflow-https.service: "atlas-dataflow-web"
+
+      # Internal container port only.
+      traefik.http.services.atlas-dataflow-web.loadbalancer.server.port: "80"

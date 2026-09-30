@@ -21,6 +21,15 @@ Three schema versions are accepted and never rewritten into each other:
   all: classes, positive class, class orders, decision rule and threshold
   policy are structurally absent and ``problem.classification_concepts``
   records that explicitly.
+* ``scientific-study-contract.v4`` -- the v3 tabular contract (unchanged)
+  plus ``univariate_forecasting``. A forecasting contract is temporal by
+  construction: a translated period index, a development window, a sealed
+  final holdout, an expanding-window backtest, a frozen specification catalog,
+  failure/eligibility semantics, a pooled-metric selection rule and a
+  finalization policy. It has no features, split fractions, cross-validation,
+  class, positive class or threshold. The study's own problem vocabulary is
+  preserved in ``problem.study_problem_identity`` and mapped to the Atlas
+  capability through ``STUDY_PROBLEM_IDENTITIES``.
 
 This module never executes a protocol. It answers four questions:
 
@@ -46,13 +55,15 @@ from pipeline import model_families, preparation_rules
 SCHEMA_VERSION_V1 = "scientific-study-contract.v1"
 SCHEMA_VERSION_V2 = "scientific-study-contract.v2"
 SCHEMA_VERSION_V3 = "scientific-study-contract.v3"
-SCHEMA_VERSION = SCHEMA_VERSION_V3
+SCHEMA_VERSION_V4 = "scientific-study-contract.v4"
+SCHEMA_VERSION = SCHEMA_VERSION_V4
 CONTRACT_FILENAME = "scientific-study-contract.json"
 _SCHEMA_DIR = Path(__file__).resolve().parent
 SCHEMA_PATHS: Mapping[str, Path] = {
     SCHEMA_VERSION_V1: _SCHEMA_DIR / "scientific-study-contract.schema.json",
     SCHEMA_VERSION_V2: _SCHEMA_DIR / "scientific-study-contract.v2.schema.json",
     SCHEMA_VERSION_V3: _SCHEMA_DIR / "scientific-study-contract.v3.schema.json",
+    SCHEMA_VERSION_V4: _SCHEMA_DIR / "scientific-study-contract.v4.schema.json",
 }
 SCHEMA_PATH = SCHEMA_PATHS[SCHEMA_VERSION_V1]
 STUDIES_ROOT_RELATIVE = "pipeline/scientific-studies"
@@ -60,7 +71,30 @@ STUDIES_ROOT_RELATIVE = "pipeline/scientific-studies"
 BINARY = "binary_classification"
 MULTICLASS = "multiclass_classification"
 REGRESSION = "continuous_regression"
+FORECASTING = "univariate_forecasting"
 CLASSIFICATION_PROBLEM_TYPES = frozenset({BINARY, MULTICLASS})
+TABULAR_PROBLEM_TYPES = frozenset({BINARY, MULTICLASS, REGRESSION})
+
+# The one explicit mapping from a Dataset Study's own problem vocabulary to the
+# Atlas capability identity it dispatches through. A study keeps its terms in
+# ``problem.study_problem_identity``; Atlas never rewrites them.
+STUDY_PROBLEM_IDENTITIES: Mapping[tuple[str, str], str] = {
+    ("time_series_forecasting", "univariate"): FORECASTING,
+}
+
+
+def atlas_problem_type_for(study_identity: Mapping[str, Any]) -> str | None:
+    """The Atlas capability a study's ``(problem_type, forecasting_mode)`` maps to."""
+    return STUDY_PROBLEM_IDENTITIES.get((study_identity.get("problem_type"), study_identity.get("forecasting_mode")))
+
+
+def study_problem_identity(atlas_problem_type: str) -> dict[str, str]:
+    """The study vocabulary that maps to an Atlas capability (inverse of the table)."""
+    matches = [key for key, value in STUDY_PROBLEM_IDENTITIES.items() if value == atlas_problem_type]
+    if len(matches) != 1:
+        raise ScientificStudyContractError("ambiguous_study_problem_identity", atlas_problem_type)
+    problem_type, mode = matches[0]
+    return {"problem_type": problem_type, "forecasting_mode": mode}
 
 # Metric vocabulary per problem type. Binary metrics need a positive class
 # and (for threshold metrics) a threshold; multiclass and regression metrics
@@ -75,6 +109,7 @@ METRICS_BY_PROBLEM_TYPE: Mapping[str, frozenset[str]] = {
         "accuracy", "minimum_per_class_recall", "log_loss",
     }),
     REGRESSION: frozenset({"mae", "rmse", "r2", "medae"}),
+    FORECASTING: frozenset({"mae", "rmse", "seasonal_mase"}),
 }
 
 # Protocol vocabulary the reproduction engine implements. A contract element
@@ -99,9 +134,34 @@ REPRODUCTION_CAPABILITIES: Mapping[str, Any] = {
     "tie_breaker_fields": {"simplicity_rank", "model_id"},
 }
 
+# Temporal protocol vocabulary of the forecasting runner (pipeline.scientific_forecasting).
+FORECASTING_CAPABILITIES: Mapping[str, Any] = {
+    "problem_types": {FORECASTING},
+    "protocol_kinds": {"univariate_forecasting_expanding_window_model_selection.v1"},
+    "temporal_source_kinds": {"fractional_year_monthly"},
+    "frequencies": {"M"},
+    "partition_fingerprint_kinds": {"period_value_csv_sha256"},
+    "backtesting_modes": {"expanding_window"},
+    "refit_policies": {"fit_from_scratch_per_fold"},
+    "selection_kinds": {"forecasting_pooled_metric_practical_tie"},
+    "practical_tie_bounds": {"leader_plus_tolerance", "absolute_difference"},
+    "tie_break_modes": {"lexicographic_tuple"},
+    "tie_breaker_directions": {"min", "max", "lexical_min"},
+    "ranking_kinds": {"selected_first_then_leader_field_then_candidate_id"},
+    "finalization_kinds": {"refit_selected_on_development_single_holdout_forecast"},
+    "diagnostic_kinds": {"fold_metric_population_std", "horizon_window_metric"},
+    "candidate_roles": {"primary_baseline", "secondary_baseline", "candidate"},
+    "failure_actions": {"abort_backtest", "mark_ineligible"},
+    "fixed_record_fields": {"complexity_rank", "candidate_id"},
+}
+
 
 def problem_type_of(payload: Mapping[str, Any]) -> str:
     return payload["problem"]["problem_type"]
+
+
+def is_forecasting_contract(payload: Mapping[str, Any]) -> bool:
+    return payload.get("schema_version") == SCHEMA_VERSION_V4 and problem_type_of(payload) == FORECASTING
 
 
 def metric_vocabulary(problem_type: str) -> frozenset[str]:
@@ -217,8 +277,10 @@ def validate_contract_semantics(payload: Mapping[str, Any]) -> list[str]:
     v1 contracts predate these rules and are binary by construction; v2 and
     v3 contracts are checked here, class rules only for classification.
     """
-    if payload.get("schema_version") not in (SCHEMA_VERSION_V2, SCHEMA_VERSION_V3):
+    if payload.get("schema_version") not in (SCHEMA_VERSION_V2, SCHEMA_VERSION_V3, SCHEMA_VERSION_V4):
         return []
+    if is_forecasting_contract(payload):
+        return validate_forecasting_semantics(payload)
     errors: list[str] = []
     problem = payload["problem"]
     target = problem["target"]
@@ -285,13 +347,225 @@ def validate_contract_semantics(payload: Mapping[str, Any]) -> list[str]:
     return errors
 
 
+def _canonical_run_and_evidence_errors(payload: Mapping[str, Any]) -> list[str]:
+    errors = []
+    canonical = payload.get("canonical_run")
+    if canonical:
+        pinned = {f["path"]: f["sha256"] for f in payload["source_repository"]["pinned_files"]}
+        if pinned.get(canonical["path"]) != canonical["sha256"]:
+            errors.append("canonical_run must be pinned in source_repository.pinned_files with the same SHA-256")
+    for group in ("values", "decisions", "runtime_identity"):
+        quantities = [item["quantity"] for item in payload["expected_evidence"].get(group, [])]
+        duplicated = sorted({q for q in quantities if quantities.count(q) > 1})
+        if duplicated:
+            errors.append(f"expected_evidence.{group} repeats quantities {duplicated}")
+    return errors
+
+
+def _month_offset(start: str, months: int) -> str:
+    year, month = (int(part) for part in start.split("-"))
+    position = year * 12 + (month - 1) + months
+    return f"{position // 12:04d}-{position % 12 + 1:02d}"
+
+
+def _month_distance(start: str, end: str) -> int:
+    (y1, m1), (y2, m2) = ((int(p) for p in value.split("-")) for value in (start, end))
+    return (y2 * 12 + m2) - (y1 * 12 + m1)
+
+
+def validate_forecasting_semantics(payload: Mapping[str, Any]) -> list[str]:
+    """Temporal coherence rules of a v4 forecasting contract."""
+    errors: list[str] = []
+    problem = payload["problem"]
+    if atlas_problem_type_for(problem["study_problem_identity"]) != problem["problem_type"]:
+        errors.append("problem.study_problem_identity does not map to problem.problem_type through "
+                      "STUDY_PROBLEM_IDENTITIES")
+    if problem["forecasting_mode"] != problem["study_problem_identity"].get("forecasting_mode"):
+        errors.append("problem.forecasting_mode differs from the study's forecasting_mode")
+    source = payload["temporal_source"]
+    identity = payload["dataset_identity"]
+    if [source["time_column"], source["value_column"]] != list(identity["source_columns"]):
+        errors.append("temporal_source time/value columns must be exactly dataset_identity.source_columns")
+    if len(identity["source_columns"]) != identity["column_count"]:
+        errors.append("dataset_identity.column_count must equal the number of source_columns")
+    if source["observations"] != identity["row_count"]:
+        errors.append("temporal_source.observations must equal dataset_identity.row_count")
+    if source["target_column"] != problem["target"]["column"]:
+        errors.append("temporal_source.target_column must be problem.target.column")
+    forecast = payload["forecast"]
+    if forecast["frequency"] != source["frequency"]:
+        errors.append("forecast.frequency must equal temporal_source.frequency")
+    protocol = payload["temporal_protocol"]
+    development, holdout = protocol["development"], protocol["final_holdout"]
+    if source["frequency"] == "M":
+        if development["start"] != source["start"] or holdout["end"] != source["end"]:
+            errors.append("development must start and the final holdout must end at the source boundaries")
+        if _month_offset(development["end"], 1) != holdout["start"]:
+            errors.append("the final holdout must start directly after the development window")
+        for name, window in (("development", development), ("final_holdout", holdout)):
+            if _month_distance(window["start"], window["end"]) + 1 != window["observations"]:
+                errors.append(f"temporal_protocol.{name} observations do not match its start/end")
+    if development["observations"] + holdout["observations"] != source["observations"]:
+        errors.append("development + final_holdout observations must cover the source")
+    backtesting = protocol["backtesting"]
+    if backtesting["forecast_horizon"] != forecast["horizon"]:
+        errors.append("backtesting.forecast_horizon must equal forecast.horizon")
+    if backtesting["validation_forecast_count"] != backtesting["fold_count"] * backtesting["forecast_horizon"]:
+        errors.append("validation_forecast_count must equal fold_count * forecast_horizon")
+    overlapping = backtesting["origin_step_observations"] < backtesting["forecast_horizon"]
+    if backtesting["validation_targets_overlap"] is not overlapping:
+        errors.append("backtesting.validation_targets_overlap contradicts origin_step_observations vs forecast_horizon")
+    last_end = (backtesting["initial_training_observations"]
+                + (backtesting["fold_count"] - 1) * backtesting["origin_step_observations"]
+                + backtesting["forecast_horizon"])
+    if last_end > development["observations"]:
+        errors.append("the last backtesting fold reaches beyond the development window")
+    schedule = backtesting["fold_schedule"]
+    if len(schedule) != backtesting["fold_count"]:
+        errors.append("backtesting.fold_schedule must declare fold_count folds")
+    elif source["frequency"] == "M":
+        for index, fold in enumerate(schedule):
+            size = backtesting["initial_training_observations"] + index * backtesting["origin_step_observations"]
+            origin = _month_offset(development["start"], size - 1)
+            expected = {"fold": index + 1, "train_start": development["start"], "training_observations": size,
+                        "forecast_origin": origin, "validation_start": _month_offset(origin, 1),
+                        "validation_end": _month_offset(origin, backtesting["forecast_horizon"]),
+                        "validation_observations": backtesting["forecast_horizon"]}
+            if dict(fold) != expected:
+                errors.append(f"backtesting.fold_schedule[{index}] does not follow the declared parameters")
+    finalization = payload["finalization"]
+    if finalization["forecast_periods"] != holdout["observations"]:
+        errors.append("finalization.forecast_periods must equal the final holdout observations")
+    if finalization["forecast_origin"] != development["end"]:
+        errors.append("finalization.forecast_origin must be the last development period")
+    ids = [c["candidate_id"] for c in payload["candidates"]]
+    if len(set(ids)) != len(ids):
+        errors.append("candidate_id values must be unique")
+    ranks = [c["complexity_rank"] for c in payload["candidates"]]
+    if len(set(ranks)) != len(ranks):
+        errors.append("complexity_rank values must be unique")
+    roles = [c["role"] for c in payload["candidates"]]
+    if roles.count("primary_baseline") != 1:
+        errors.append("exactly one candidate must be the primary_baseline")
+    if finalization["primary_baseline_reference"]["role"] != "primary_baseline":
+        errors.append("finalization.primary_baseline_reference must reference the primary_baseline role")
+    for candidate in payload["candidates"]:
+        if candidate["seasonal_period"] != forecast["seasonal_period"]:
+            errors.append(f"candidate {candidate['candidate_id']} seasonal_period differs from forecast.seasonal_period")
+    metrics = payload["metrics"]
+    declared = [m["metric_id"] for m in metrics["evaluated"]]
+    if metrics["primary"] not in declared:
+        errors.append("metrics.primary must be an evaluated metric")
+    for metric in metrics["evaluated"]:
+        period = (metric.get("parameters") or {}).get("seasonal_period")
+        if period is not None and period != forecast["seasonal_period"]:
+            errors.append(f"metric {metric['metric_id']} seasonal_period differs from forecast.seasonal_period")
+    diagnostics = {d["field"] for d in metrics["diagnostics"]}
+    record_fields = {f"pooled_{m}" for m in declared} | diagnostics | FORECASTING_CAPABILITIES["fixed_record_fields"]
+    selection = payload["selection"]
+    for label, field in ([("leader", selection["leader"]["field"]), ("practical_tie", selection["practical_tie"]["field"])]
+                         + [("tie_breakers", b["field"]) for b in selection["tie_breakers"]]
+                         + [("eligibility", f) for f in selection["eligibility"]["required_finite_fields"]]):
+        if field not in record_fields:
+            errors.append(f"selection.{label} field {field!r} is not a pooled metric, diagnostic or fixed field")
+    if selection["leader"]["field"] != f"pooled_{metrics['primary']}":
+        errors.append("selection.leader.field must be the pooled primary metric")
+    return errors + _canonical_run_and_evidence_errors(payload)
+
+
+def assess_forecasting_protocol_support(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Every element of a forecasting contract the forecasting runner cannot execute."""
+    from pipeline import forecasting_models, metric_identity
+
+    caps = FORECASTING_CAPABILITIES
+    gaps: list[dict[str, Any]] = []
+
+    def check(element: str, value: Any, allowed: Any) -> None:
+        if value not in allowed:
+            gaps.append({"element": element, "value": value,
+                         "reason": f"not implemented by the Atlas forecasting runner (supported: {sorted(allowed)})"})
+
+    check("problem.problem_type", problem_type_of(payload), caps["problem_types"])
+    check("study_identity.protocol_kind", payload["study_identity"]["protocol_kind"], caps["protocol_kinds"])
+    check("temporal_source.kind", payload["temporal_source"]["kind"], caps["temporal_source_kinds"])
+    check("temporal_source.frequency", payload["temporal_source"]["frequency"], caps["frequencies"])
+    protocol = payload["temporal_protocol"]
+    check("temporal_protocol.partition_fingerprint.kind", protocol["partition_fingerprint"]["kind"],
+          caps["partition_fingerprint_kinds"])
+    check("temporal_protocol.backtesting.mode", protocol["backtesting"]["mode"], caps["backtesting_modes"])
+    check("temporal_protocol.backtesting.refit_policy", protocol["backtesting"]["refit_policy"], caps["refit_policies"])
+    if protocol["backtesting"]["shuffle"] is not False:
+        gaps.append({"element": "temporal_protocol.backtesting.shuffle", "value": True,
+                     "reason": "a temporal backtest never shuffles"})
+    selection = payload["selection"]
+    check("selection.kind", selection["kind"], caps["selection_kinds"])
+    check("selection.practical_tie.bound", selection["practical_tie"]["bound"], caps["practical_tie_bounds"])
+    check("selection.tie_break_mode", selection["tie_break_mode"], caps["tie_break_modes"])
+    check("selection.ranking.kind", selection["ranking"]["kind"], caps["ranking_kinds"])
+    for breaker in selection["tie_breakers"]:
+        check("selection.tie_breakers.direction", breaker["direction"], caps["tie_breaker_directions"])
+    check("finalization.kind", payload["finalization"]["kind"], caps["finalization_kinds"])
+    for diagnostic in payload["metrics"]["diagnostics"]:
+        check("metrics.diagnostics.kind", diagnostic["kind"], caps["diagnostic_kinds"])
+    policy = payload["failure_policy"]
+    for element in ("programming_error_action", "baseline_failure_action"):
+        if policy[element] != "abort_backtest":
+            gaps.append({"element": f"failure_policy.{element}", "value": policy[element],
+                         "reason": "only abort_backtest is implemented"})
+    if policy["specification_failure_action"] != "mark_ineligible":
+        gaps.append({"element": "failure_policy.specification_failure_action",
+                     "value": policy["specification_failure_action"], "reason": "only mark_ineligible is implemented"})
+    import builtins
+
+    for name in policy["programming_error_types"]:
+        candidate = getattr(builtins, name, None)
+        if not (isinstance(candidate, type) and issubclass(candidate, BaseException)):
+            gaps.append({"element": "failure_policy.programming_error_types", "value": name,
+                         "reason": "not a built-in exception type"})
+    vocabulary = metric_vocabulary(FORECASTING)
+    for metric in payload["metrics"]["evaluated"]:
+        if metric["metric_id"] not in vocabulary:
+            gaps.append({"element": "metrics.evaluated", "value": metric["metric_id"],
+                         "reason": f"metric is not implemented for {FORECASTING!r}"})
+            continue
+        try:
+            metric_identity.resolve_parameterized_scientific_metric(
+                metric["metric_id"], metric.get("parameters"), problem_type=FORECASTING)
+        except metric_identity.MetricIdentityError as exc:
+            gaps.append({"element": "metrics.evaluated", "value": metric["metric_id"], "reason": str(exc)})
+    for candidate in payload["candidates"]:
+        prefix = f"candidates[{candidate['candidate_id']}]"
+        check(f"{prefix}.role", candidate["role"], caps["candidate_roles"])
+        family_id = candidate["family"]
+        family = model_families.MODEL_FAMILIES.get(family_id)
+        if family is None or not family.scientific_forecasting:
+            gaps.append({"element": f"{prefix}.family", "value": family_id,
+                         "reason": "not a scientific forecasting family in pipeline.model_families"})
+            continue
+        if candidate["study_family"] not in family.forecasting_family_names:
+            gaps.append({"element": f"{prefix}.study_family", "value": candidate["study_family"],
+                         "reason": f"not a recognized name of family {family_id!r}"})
+        if family.forecasting_constructor is not None and candidate["constructor"] != family.forecasting_constructor:
+            gaps.append({"element": f"{prefix}.constructor", "value": candidate["constructor"],
+                         "reason": f"family {family_id!r} executes {family.forecasting_constructor!r}"})
+        try:
+            forecasting_models.get_adapter(family_id).validate_parameters(candidate["fixed_params"],
+                                                                         candidate["seasonal_period"])
+        except forecasting_models.ForecastingAdapterError as exc:
+            gaps.append({"element": f"{prefix}.fixed_params", "value": exc.code, "reason": str(exc)})
+    return gaps
+
+
 def assess_protocol_support(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
     """Return every contract element the Atlas reproduction engine cannot execute.
 
     Dispatch is by ``problem.problem_type`` (never by dataset): the metric
     vocabulary, the admissible threshold policy, and the decision rule are
-    problem-type specific.
+    problem-type specific; a forecasting contract goes to the temporal runner's
+    own capability assessment.
     """
+    if is_forecasting_contract(payload):
+        return assess_forecasting_protocol_support(payload)
     caps = REPRODUCTION_CAPABILITIES
     gaps: list[dict[str, Any]] = []
     problem_type = problem_type_of(payload)
@@ -509,13 +783,13 @@ def verify_against_study_checkout(payload: Mapping[str, Any], checkout_root: Pat
     # Protocol gates (membership digests, final-fit row count) are reference
     # evidence too, so their sources are re-checked like expected values.
     gate_items = []
-    gate = payload["split"].get("membership_gate")
+    gate = (payload.get("split") or {}).get("membership_gate")
     if gate:
         for partition, digest in gate["expected_membership_sha256"].items():
             pointer = gate["source"]["locator"].rstrip("/") + "/" + partition
             gate_items.append(("split.membership_gate." + partition, {"expected": digest, "source": {
                 **gate["source"], "locator": pointer}}))
-    row_gate = payload["final_evaluation"].get("fit_row_count_gate")
+    row_gate = (payload.get("final_evaluation") or {}).get("fit_row_count_gate")
     if row_gate:
         gate_items.append(("final_evaluation.fit_row_count_gate", {"expected": row_gate["expected_rows"],
                                                                    "source": row_gate["source"]}))
@@ -627,11 +901,11 @@ def author_contract_from_draft(draft: Mapping[str, Any], checkout_root: Path) ->
             item.setdefault("reported_decimal_places", None)
     for entry in contract.get("protocol_parameter_sources", []):
         entry["source"].setdefault("rendered_text", json.dumps(pointed(entry["source"]), ensure_ascii=False, sort_keys=True))
-    gate = contract["split"].get("membership_gate")
+    gate = (contract.get("split") or {}).get("membership_gate")
     if gate is not None and "expected_membership_sha256" not in gate:
         gate["expected_membership_sha256"] = pointed(gate["source"])
         gate["source"].setdefault("rendered_text", json.dumps(gate["expected_membership_sha256"], sort_keys=True))
-    row_gate = contract["final_evaluation"].get("fit_row_count_gate")
+    row_gate = (contract.get("final_evaluation") or {}).get("fit_row_count_gate")
     if row_gate is not None and "expected_rows" not in row_gate:
         row_gate["expected_rows"] = pointed(row_gate["source"])
         row_gate["source"].setdefault("rendered_text", json.dumps(row_gate["expected_rows"]))

@@ -279,9 +279,11 @@ def test_lineage_view_reads_native_evidence_without_writing(report):
     view = sr.describe_lineage_separation(report, repo_root=REPO_ROOT)
     assert view["active_release"] and view["rows"]
     assert all(row["directly_comparable"] is False for row in view["rows"])
-    holdout_mae = next(r for r in view["rows"] if r["scope"] == "final_holdout" and r["canonical_metric"] == "mae")
+    assert {(r["scope"], r["canonical_metric"]) for r in view["rows"]} == {
+        (scope, metric) for scope in ("expanding_window_backtest", "final_holdout")
+        for metric in ("mae", "rmse", "seasonal_mase")}
     # Same geometry and model form: the lineages nearly coincide, yet stay separate.
-    assert holdout_mae["absolute_difference"] < 1e-9
+    assert all(row["absolute_difference"] < 1e-9 for row in view["rows"])
     assert any(d["fact"] == "model_selection" for d in view["protocol_differences"])
 
 

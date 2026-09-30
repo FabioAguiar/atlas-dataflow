@@ -886,7 +886,7 @@ def test_lineage_separation_and_answers(run, tmp_path):
     metrics = root / "releases/release-x/metrics/metrics.json"
     metrics.parent.mkdir(parents=True)
     metrics.write_text(json.dumps({"final_holdout_evaluation": {"metrics": [{"name": "mae", "value": 1.0}]},
-                                   "backtesting_evaluation": {"metrics": [{"name": "seasonal_mase", "value": 0.5}]}}),
+                                   "backtesting_evaluation": {"pooled_metrics": [{"name": "seasonal_mase", "value": 0.5}]}}),
                        encoding="utf-8")
     before = sorted(p.relative_to(root) for p in root.rglob("*"))
     view = sr.describe_lineage_separation(run["report"], repo_root=root)

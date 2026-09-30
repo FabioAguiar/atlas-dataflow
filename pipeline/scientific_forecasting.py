@@ -1033,7 +1033,7 @@ def describe_forecasting_lineage_separation(report: Mapping[str, Any], *, repo_r
     rows = []
     if release_metrics is not None:
         native_backtest = {m["name"]: m["value"] for m in
-                           (release_metrics.get("backtesting_evaluation") or {}).get("metrics", [])}
+                           (release_metrics.get("backtesting_evaluation") or {}).get("pooled_metrics", [])}
         native_holdout = {m["name"]: m["value"] for m in
                           (release_metrics.get("final_holdout_evaluation") or {}).get("metrics", [])}
         for scope, native_values, scientific_values in (

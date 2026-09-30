@@ -12,7 +12,7 @@
 services:
   web:
     labels:
-      traefik.enable: "false"
+      traefik.enable: "true"
       traefik.docker.network: "coolify"
 
       # HTTP -> HTTPS

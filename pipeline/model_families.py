@@ -24,6 +24,18 @@ the estimator's real ``get_params()`` surface. It never chooses defaults for a
 caller: native training keeps its own governed constructor arguments, and a
 scientific reproduction passes exactly the parameters its study contract
 declares.
+
+A family with neither ``native_training`` nor ``governed_result_problem_types``
+(``ridge``) is resolvable only by the scientific reproduction engine; it never
+reaches native training, an inference bundle, or a release.
+
+``dummy_prior`` is the historical identifier of the non-learning baseline
+family, not of a strategy: it resolves ``DummyClassifier`` or
+``DummyRegressor`` by task type, and the strategy (``prior`` for the
+classification studies, ``median`` for a regression study) is always the
+contract's declared ``fixed_params["strategy"]``. Reusing the identifier keeps
+one family per estimator class (``family_for_estimator_class``) and every
+historical contract valid.
 """
 
 from __future__ import annotations
@@ -157,6 +169,12 @@ MODEL_FAMILIES: Mapping[str, ModelFamily] = {
             # Reaches a release only through the external fitted-model
             # (multiclass v2) lineage; Atlas-native training never fits it.
             governed_result_problem_types=frozenset({MULTICLASS_CLASSIFICATION}),
+        ),
+        ModelFamily(
+            family_id="ridge",
+            estimators={REGRESSION: "sklearn.linear_model.Ridge"},
+            scale_sensitive=True,
+            description="L2-regularized linear regression; scientific reproduction only.",
         ),
         ModelFamily(
             family_id="deterministic_seasonal_trend_ols",

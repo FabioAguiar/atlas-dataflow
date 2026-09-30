@@ -321,7 +321,9 @@
         "training": [
           "mae"
         ],
-        "scientific": [],
+        "scientific": [
+          "mae"
+        ],
         "public": "mae",
         "public_input": []
       }
@@ -340,7 +342,9 @@
         "training": [
           "rmse"
         ],
-        "scientific": [],
+        "scientific": [
+          "rmse"
+        ],
         "public": "rmse",
         "public_input": []
       }
@@ -358,8 +362,28 @@
         "training": [
           "r2"
         ],
-        "scientific": [],
+        "scientific": [
+          "r2"
+        ],
         "public": "r2",
+        "public_input": []
+      }
+    },
+    {
+      "metric_id": "medae",
+      "direction": "lower_is_better",
+      "problem_types": [
+        "continuous_regression"
+      ],
+      "sklearn_scorer": "neg_median_absolute_error",
+      "positive_class_sensitive": false,
+      "display_label": "MedAE",
+      "aliases": {
+        "training": [],
+        "scientific": [
+          "medae"
+        ],
+        "public": null,
         "public_input": []
       }
     },

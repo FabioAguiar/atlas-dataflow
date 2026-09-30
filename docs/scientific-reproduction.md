@@ -10,8 +10,13 @@ Há dois casos reais:
 |---|---|---|---|---|
 | `dataset-study-telco-customer-churn` | `43ced1fbb76f` | classificação binária | `scientific-study-contract.v1` | `reproduced_within_tolerance` |
 | `dataset-study-dry-bean` | `e3e697c1b60f` | classificação multiclasse (7 classes) + seleção em duas etapas | `scientific-study-contract.v2` | `reproduced_within_tolerance` ([detalhes](scientific-reproduction-dry-bean.md)) |
+| `dataset-study-concrete-compressives-strength` | `b223370e0f44` | regressão contínua (MPa) | `scientific-study-contract.v3` | `reproduced_exact` (ver §7b) |
 
-A infraestrutura é genérica. O código despacha pelo `problem.problem_type` (adapters `binary_classification` e `multiclass_classification`) e não tem nenhum caminho `if telco` ou `if dry-bean`; um teste garante que os módulos do motor não citam datasets. O que é específico de cada estudo vive apenas no contrato versionado.
+A infraestrutura é genérica. O código despacha pelo `problem.problem_type` (adapters `binary_classification`, `multiclass_classification` e `continuous_regression`) e não tem nenhum caminho `if telco`, `if dry-bean` ou `if concrete`; testes garantem que os módulos do motor não citam datasets. O que é específico de cada estudo vive apenas no contrato versionado, na evidência pinada, no notebook de integração e nos artefatos de reprodução.
+
+**Dataset novo ≠ branch de produção novo.** Integrar um estudo novo de um tipo de problema e protocolo já suportados é escrever um contrato, não código. Um *tipo de problema ou protocolo* novo (por exemplo, regressão contínua com split não estratificado e `KFold`) pode exigir evolução **genérica** do motor: um adapter por `problem_type`, um `split.kind` ou `cross_validation.kind` novo, uma família no registry, uma identidade de métrica. Essa evolução é reutilizável por qualquer estudo futuro compatível e nunca ramifica pelo slug do dataset.
+
+Tipos de problema suportados pela reprodução científica: **classificação binária**, **classificação multiclasse** e **regressão contínua**. Forecasting (séries temporais) **não** é suportado pela reprodução científica e continua aparecendo como `atlas_capability_missing`.
 
 ## 1. Linhagens de evidência
 
@@ -46,6 +51,8 @@ Regras aplicadas pelo código e pelos testes:
 | `pipeline/scientific-reproduction-report.v2.schema.json` | schema | `scientific-reproduction-report.v2` (os relatórios v1 continuam válidos no schema v1) |
 | `pipeline/scientific-studies/dry-bean/study-e3e697c1b60f/` | contrato | contrato Dry Bean + rascunho de autoria (`authoring/contract-draft.json`) |
 | `pipeline/scientific-reproduction-runs/dry-bean/repro-20260929T163341Z/` | evidência | primeira reprodução real do Dry Bean |
+| `pipeline/scientific-study-contract.v3.schema.json` | schema | `scientific-study-contract.v3`: v2 (binário + multiclasse, inalterados) + `continuous_regression` |
+| `pipeline/scientific-reproduction-report.v3.schema.json` | schema | `scientific-reproduction-report.v3`: v2 + regressão, com `interpretive_diagnostics` (os relatórios v1/v2 continuam válidos nos seus schemas) |
 
 `pipeline/training.py` passou a resolver as classes de estimador pelo registry. Os argumentos de construção nativos não mudaram (`LogisticRegression(max_iter=1000, …)` etc.), e o conjunto nativo `SUPPORTED_MODEL_FAMILIES` também não.
 
@@ -84,6 +91,23 @@ Seções: `study_identity`, `source_repository` (URL, commit, arquivos pinados c
 | vocabulário de métricas | AP, ROC-AUC, Brier, F1/F2, precisão/recall… | macro-F1, balanced accuracy, macro recall, weighted F1, accuracy, recall mínimo por classe, log loss multiclasse |
 
 Outras novidades: membership `technical_row_occurrence` (hash da linha + ordinal de ocorrência, para fontes sem identificador), `partition_fingerprint` (SHA-256 dos bytes CSV), **gates de protocolo** (membership e número de linhas do fit final: a execução para antes de qualquer fit se a partição não coincidir), `family_shortlist`, `feature_policies` (projeções com parâmetros congelados da família), `interpretive_evidence` (pares de confusão, sensibilidade a perfis repetidos), `canonical_run` pinado, grupo `runtime_identity` (bytes da matriz de probabilidades, que nunca tornam uma reprodução divergente), `protocol_integrity` (isolamento procedimental × exposição histórica) e `protocol_parameter_sources` (parâmetros declarados reconferidos contra o artefato do estudo). `validate_contract_semantics` checa coerência entre campos: ordens de classes como permutações, políticas que excluem só features conhecidas, canonical run pinado com o mesmo hash etc.
+
+### Contrato v3 (regressão contínua)
+
+`scientific-study-contract.v3` é um superconjunto do v2: os ramos binário e multiclasse são os mesmos (um contrato v2 reetiquetado como v3 valida sem mudanças) e o ramo `continuous_regression` acrescenta:
+
+| Conceito | `continuous_regression` |
+|---|---|
+| `problem.target` | `column`, `semantics`, `unit`, `value_representation = "float"`, `value_validation = "numeric_complete_finite"`; `classes`, `positive_class`, `encoding`, `label_representation` e as ordens de classes são **proibidos** |
+| `problem.classification_concepts` | `{"applicable": false, "reason": …}` obrigatório: registro explícito de que classe, classe positiva, ordem de classes e threshold não se aplicam |
+| `problem.decision_rule`, `threshold_policy`, `metrics.default_threshold` | **ausentes** (o schema rejeita) — nunca preenchidos com valores inventados |
+| `split.kind` | `two_stage_random_holdout` (`train_test_split` em dois estágios, `stratify=None`, `shuffle`; seeds por estágio; `order_by_identifier = false` preserva as posições da fonte); `stratify_by` deve ser `null` |
+| `cross_validation.kind` | `k_fold` (`KFold`); `stratified_k_fold` num alvo contínuo é lacuna de capacidade |
+| métricas | `mae`, `rmse`, `r2`, `medae` (do registry de identidades; scorers `neg_*` do scikit-learn são só detalhe da API — o relatório usa sempre a orientação natural: MAE/RMSE/MedAE menor é melhor, R² maior é melhor) |
+| `selection.practical_tie.bound` | `leader_plus_tolerance` reproduz `valor <= melhor + tolerância` exatamente como o estudo o calcula em float; o padrão histórico continua `absolute_difference` (`abs(líder − outro) <= tolerância`). As duas formas podem divergir na fronteira (`abs(2.1 − 2.0) > 0.1`, mas `2.1 <= 2.0 + 0.1`), por isso o contrato declara qual reproduz |
+| `interpretive_evidence.group_overlap_diagnostic` | diagnóstico **descritivo**: divide o erro de uma predição já feita por "grupo visto / não visto" nas partições de ajuste (colunas de grupo declaradas). Roda depois da avaliação única de teste e nunca alimenta split, busca, seleção ou ajuste |
+
+O adapter `ContinuousRegressionTask` valida o alvo (numérico, completo, finito, mantido em float64), calcula MAE, RMSE, R², MedAE e diagnósticos agregados de resíduo (média, desvio padrão com `ddof=1`, erro absoluto máximo, percentis 50/90/95 do erro absoluto) sem persistir predições linha a linha, reajusta o pipeline congelado em train + validation e prediz o teste exatamente uma vez. Relatórios v3 registram `positive_class`, `class_order` e threshold como não aplicáveis em todo `metric_set`. A família `ridge` (`sklearn.linear_model.Ridge`) existe só para a reprodução científica (não é treinável nativamente nem aceita em contratos de resultado governados). `dummy_prior` identifica a família de baseline não-aprendiz; a estratégia (`prior`, `median`) é sempre a declarada em `fixed_params`.
 
 **Autoria sem transcrição.** `python -m pipeline.scientific_study_contract author --draft … --study-checkout … --output …` preenche valores esperados, gates e hashes a partir do checkout pinado, por JSON pointer. `verify` reconfere o contrato contra o checkout.
 
@@ -174,6 +198,24 @@ Ambiente de reprodução: CPython 3.13.12, linux-x86_64, scikit-learn 1.9.1, pan
 
 Teste final (HGB, fit em 5.986 linhas, uma avaliação): AP 0,641283 · ROC-AUC 0,840151 · Brier 0,139422 · Log loss 0,420650. A 0,50: TP 140, FP 84, TN 692, FN 141. No threshold da política: TP 226, FP 215, TN 561, FN 55. Tudo igual ao estudo.
 
+## 7b. Resultado real da reprodução Concrete
+
+O estudo não versionava evidência estruturada: os artefatos ficam no `.gitignore`, as métricas de teste só aparecem com 4 casas no README e os digests de membership não existiam. O estudo ganhou `evidence/canonical-run.json` (commit `b223370e0f44`), uma projeção determinística dos artefatos persistidos de uma reexecução do zero dos Notebooks 01–04 no ambiente travado (CPython 3.12.13 + `pylock.toml`) em linux-x86_64. A execução canônica original foi em linux-aarch64. A reexecução reproduziu byte a byte o modelo (`6e6a5a97…`) e todas as decisões. O bloco `reference_verification` do manifesto lista as únicas diferenças em relação aos notebooks executados versionados: os últimos dígitos de MAE/MedAE de validação e do desvio padrão do CV-MAE do Ridge (≤ 1,4e-14).
+
+| Pergunta | Resposta |
+|---|---|
+| Contrato | `pipeline/scientific-studies/concrete-compressive-strength/study-b223370e0f44/` (`verify`: `synchronized`, 15/15 arquivos, 164/164 localizadores, 34/34 parâmetros) |
+| Dataset | UCI 165, SHA-256 `2f6e6320…e1be`, 48.501 bytes, 1.030 × 9, verificado (os mesmos bytes já registrados pela linhagem nativa, mas lidos apenas do `atlas_local_path` científico) |
+| Split | `two_stage_random_holdout`, seeds 42/43, `stratify=None`: 721/154/155; gate de membership aprovado |
+| Busca | KFold(5, shuffle, 42) só em train; Ridge 4, DT 12, RF 12, HGB 24 = 52 configurações |
+| Seleção | elegíveis HGB, RF, DT, Ridge; sem empate prático; HGB com `l2_regularization=1.0, learning_rate=0.1, max_leaf_nodes=15, min_samples_leaf=10` |
+| Teste final | fit em 875 linhas, uma avaliação em 155: MAE 2,5822 · RMSE 4,2104 · R² 0,9387 · MedAE 1,6363 |
+| Mistura | validação 111 vistas / 43 não vistas; teste 116 / 39; descritivo, nunca usado na seleção |
+| Comparação | 160 quantidades: 160 exatas (120 métricas numéricas com delta 0), 0 dentro só da tolerância, 0 divergentes, 0 ausentes |
+| Ambiente | `exact` em interpretador, pacotes centrais e plataforma da evidência pinada; o lock completo não foi instalado no Atlas e `byte_identical_runtime` fica `null` |
+
+As métricas nativas do Concrete (`release-20260820-001`, MAE de teste 2,0453) vêm de outro split e de outra seleção. Não são diretamente comparáveis, e o treino nativo não foi alterado.
+
 ## 8. Reprodução científica × treino nativo Atlas
 
 | Fato | Atlas nativo (`release-20260830-001`) | Reprodução científica |
@@ -205,7 +247,7 @@ Os hiperparâmetros do HGB nativo coincidem com os selecionados pelo estudo, mas
 **Capacidade ausente (vira `atlas_capability_missing`, sem execução parcial):**
 
 - Dry Bean: **implementado nesta evolução** (métricas multiclasse, membership por ocorrência de linha, shortlist e etapa de políticas de features). Ver [scientific-reproduction-dry-bean.md](scientific-reproduction-dry-bean.md).
-- Concrete: família `ridge`; `KFold` não estratificado; split não estratificado; métricas de regressão (MAE, RMSE, MedAE, R²).
+- Concrete: **implementado genericamente** como capacidade `continuous_regression` (contrato v3, família `ridge`, `k_fold`, `two_stage_random_holdout`, identidade `medae`, diagnóstico de sobreposição de grupos).
 - Nottingham: famílias statsmodels e baselines ingênuos; backtesting expanding-window; holdout temporal.
 
 **Extensão de contrato provavelmente necessária:** `split.kind` não estratificado e temporal; `membership_kind` sem identificador; estágio de seleção de políticas de features (Dry Bean); `cross_validation.kind = k_fold` e `expanding_window_backtest`; `search.kind = none` com especificação fixa por candidato (Nottingham).
@@ -214,7 +256,7 @@ Os hiperparâmetros do HGB nativo coincidem com os selecionados pelo estudo, mas
 
 ## 10. Limitações restantes
 
-- O protocolo tabular suportado cobre classificação binária e multiclasse (`tabular_holdout_model_selection.v1`/`.v2`). Regressão e forecasting continuam fora de escopo e aparecem como `atlas_capability_missing`.
+- O protocolo tabular suportado cobre classificação binária, multiclasse e regressão contínua (`tabular_holdout_model_selection.v1`/`.v2`). Forecasting continua fora de escopo e aparece como `atlas_capability_missing`.
 - A regra de desempate Dry Bean do estudo é um mínimo lexicográfico, e o motor aplica os critérios em sequência. Um teste com 300 casos aleatórios confirma a equivalência. Com valores iguais a menos de 1e-12, a filtragem sequencial trata como empate o que a comparação exata do estudo distinguiria.
 - A referência do Telco vem de outputs de notebook (6 casas) e do README, porque o estudo não versiona seus artefatos estruturados.
 - A reprodução não é `exact`: não há runner linux-aarch64 com CPython 3.13.13 neste ambiente.
@@ -225,6 +267,6 @@ Os hiperparâmetros do HGB nativo coincidem com os selecionados pelo estudo, mas
 
 1. Nos Dataset Studies, versionar um `canonical-run.json` também no Telco (como Dry Bean e Nottingham já fazem), incluindo membership SHA e melhores hiperparâmetros por família, para que a referência deixe de depender de texto renderizado.
 2. Executar a reprodução em linux-aarch64 com CPython 3.13.13 para buscar `reproduced_exact`.
-3. ~~Adicionar `multiclass_classification` (Dry Bean)~~: feito. Próximo candidato: regressão (Concrete), com `k_fold` não estratificado e família `ridge`.
+3. ~~Adicionar `multiclass_classification` (Dry Bean)~~ e ~~`continuous_regression` (Concrete)~~: feitos. Próximo candidato: forecasting (Nottingham), que exige um executor temporal separado do tabular.
 4. Pinar o SHA-256 da fonte bruta também na linhagem nativa e dar proveniência de linhagem às métricas nativas em uma versão nova de schema, sem reescrever artefatos antigos.
 5. Orquestrar as etapas do motor (já funções determinísticas com entradas e saídas JSON) quando o Airflow for introduzido.

@@ -1,0 +1,16 @@
+# Production ingress-network attachment only.
+#
+# Joining the external Coolify network does not publish this service.
+# Traefik uses exposedByDefault=false, and this override intentionally
+# contains no Traefik labels, routers, hostnames, TLS configuration, or
+# published host ports.
+services:
+  web:
+    networks:
+      default: {}
+      coolify: {}
+
+networks:
+  coolify:
+    external: true
+    name: coolify

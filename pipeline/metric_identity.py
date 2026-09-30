@@ -15,7 +15,7 @@ public API projection.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 from typing import Iterable, Mapping
@@ -53,6 +53,7 @@ class MetricIdentity:
     scientific_aliases: tuple[str, ...]
     public_key: str | None
     public_input_aliases: tuple[str, ...]
+    parameters: Mapping[str, Mapping[str, object]] = field(default_factory=dict)
 
     @property
     def lower_is_better(self) -> bool:
@@ -89,6 +90,7 @@ def metric_identities() -> Mapping[str, MetricIdentity]:
             scientific_aliases=tuple(aliases["scientific"]),
             public_key=aliases["public"],
             public_input_aliases=tuple(aliases["public_input"]),
+            parameters={name: dict(spec) for name, spec in (entry.get("parameters") or {}).items()},
         )
         if identity.direction not in (HIGHER_IS_BETTER, LOWER_IS_BETTER):
             raise MetricIdentityError(
@@ -131,6 +133,39 @@ def resolve_scientific_metric(name: str) -> MetricIdentity:
         if name in identity.scientific_aliases:
             return identity
     raise MetricIdentityError("unknown_metric", f"unknown scientific metric {name!r}")
+
+
+def resolve_parameterized_scientific_metric(
+    name: str, parameters: Mapping[str, object] | None = None, *, problem_type: str | None = None,
+) -> MetricIdentity:
+    """Resolve a scientific metric together with the arguments it is declared with.
+
+    Fails closed when the metric does not apply to ``problem_type``, when a
+    required registry parameter is missing, when an undeclared parameter is
+    supplied, or when a ``positive_integer`` parameter is not one.
+    """
+    identity = resolve_scientific_metric(name)
+    if problem_type is not None and not identity.applies_to(problem_type):
+        raise MetricIdentityError(
+            "metric_not_applicable", f"metric {name!r} does not apply to problem type {problem_type!r}"
+        )
+    supplied = dict(parameters or {})
+    unknown = sorted(set(supplied) - set(identity.parameters))
+    if unknown:
+        raise MetricIdentityError("undeclared_metric_parameter", f"metric {name!r} does not declare {unknown}")
+    for parameter, spec in identity.parameters.items():
+        if parameter not in supplied:
+            if spec.get("required"):
+                raise MetricIdentityError(
+                    "missing_metric_parameter", f"metric {name!r} requires parameter {parameter!r}"
+                )
+            continue
+        value = supplied[parameter]
+        if spec.get("kind") == "positive_integer" and (isinstance(value, bool) or not isinstance(value, int) or value < 1):
+            raise MetricIdentityError(
+                "invalid_metric_parameter", f"metric {name!r} parameter {parameter!r} must be a positive integer"
+            )
+    return identity
 
 
 def training_metric_vocabulary(problem_types: Iterable[str]) -> frozenset[str]:

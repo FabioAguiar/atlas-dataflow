@@ -143,3 +143,21 @@ def test_read_only_roots_match_public_and_private_write_requirements():
 
     prod_web_tmpfs = {entry.split(":", 1)[0] for entry in prod_services["web"]["tmpfs"]}
     assert prod_web_tmpfs == {"/var/cache/nginx", "/var/run", "/tmp"}
+
+
+def test_public_web_tmpfs_is_owned_by_non_root_runtime_user():
+    prod_web_tmpfs = _load(PROD_COMPOSE_PATH)["services"]["web"]["tmpfs"]
+
+    parsed = {}
+
+    for entry in prod_web_tmpfs:
+        mount, raw_options = entry.split(":", 1)
+        parsed[mount] = set(raw_options.split(","))
+
+    for mount in ("/var/cache/nginx", "/var/run", "/tmp"):
+        assert "uid=10001" in parsed[mount], mount
+        assert "gid=10001" in parsed[mount], mount
+
+    assert "mode=0750" in parsed["/var/cache/nginx"]
+    assert "mode=0750" in parsed["/var/run"]
+    assert "mode=1777" in parsed["/tmp"]

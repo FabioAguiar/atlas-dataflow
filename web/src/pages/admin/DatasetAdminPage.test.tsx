@@ -1443,6 +1443,13 @@ describe("DatasetAdminPage", () => {
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Dataset" })).toHaveTextContent("Curated churn profile");
     });
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.some(([url]) =>
+          String(url).endsWith(`/admin/datasets/${datasetSlug}/publication-state`),
+        ),
+      ).toBe(true),
+    );
     fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
     const panel = screen.getByRole("tabpanel");
 

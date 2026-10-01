@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const fake = vi.hoisted(() => ({
   createClient: vi.fn(),
   getSession: vi.fn(),
+  getTurnstileToken: vi.fn(),
   listener: null as null | ((event: string, session: unknown) => void),
   signInWithPassword: vi.fn(),
   signOut: vi.fn(),
@@ -16,6 +17,7 @@ const fake = vi.hoisted(() => ({
 }));
 
 vi.mock("@supabase/supabase-js", () => ({ createClient: fake.createClient }));
+vi.mock("./turnstile", () => ({ getTurnstileToken: fake.getTurnstileToken }));
 
 import {
   AdminAuthProvider,
@@ -54,6 +56,8 @@ describe("AdminAuthProvider (M51-03)", () => {
     fake.signInWithPassword.mockResolvedValue({ data: { session: SESSION }, error: null });
     fake.signOut.mockReset();
     fake.signOut.mockResolvedValue({ error: null });
+    fake.getTurnstileToken.mockReset();
+    fake.getTurnstileToken.mockResolvedValue({ status: "disabled" });
     fake.createClient.mockReset();
     fake.createClient.mockImplementation(() => ({
       auth: {
@@ -225,11 +229,11 @@ describe("AdminAuthProvider (M51-03)", () => {
 
     fake.signInWithPassword.mockResolvedValue({ data: { session: null }, error: { message: "provider-internal-detail" } });
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "go" })));
-    expect(result).toBe(false);
+    expect(result).toBe("failed");
 
     fake.signInWithPassword.mockRejectedValue(new Error("provider-internal-detail"));
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "go" })));
-    expect(result).toBe(false);
+    expect(result).toBe("failed");
 
     for (const spy of logSpies) {
       expect(spy).not.toHaveBeenCalled();
@@ -373,5 +377,252 @@ describe("AdminSessionGuard (M51-03)", () => {
 
     expect(await screen.findByText("Login route")).toBeInTheDocument();
     expect(screen.queryByText("Protected content")).not.toBeInTheDocument();
+  });
+});
+
+describe("AdminAuthProvider Turnstile compatibility", () => {
+  // Fake values only: they are never valid credentials, keys or tokens.
+  const FAKE_TOKEN = "fake-admin-turnstile-token";
+  const FAKE_SITE_KEY = "fake-admin-turnstile-site-key";
+  const FAKE_PASSWORD = "fake-admin-password";
+
+  let results: unknown[];
+  let logSpies: ReturnType<typeof vi.spyOn>[];
+  let signIn: (email: string, password: string) => Promise<unknown>;
+
+  function Capture() {
+    const { signInWithEmailPassword, status } = useAdminAuth();
+    signIn = signInWithEmailPassword;
+    return (
+      <div>
+        <span data-testid="status">{status}</span>
+        <button
+          onClick={async () => {
+            results.push(await signInWithEmailPassword("a@example.test", FAKE_PASSWORD));
+          }}
+          type="button"
+        >
+          go
+        </button>
+      </div>
+    );
+  }
+
+  async function renderSignedOut() {
+    render(
+      <AdminAuthProvider>
+        <Capture />
+      </AdminAuthProvider>,
+    );
+    await waitFor(() => expect(screen.getByTestId("status")).toHaveTextContent("unauthenticated"));
+  }
+
+  async function clickSignIn() {
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "go" })));
+  }
+
+  beforeEach(() => {
+    results = [];
+    fake.listener = null;
+    fake.unsubscribe.mockReset();
+    fake.getSession.mockReset();
+    fake.getSession.mockResolvedValue({ data: { session: null }, error: null });
+    fake.signInWithPassword.mockReset();
+    fake.signInWithPassword.mockResolvedValue({ data: { session: SESSION }, error: null });
+    fake.signOut.mockReset();
+    fake.signOut.mockResolvedValue({ error: null });
+    fake.getTurnstileToken.mockReset();
+    fake.getTurnstileToken.mockResolvedValue({ status: "disabled" });
+    fake.createClient.mockReset();
+    fake.createClient.mockImplementation(() => ({
+      auth: {
+        getSession: fake.getSession,
+        onAuthStateChange: (callback: (event: string, session: unknown) => void) => {
+          fake.listener = callback;
+          return { data: { subscription: { unsubscribe: fake.unsubscribe } } };
+        },
+        signInWithPassword: fake.signInWithPassword,
+        signOut: fake.signOut,
+      },
+    }));
+    vi.stubEnv("VITE_SUPABASE_URL", "https://fake-project.example.test");
+    vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "fake-publishable-key");
+    logSpies = (["log", "info", "warn", "error", "debug"] as const).map((method) =>
+      vi.spyOn(console, method).mockImplementation(() => undefined),
+    );
+  });
+
+  afterEach(() => {
+    // Nothing sensitive may reach the console on any path.
+    const logged = JSON.stringify(logSpies.flatMap((spy) => spy.mock.calls));
+    for (const secret of [FAKE_TOKEN, FAKE_SITE_KEY, FAKE_PASSWORD, "fake-access-token", "fake-refresh-token"]) {
+      expect(logged).not.toContain(secret);
+    }
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+
+  it("with an empty site key, uses the real helper and signs in exactly as before (no captchaToken)", async () => {
+    vi.stubEnv("VITE_TURNSTILE_SITE_KEY", "");
+    const actual = await vi.importActual<typeof import("./turnstile")>("./turnstile");
+    fake.getTurnstileToken.mockImplementation(actual.getTurnstileToken);
+    await renderSignedOut();
+
+    await clickSignIn();
+
+    expect(results).toEqual(["authenticated"]);
+    expect(fake.getTurnstileToken).toHaveBeenCalledTimes(1);
+    expect(fake.signInWithPassword).toHaveBeenCalledTimes(1);
+    expect(fake.signInWithPassword.mock.calls[0]).toEqual([{ email: "a@example.test", password: FAKE_PASSWORD }]);
+    expect(document.querySelector("script[data-atlas-turnstile]")).toBeNull();
+    expect(screen.getByTestId("status")).toHaveTextContent("authenticated");
+  });
+
+  it("sends the verified token as options.captchaToken in exactly one password grant", async () => {
+    vi.stubEnv("VITE_TURNSTILE_SITE_KEY", FAKE_SITE_KEY);
+    fake.getTurnstileToken.mockResolvedValue({ status: "verified", token: FAKE_TOKEN });
+    await renderSignedOut();
+
+    await clickSignIn();
+
+    expect(results).toEqual(["authenticated"]);
+    expect(fake.getTurnstileToken).toHaveBeenCalledTimes(1);
+    expect(fake.signInWithPassword).toHaveBeenCalledTimes(1);
+    expect(fake.signInWithPassword).toHaveBeenCalledWith({
+      email: "a@example.test",
+      password: FAKE_PASSWORD,
+      options: { captchaToken: FAKE_TOKEN },
+    });
+    expect(screen.getByTestId("status")).toHaveTextContent("authenticated");
+    expect(document.body.textContent ?? "").not.toContain(FAKE_TOKEN);
+    // The Admin client keeps its own default storage, isolated from the visitor key.
+    const clientOptions = fake.createClient.mock.calls[0][2] as { auth: Record<string, unknown> };
+    expect(clientOptions.auth.storageKey).toBeUndefined();
+  });
+
+  it.each([
+    ["failed", () => fake.getTurnstileToken.mockResolvedValue({ status: "failed" })],
+    ["rejected", () => fake.getTurnstileToken.mockRejectedValue(new Error(`${FAKE_TOKEN} ${FAKE_SITE_KEY}`))],
+    ["empty token", () => fake.getTurnstileToken.mockResolvedValue({ status: "verified", token: "" })],
+    ["whitespace token", () => fake.getTurnstileToken.mockResolvedValue({ status: "verified", token: "   " })],
+    ["non-string token", () => fake.getTurnstileToken.mockResolvedValue({ status: "verified", token: 42 })],
+    ["unknown status", () => fake.getTurnstileToken.mockResolvedValue({ status: "unexpected" })],
+    ["undefined result", () => fake.getTurnstileToken.mockResolvedValue(undefined)],
+    ["null result", () => fake.getTurnstileToken.mockResolvedValue(null)],
+  ])("fails closed without calling Supabase when verification is %s", async (_label, arrange) => {
+    arrange();
+    await renderSignedOut();
+
+    await clickSignIn();
+
+    expect(results).toEqual(["verification_failed"]);
+    expect(fake.signInWithPassword).not.toHaveBeenCalled();
+    expect(screen.getByTestId("status")).toHaveTextContent("unauthenticated");
+    expect(document.body.textContent ?? "").not.toContain(FAKE_TOKEN);
+  });
+
+  it("does not mask a legitimate Auth failure after a verified challenge", async () => {
+    fake.getTurnstileToken.mockResolvedValue({ status: "verified", token: FAKE_TOKEN });
+    fake.signInWithPassword.mockResolvedValue({ data: { session: null }, error: { message: "Invalid login credentials" } });
+    await renderSignedOut();
+
+    await clickSignIn();
+
+    expect(results).toEqual(["failed"]);
+    expect(fake.signInWithPassword).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("status")).toHaveTextContent("unauthenticated");
+
+    fake.signInWithPassword.mockRejectedValue(new Error("provider-internal-detail"));
+    await clickSignIn();
+    expect(results).toEqual(["failed", "failed"]);
+  });
+
+  it("requests a fresh token for every attempt and never reuses one", async () => {
+    fake.getTurnstileToken
+      .mockResolvedValueOnce({ status: "verified", token: "fake-admin-turnstile-token-1" })
+      .mockResolvedValueOnce({ status: "verified", token: "fake-admin-turnstile-token-2" });
+    fake.signInWithPassword.mockResolvedValueOnce({ data: { session: null }, error: { message: "x" } });
+    await renderSignedOut();
+
+    await clickSignIn();
+    await clickSignIn();
+
+    expect(fake.getTurnstileToken).toHaveBeenCalledTimes(2);
+    const tokens = fake.signInWithPassword.mock.calls.map(
+      (call) => (call[0] as { options?: { captchaToken?: string } }).options?.captchaToken,
+    );
+    expect(tokens).toEqual(["fake-admin-turnstile-token-1", "fake-admin-turnstile-token-2"]);
+    expect(results).toEqual(["failed", "authenticated"]);
+  });
+
+  it("retries after a failed verification with a new challenge", async () => {
+    fake.getTurnstileToken
+      .mockResolvedValueOnce({ status: "failed" })
+      .mockResolvedValueOnce({ status: "verified", token: FAKE_TOKEN });
+    await renderSignedOut();
+
+    await clickSignIn();
+    await clickSignIn();
+
+    expect(results).toEqual(["verification_failed", "authenticated"]);
+    expect(fake.getTurnstileToken).toHaveBeenCalledTimes(2);
+    expect(fake.signInWithPassword).toHaveBeenCalledTimes(1);
+  });
+
+  it("joins concurrent submits into one challenge and one password grant", async () => {
+    let release: (value: unknown) => void = () => undefined;
+    fake.getTurnstileToken.mockImplementation(() => new Promise((r) => (release = r)));
+    await renderSignedOut();
+
+    let first: Promise<unknown> = Promise.resolve();
+    let second: Promise<unknown> = Promise.resolve();
+    act(() => {
+      first = signIn("a@example.test", FAKE_PASSWORD);
+      second = signIn("a@example.test", FAKE_PASSWORD);
+    });
+    expect(second).toBe(first);
+
+    await act(async () => release({ status: "verified", token: FAKE_TOKEN }));
+    await expect(first).resolves.toBe("authenticated");
+    await expect(second).resolves.toBe("authenticated");
+
+    expect(fake.getTurnstileToken).toHaveBeenCalledTimes(1);
+    expect(fake.signInWithPassword).toHaveBeenCalledTimes(1);
+  });
+
+  it("never runs a challenge on import, bootstrap, restore, refresh, API calls or sign-out", async () => {
+    vi.stubEnv("VITE_TURNSTILE_SITE_KEY", FAKE_SITE_KEY);
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("{}")));
+    fake.getSession.mockResolvedValue({ data: { session: SESSION }, error: null });
+    render(
+      <AdminAuthProvider>
+        <StatusProbe />
+      </AdminAuthProvider>,
+    );
+    await waitFor(() => expect(screen.getByTestId("status")).toHaveTextContent("authenticated"));
+
+    act(() => fake.listener?.("TOKEN_REFRESHED", { ...SESSION, refresh_token: "fake-refresh-token" }));
+    await adminFetch("/admin/datasets");
+    fireEvent.click(screen.getByRole("button", { name: "sign-out" }));
+    await waitFor(() => expect(screen.getByTestId("status")).toHaveTextContent("unauthenticated"));
+
+    expect(fake.getTurnstileToken).not.toHaveBeenCalled();
+    expect(fake.signInWithPassword).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
+  it("fails without a challenge when the Admin client is unavailable", async () => {
+    vi.stubEnv("VITE_SUPABASE_URL", "");
+    render(
+      <AdminAuthProvider>
+        <Capture />
+      </AdminAuthProvider>,
+    );
+
+    await clickSignIn();
+
+    expect(results).toEqual(["failed"]);
+    expect(fake.getTurnstileToken).not.toHaveBeenCalled();
+    expect(fake.signInWithPassword).not.toHaveBeenCalled();
   });
 });

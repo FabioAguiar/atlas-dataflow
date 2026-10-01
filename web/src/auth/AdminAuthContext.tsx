@@ -5,25 +5,37 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
 import { Navigate, Outlet } from "react-router-dom";
 
 import { registerAdminSessionSource } from "./adminFetch";
+import { getTurnstileToken } from "./turnstile";
 
 // M51-03: private Admin browser-session boundary. This module is reached only
 // through the conditional lazy() imports in App.tsx (VITE_ENABLE_ADMIN build),
 // so the Supabase client never enters the public bundle. The Supabase client
 // owns session persistence and token refresh; this module only exposes a small
 // session state machine and generic-only failure surfaces.
+//
+// Supabase Auth CAPTCHA is global per route: once enabled it also covers
+// /token?grant_type=password. A new password sign-in therefore obtains a
+// Turnstile token through the shared lazy helper first. An empty
+// VITE_TURNSTILE_SITE_KEY keeps the previous behaviour; refresh, restore,
+// API calls and sign-out never run a challenge.
 
 export type AdminAuthStatus = "loading" | "authenticated" | "unauthenticated" | "unrecoverable";
+
+// "verification_failed": the Turnstile challenge did not produce a token, so
+// Supabase was never called. "failed": any other sign-in failure.
+export type AdminSignInResult = "authenticated" | "failed" | "verification_failed";
 
 export type AdminAuthContextValue = {
   email: string | null;
   status: AdminAuthStatus;
-  signInWithEmailPassword: (email: string, password: string) => Promise<boolean>;
+  signInWithEmailPassword: (email: string, password: string) => Promise<AdminSignInResult>;
   signOut: () => Promise<void>;
 };
 
@@ -146,22 +158,62 @@ export function AdminAuthProvider({ children }: { children: ReactNode }) {
     };
   }, [client]);
 
+  // Single-flight: a submit while a sign-in is pending joins it instead of
+  // starting a second challenge and a second password grant.
+  const pendingSignIn = useRef<Promise<AdminSignInResult> | null>(null);
+
   const signInWithEmailPassword = useCallback(
-    async (email: string, password: string): Promise<boolean> => {
-      if (!client) {
-        return false;
+    (email: string, password: string): Promise<AdminSignInResult> => {
+      if (pendingSignIn.current) {
+        return pendingSignIn.current;
       }
-      try {
-        const { data, error } = await client.auth.signInWithPassword({ email, password });
-        if (error || !data?.session) {
-          return false;
+
+      const attempt = (async (): Promise<AdminSignInResult> => {
+        if (!client) {
+          return "failed";
         }
-        setStatus("authenticated");
-        setEmail(data.session.user?.email ?? null);
-        return true;
-      } catch {
-        return false;
-      }
+
+        let verification: Awaited<ReturnType<typeof getTurnstileToken>>;
+        try {
+          verification = await getTurnstileToken();
+        } catch {
+          // Any verification-mechanism failure fails closed: no sign-in without it.
+          return "verification_failed";
+        }
+
+        // Only an explicit "disabled" (rollout off) or a verified non-empty
+        // token may proceed; "failed" or any unexpected shape fails closed.
+        const captchaToken =
+          verification?.status === "verified" && typeof verification.token === "string"
+            ? verification.token.trim()
+            : "";
+        if (!captchaToken && verification?.status !== "disabled") {
+          return "verification_failed";
+        }
+
+        try {
+          // Each token is used for exactly one password grant.
+          const { data, error } = captchaToken
+            ? await client.auth.signInWithPassword({ email, password, options: { captchaToken } })
+            : await client.auth.signInWithPassword({ email, password });
+          if (error || !data?.session) {
+            return "failed";
+          }
+          setStatus("authenticated");
+          setEmail(data.session.user?.email ?? null);
+          return "authenticated";
+        } catch {
+          return "failed";
+        }
+      })();
+
+      pendingSignIn.current = attempt;
+      void attempt.finally(() => {
+        if (pendingSignIn.current === attempt) {
+          pendingSignIn.current = null;
+        }
+      });
+      return attempt;
     },
     [client],
   );

@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom/vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -53,7 +53,7 @@ describe("LoginPage (M51-03)", () => {
   });
 
   it("signs in with the entered credentials and lands on /admin/dashboard", async () => {
-    authMock.signInWithEmailPassword.mockResolvedValue(true);
+    authMock.signInWithEmailPassword.mockResolvedValue("authenticated");
     renderLogin();
 
     submit("operator@example.test", "fake-password");
@@ -64,7 +64,7 @@ describe("LoginPage (M51-03)", () => {
   });
 
   it("shows only a generic message on failure and clears the password", async () => {
-    authMock.signInWithEmailPassword.mockResolvedValue(false);
+    authMock.signInWithEmailPassword.mockResolvedValue("failed");
     renderLogin();
 
     submit("operator@example.test", "fake-password");
@@ -110,5 +110,39 @@ describe("LoginPage (M51-03)", () => {
     expect(
       screen.queryByText(/sign ?up|register|create account|magic link|forgot|reset|recover|google|github|oauth|social|anonymous|guest|role|mfa|two-factor|one-time/i),
     ).not.toBeInTheDocument();
+  });
+
+  it("shows a generic verification message, no credential hint, and allows a retry", async () => {
+    authMock.signInWithEmailPassword.mockResolvedValueOnce("verification_failed").mockResolvedValueOnce("authenticated");
+    renderLogin();
+
+    submit("operator@example.test", "fake-password");
+
+    expect(await screen.findByText("Security verification failed. Please try signing in again.")).toBeInTheDocument();
+    expect(screen.queryByText("Sign-in failed. Check your credentials and try again.")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Password")).toHaveValue("");
+    expect(screen.getByRole("button", { name: "Sign in" })).toBeEnabled();
+    expect(document.body.textContent ?? "").not.toMatch(/token|site ?key|captcha|turnstile|cloudflare|gotrue/i);
+
+    submit("operator@example.test", "fake-password");
+    await waitFor(() => expect(screen.getByTestId("pathname")).toHaveTextContent("/admin/dashboard"));
+    expect(authMock.signInWithEmailPassword).toHaveBeenCalledTimes(2);
+  });
+
+  it("shows a pending state and blocks a second submit while sign-in is in progress", async () => {
+    let release: (value: string) => void = () => undefined;
+    authMock.signInWithEmailPassword.mockImplementation(() => new Promise((r) => (release = r)));
+    renderLogin();
+
+    submit("operator@example.test", "fake-password");
+
+    expect(await screen.findByRole("status")).toHaveTextContent("Verifying and signing in…");
+    expect(screen.getByRole("button", { name: "Sign in" })).toBeDisabled();
+    fireEvent.submit(screen.getByRole("button", { name: "Sign in" }).closest("form") as HTMLFormElement);
+    expect(authMock.signInWithEmailPassword).toHaveBeenCalledTimes(1);
+
+    await act(async () => release("failed"));
+    expect(await screen.findByText("Sign-in failed. Check your credentials and try again.")).toBeInTheDocument();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
   });
 });

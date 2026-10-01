@@ -8,8 +8,9 @@
 //
 // Isolation: this module owns its own Supabase client with a dedicated
 // `storageKey`, distinct from the default key used by the Admin client, and it
-// imports nothing from the Admin auth modules. It reads only the two
-// publishable VITE_SUPABASE_* variables. Tokens, subjects, URLs, keys and error
+// imports nothing from the Admin auth modules. Supabase config uses only the
+// two publishable VITE_SUPABASE_* variables; optional visitor verification uses
+// the public VITE_TURNSTILE_SITE_KEY. Tokens, subjects, URLs, keys and error
 // messages are never logged or persisted outside the Supabase client storage.
 //
 // External prerequisite (not verifiable from this repository): Anonymous Auth
@@ -17,10 +18,12 @@
 // the accessor reports `unavailable` / `sign_in_failed`.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { getTurnstileToken } from "./turnstile";
 
 export type VisitorUnavailableReason =
   | "not_configured"
   | "sign_in_failed"
+  | "verification_failed"
   | "session_invalid"
   | "client_error";
 
@@ -109,11 +112,33 @@ async function loadClient(): Promise<SupabaseClient | null> {
 }
 
 async function signInAnonymously(client: SupabaseClient): Promise<VisitorAccessResult> {
+  let verification: Awaited<ReturnType<typeof getTurnstileToken>>;
   try {
-    const { data, error } = await client.auth.signInAnonymously();
+    verification = await getTurnstileToken();
+  } catch {
+    // Any verification-mechanism failure fails closed: no sign-in without it.
+    return unavailable("verification_failed");
+  }
+
+  // Only an explicit "disabled" (rollout off) or a verified non-empty token may
+  // proceed; "failed" or any unexpected shape fails closed.
+  const verified = verification?.status === "verified" && Boolean(verification.token);
+  if (!verified && verification?.status !== "disabled") {
+    return unavailable("verification_failed");
+  }
+
+  try {
+    const { data, error } =
+      verification.status === "verified"
+        ? await client.auth.signInAnonymously({
+            options: { captchaToken: verification.token },
+          })
+        : await client.auth.signInAnonymously();
+
     if (error) {
       return unavailable("sign_in_failed");
     }
+
     return toResult(data?.session);
   } catch {
     return unavailable("sign_in_failed");

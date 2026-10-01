@@ -1,9 +1,45 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import DatasetPage from "./DatasetPage";
+
+// The real InferenceForm executor resolves a public visitor identity before
+// POSTing. Only that identity boundary is faked here (obviously fake values);
+// the form, request, payload, result parsing and Result Card stay real.
+const visitorIdentity = vi.hoisted(() => ({
+  accessToken: "fake-page-test-visitor-token",
+  getVisitorAccess: vi.fn(),
+  subject: "fake-page-test-visitor-subject",
+}));
+
+vi.mock("../auth/visitorSession", () => ({
+  getVisitorAccess: visitorIdentity.getVisitorAccess,
+}));
+
+// Since M52-05 the public executor POSTs to the Supabase inference gateway
+// derived from VITE_SUPABASE_URL; the fixtures route that exact (fake) URL.
+const FAKE_GATEWAY_BASE = "https://fake-gateway.example.test";
+
+function gatewayInferenceUrl(datasetSlug: string): string {
+  return `${FAKE_GATEWAY_BASE}/functions/v1/inference-gateway/${encodeURIComponent(datasetSlug)}`;
+}
+
+beforeEach(() => {
+  visitorIdentity.getVisitorAccess.mockReset();
+  visitorIdentity.getVisitorAccess.mockResolvedValue({
+    accessToken: visitorIdentity.accessToken,
+    isAnonymous: true,
+    status: "available",
+    subject: visitorIdentity.subject,
+  });
+  vi.stubEnv("VITE_SUPABASE_URL", FAKE_GATEWAY_BASE);
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 /**
  * Project Spec S0216 Desired Change AL: proves the existing generic public
@@ -150,7 +186,7 @@ function installDryBeanFetchMock() {
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
 
-    if (init?.method === "POST" && url.endsWith(`/datasets/${slug}/inference`)) {
+    if (init?.method === "POST" && url === gatewayInferenceUrl(slug)) {
       return jsonResponse({ dataset_slug: slug, result: dryBeanPredictionResult });
     }
     if (url.endsWith(`/datasets/${slug}/context`)) {
@@ -258,9 +294,13 @@ describe("DatasetPage Dry Bean native multiclass integration (Project Spec S0216
     expect(within(resultElement).getAllByRole("progressbar")).toHaveLength(7);
 
     const postCalls = fetchMock.mock.calls.filter(
-      (call) => call[1]?.method === "POST" && String(call[0]).endsWith(`/datasets/${slug}/inference`),
+      (call) => call[1]?.method === "POST" && String(call[0]) === gatewayInferenceUrl(slug),
     );
     expect(postCalls).toHaveLength(1);
+    expect(new Headers(postCalls[0][1]?.headers).get("Authorization")).toBe(
+      `Bearer ${visitorIdentity.accessToken}`,
+    );
+    expect(visitorIdentity.getVisitorAccess).toHaveBeenCalledTimes(1);
   });
 
   it("renders explicit F1 Macro / Balanced Accuracy metrics, never a binary threshold or risk label", async () => {

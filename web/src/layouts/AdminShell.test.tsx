@@ -49,7 +49,8 @@ describe("AdminShell profile block", () => {
   it("renders the design-aligned admin brand and navigation labels", () => {
     renderAdminShell();
 
-    expect(screen.getByText("Atlas DataFlow")).toBeInTheDocument();
+    // The brand mark intentionally renders with a trailing period.
+    expect(screen.getByText("Atlas DataFlow.")).toBeInTheDocument();
     expect(screen.getAllByText("Admin").length).toBeGreaterThan(0);
     expect(screen.getByRole("link", { name: "Dashboard" })).toHaveAttribute("href", "/admin/dashboard");
     expect(screen.getByRole("link", { name: "Public Home" })).toHaveAttribute("href", "/");

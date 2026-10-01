@@ -50,6 +50,8 @@ services:
         # cannot perform or verify that.
         VITE_SUPABASE_URL: ${VITE_SUPABASE_URL:-}
         VITE_SUPABASE_PUBLISHABLE_KEY: ${VITE_SUPABASE_PUBLISHABLE_KEY:-}
+        # Public Cloudflare Turnstile site key; empty keeps verification disabled.
+        VITE_TURNSTILE_SITE_KEY: ${VITE_TURNSTILE_SITE_KEY:-}
     expose:
       - "80"
     security_opt:

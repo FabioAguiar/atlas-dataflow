@@ -102,7 +102,13 @@ describe("SettingsPage", () => {
     expect(screen.queryByLabelText("Operator token")).not.toBeInTheDocument();
     expect(screen.queryByText(/token/i)).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/password/i)).not.toBeInTheDocument();
-    expect(screen.queryByText(/account/i)).not.toBeInTheDocument();
+    // The explanatory copy legitimately names "Account" as not editable here;
+    // what must not exist is any Account control.
+    expect(screen.queryByLabelText(/account/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: /account/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: /account/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /account/i })).not.toBeInTheDocument();
+    expect(screen.getAllByRole("textbox").map((input) => input.getAttribute("aria-label"))).toEqual(["Display name"]);
   });
 
   it("loads settings from the private admin endpoint without a visible token step", async () => {

@@ -1,9 +1,45 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import DatasetPage from "./DatasetPage";
+
+// The real InferenceForm executor resolves a public visitor identity before
+// POSTing. Only that identity boundary is faked here (obviously fake values);
+// the form, request, payload, result parsing and Result Card stay real.
+const visitorIdentity = vi.hoisted(() => ({
+  accessToken: "fake-page-test-visitor-token",
+  getVisitorAccess: vi.fn(),
+  subject: "fake-page-test-visitor-subject",
+}));
+
+vi.mock("../auth/visitorSession", () => ({
+  getVisitorAccess: visitorIdentity.getVisitorAccess,
+}));
+
+// Since M52-05 the public executor POSTs to the Supabase inference gateway
+// derived from VITE_SUPABASE_URL; the fixtures route that exact (fake) URL.
+const FAKE_GATEWAY_BASE = "https://fake-gateway.example.test";
+
+function gatewayInferenceUrl(datasetSlug: string): string {
+  return `${FAKE_GATEWAY_BASE}/functions/v1/inference-gateway/${encodeURIComponent(datasetSlug)}`;
+}
+
+beforeEach(() => {
+  visitorIdentity.getVisitorAccess.mockReset();
+  visitorIdentity.getVisitorAccess.mockResolvedValue({
+    accessToken: visitorIdentity.accessToken,
+    isAnonymous: true,
+    status: "available",
+    subject: visitorIdentity.subject,
+  });
+  vi.stubEnv("VITE_SUPABASE_URL", FAKE_GATEWAY_BASE);
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 import type { ResultPresentation } from "../components/ResultCard/types";
 
 type MockResponse = {
@@ -1241,7 +1277,7 @@ describe("DatasetPage inference result execution (Project Spec S0134)", () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
 
-      if (init?.method === "POST" && url.endsWith(`/datasets/${slug}/inference`)) {
+      if (init?.method === "POST" && url === gatewayInferenceUrl(slug)) {
         return jsonResponse({ dataset_slug: slug, result: validResult });
       }
       if (url.endsWith(`/datasets/${slug}/context`)) return jsonResponse({ dataset_slug: slug, context: contextPayload });
@@ -1273,9 +1309,13 @@ describe("DatasetPage inference result execution (Project Spec S0134)", () => {
     expect(screen.getByText("68%")).toBeInTheDocument();
 
     const postCalls = fetchMock.mock.calls.filter(
-      (call) => call[1]?.method === "POST" && String(call[0]).endsWith(`/datasets/${slug}/inference`),
+      (call) => call[1]?.method === "POST" && String(call[0]) === gatewayInferenceUrl(slug),
     );
     expect(postCalls).toHaveLength(1);
+    expect(new Headers(postCalls[0][1]?.headers).get("Authorization")).toBe(
+      `Bearer ${visitorIdentity.accessToken}`,
+    );
+    expect(visitorIdentity.getVisitorAccess).toHaveBeenCalledTimes(1);
 
     const inferencePanel = getVisiblePanel(container);
     expect(inferencePanel.textContent).toContain("Likely to churn");
@@ -1353,7 +1393,7 @@ describe("DatasetPage boolean checkbox false-state submission (Project Spec S014
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
 
-      if (init?.method === "POST" && url.endsWith(`/datasets/${slug}/inference`)) {
+      if (init?.method === "POST" && url === gatewayInferenceUrl(slug)) {
         capturedBody = String(init.body);
         return jsonResponse({ dataset_slug: slug, result: validResult });
       }
@@ -1386,11 +1426,14 @@ describe("DatasetPage boolean checkbox false-state submission (Project Spec S014
     fireEvent.click(screen.getByRole("button", { name: "Submit" }));
 
     expect(await screen.findByText("Likely to churn")).toBeInTheDocument();
-    expect(
-      fetchMock.mock.calls.some(
-        (call) => String(call[0]).endsWith(`/datasets/${slug}/inference`) && call[1]?.method === "POST",
-      ),
-    ).toBe(true);
+    const postCalls = fetchMock.mock.calls.filter(
+      (call) => String(call[0]) === gatewayInferenceUrl(slug) && call[1]?.method === "POST",
+    );
+    expect(postCalls).toHaveLength(1);
+    expect(new Headers(postCalls[0][1]?.headers).get("Authorization")).toBe(
+      `Bearer ${visitorIdentity.accessToken}`,
+    );
+    expect(visitorIdentity.getVisitorAccess).toHaveBeenCalledTimes(1);
 
     const body = JSON.parse(getCapturedBody()!);
     expect(body.consent).toBe(false);
@@ -1425,7 +1468,7 @@ describe("DatasetPage public Result Card zero-probability initial projection (Pr
     ).toBeInTheDocument();
     expect(container.querySelector(".result-panel--initial")).toBeInTheDocument();
 
-    expect(fetchMock.mock.calls.some((call) => String(call[0]).endsWith(`/datasets/${slug}/inference`))).toBe(false);
+    expect(fetchMock.mock.calls.some((call) => String(call[0]) === gatewayInferenceUrl(slug))).toBe(false);
   });
 
   it("does not fabricate a zero-probability card and keeps submission disabled when the result contract is unavailable", async () => {
@@ -1458,7 +1501,7 @@ describe("DatasetPage public Result Card zero-probability initial projection (Pr
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Submit" })).toBeDisabled();
 
-    expect(fetchMock.mock.calls.some((call) => String(call[0]).endsWith(`/datasets/${slug}/inference`))).toBe(false);
+    expect(fetchMock.mock.calls.some((call) => String(call[0]) === gatewayInferenceUrl(slug))).toBe(false);
   });
 
   it("keeps a real successful result visible (never reverts to the zero projection) across a same-slug tab-switch re-render", async () => {
@@ -1483,7 +1526,7 @@ describe("DatasetPage public Result Card zero-probability initial projection (Pr
 
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
-      if (init?.method === "POST" && url.endsWith(`/datasets/${slug}/inference`)) {
+      if (init?.method === "POST" && url === gatewayInferenceUrl(slug)) {
         return jsonResponse({ dataset_slug: slug, result: validResult });
       }
       if (url.endsWith(`/datasets/${slug}/context`)) return jsonResponse({ dataset_slug: slug, context: contextPayload });
@@ -1549,7 +1592,7 @@ describe("DatasetPage public Result Card zero-probability initial projection (Pr
 
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
-      if (init?.method === "POST" && url.endsWith(`/datasets/${slugA}/inference`)) {
+      if (init?.method === "POST" && url === gatewayInferenceUrl(slugA)) {
         return jsonResponse({ dataset_slug: slugA, result: validResultA });
       }
       if (url.endsWith(`/datasets/${slugA}/context`)) return jsonResponse({ dataset_slug: slugA, context: contextPayload });
@@ -2870,7 +2913,7 @@ describe("DatasetPage continuous-regression diagnostics (Project Spec S0228)", (
           result_contract: regressionResultContractAvailable,
         });
       }
-      if (url.endsWith(`/datasets/${slug}/inference`)) {
+      if (url === gatewayInferenceUrl(slug)) {
         return jsonResponse({
           result: {
             schema_version: "continuous-regression-result.v1",
@@ -3348,7 +3391,7 @@ describe("DatasetPage forecasting final-holdout evaluation overview (Project Spe
     ).toBeInTheDocument();
 
     // No inference POST and a single /visualizations request.
-    expect(fetchMock.mock.calls.some((call) => String(call[0]).endsWith("/inference"))).toBe(false);
+    expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/functions/v1/inference-gateway/"))).toBe(false);
     expect(
       fetchMock.mock.calls.filter((call) => String(call[0]).endsWith(`/datasets/${slug}/visualizations`)),
     ).toHaveLength(1);
@@ -3490,7 +3533,7 @@ describe("DatasetPage univariate-forecasting inference form and metadata (Projec
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
 
-      if (init?.method === "POST" && url.endsWith(`/datasets/${slug}/inference`)) {
+      if (init?.method === "POST" && url === gatewayInferenceUrl(slug)) {
         return jsonResponse({ dataset_slug: slug, result: validForecastResult });
       }
       if (url.endsWith(`/datasets/${slug}/context`)) {
@@ -3570,9 +3613,13 @@ describe("DatasetPage univariate-forecasting inference form and metadata (Projec
     expect(screen.getAllByText("Seasonal Trend").length).toBeGreaterThanOrEqual(1);
 
     const postCalls = fetchMock.mock.calls.filter(
-      (call) => call[1]?.method === "POST" && String(call[0]).endsWith(`/datasets/${slug}/inference`),
+      (call) => call[1]?.method === "POST" && String(call[0]) === gatewayInferenceUrl(slug),
     );
     expect(postCalls).toHaveLength(1);
+    expect(new Headers(postCalls[0][1]?.headers).get("Authorization")).toBe(
+      `Bearer ${visitorIdentity.accessToken}`,
+    );
+    expect(visitorIdentity.getVisitorAccess).toHaveBeenCalledTimes(1);
     expect(JSON.parse(String(postCalls[0][1]?.body))).toEqual({
       history: [{ period: "2026-01", passengers: 100 }],
     });
@@ -4056,6 +4103,6 @@ describe("DatasetPage forecasting highlighted-score diagnostic selection (Projec
       fetchMock.mock.calls.filter((call) => String(call[0]).endsWith(suffix)).length;
     expect(countEndingWith(`/datasets/${slug}/visualizations`)).toBe(1);
     expect(countEndingWith(`/datasets/${slug}/metrics`)).toBe(1);
-    expect(fetchMock.mock.calls.some((call) => String(call[0]).endsWith("/inference"))).toBe(false);
+    expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/functions/v1/inference-gateway/"))).toBe(false);
   });
 });

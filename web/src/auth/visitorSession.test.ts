@@ -5,11 +5,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const fake = vi.hoisted(() => ({
   createClient: vi.fn(),
   getSession: vi.fn(),
+  getTurnstileToken: vi.fn(),
   refreshSession: vi.fn(),
   signInAnonymously: vi.fn(),
 }));
 
 vi.mock("@supabase/supabase-js", () => ({ createClient: fake.createClient }));
+vi.mock("./turnstile", () => ({ getTurnstileToken: fake.getTurnstileToken }));
 
 import {
   getVisitorAccess,
@@ -33,8 +35,10 @@ describe("visitorSession (M52-01)", () => {
     resetVisitorSessionForTests();
     fake.createClient.mockReset();
     fake.getSession.mockReset();
+    fake.getTurnstileToken.mockReset();
     fake.refreshSession.mockReset();
     fake.signInAnonymously.mockReset();
+    fake.getTurnstileToken.mockResolvedValue({ status: "disabled" });
     fake.getSession.mockResolvedValue({ data: { session: null }, error: null });
     fake.refreshSession.mockResolvedValue({ data: { session: null }, error: { message: "fake" } });
     fake.signInAnonymously.mockResolvedValue({ data: { session: anonSession() }, error: null });
@@ -79,6 +83,111 @@ describe("visitorSession (M52-01)", () => {
       subject: "fake-visitor-subject",
     });
     expect(fake.signInAnonymously).toHaveBeenCalledTimes(1);
+  });
+
+  it("passes a verified Turnstile token to anonymous sign-in", async () => {
+    fake.getTurnstileToken.mockResolvedValue({
+      status: "verified",
+      token: "fake-turnstile-token",
+    });
+
+    await expect(getVisitorAccess()).resolves.toMatchObject({
+      status: "available",
+    });
+
+    expect(fake.getTurnstileToken).toHaveBeenCalledTimes(1);
+    expect(fake.signInAnonymously).toHaveBeenCalledWith({
+      options: {
+        captchaToken: "fake-turnstile-token",
+      },
+    });
+  });
+
+  it("fails closed when Turnstile verification fails", async () => {
+    fake.getTurnstileToken.mockResolvedValue({
+      status: "failed",
+    });
+
+    await expect(getVisitorAccess()).resolves.toEqual({
+      reason: "verification_failed",
+      status: "unavailable",
+    });
+
+    expect(fake.getTurnstileToken).toHaveBeenCalledTimes(1);
+    expect(fake.signInAnonymously).not.toHaveBeenCalled();
+  });
+
+  it("fails closed with verification_failed when the Turnstile helper rejects unexpectedly", async () => {
+    fake.getTurnstileToken.mockRejectedValue(new Error("fake-unexpected-turnstile-failure"));
+
+    await expect(getVisitorAccess()).resolves.toEqual({
+      reason: "verification_failed",
+      status: "unavailable",
+    });
+    expect(fake.signInAnonymously).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["an empty verified token", { status: "verified", token: "" }],
+    ["an unknown status", { status: "fake-unknown" }],
+    ["no result", undefined],
+  ])("fails closed with verification_failed on %s", async (_label, verification) => {
+    fake.getTurnstileToken.mockResolvedValue(verification);
+
+    await expect(getVisitorAccess()).resolves.toEqual({
+      reason: "verification_failed",
+      status: "unavailable",
+    });
+    expect(fake.signInAnonymously).not.toHaveBeenCalled();
+  });
+
+  it("calls anonymous sign-in without arguments when Turnstile is disabled", async () => {
+    await expect(getVisitorAccess()).resolves.toMatchObject({ status: "available" });
+    expect(fake.getTurnstileToken).toHaveBeenCalledTimes(1);
+    expect(fake.signInAnonymously).toHaveBeenCalledWith();
+  });
+
+  it("shares one Turnstile challenge and one sign-in between concurrent callers", async () => {
+    let releaseChallenge: (value: unknown) => void = () => undefined;
+    fake.getTurnstileToken.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          releaseChallenge = resolve;
+        }),
+    );
+
+    const pending = [getVisitorAccess(), getVisitorAccess(), getVisitorAccess()];
+    await vi.waitFor(() => expect(fake.getTurnstileToken).toHaveBeenCalledTimes(1));
+    releaseChallenge({ status: "verified", token: "fake-shared-turnstile-token" });
+    const results = await Promise.all(pending);
+
+    expect(fake.getTurnstileToken).toHaveBeenCalledTimes(1);
+    expect(fake.signInAnonymously).toHaveBeenCalledTimes(1);
+    expect(fake.signInAnonymously).toHaveBeenCalledWith({
+      options: { captchaToken: "fake-shared-turnstile-token" },
+    });
+    expect(results[0]).toEqual({
+      accessToken: "fake-visitor-token",
+      isAnonymous: true,
+      status: "available",
+      subject: "fake-visitor-subject",
+    });
+    expect(results[1]).toBe(results[0]);
+    expect(results[2]).toBe(results[0]);
+  });
+
+  it("does not invoke Turnstile when a valid anonymous session already exists", async () => {
+    fake.getSession.mockResolvedValue({
+      data: { session: anonSession() },
+      error: null,
+    });
+
+    await expect(getVisitorAccess()).resolves.toMatchObject({
+      status: "available",
+    });
+
+    expect(fake.getTurnstileToken).not.toHaveBeenCalled();
+    expect(fake.signInAnonymously).not.toHaveBeenCalled();
   });
 
   it("creates the client with the distinct storageKey and no URL session detection", async () => {
@@ -128,13 +237,18 @@ describe("visitorSession (M52-01)", () => {
       status: "available",
     });
     expect(fake.refreshSession).toHaveBeenCalledTimes(1);
+    expect(fake.getTurnstileToken).not.toHaveBeenCalled();
     expect(fake.signInAnonymously).not.toHaveBeenCalled();
   });
 
-  it("replaces the session with a new anonymous sign-in when refresh fails", async () => {
+  it("replaces the session with a Turnstile-verified anonymous sign-in when refresh fails", async () => {
     fake.getSession.mockResolvedValue({
       data: { session: anonSession({ expires_at: NOW_S - 10 }, "fake-old-token") },
       error: null,
+    });
+    fake.getTurnstileToken.mockResolvedValue({
+      status: "verified",
+      token: "fake-replacement-turnstile-token",
     });
     fake.signInAnonymously.mockResolvedValue({
       data: { session: anonSession({ user: { id: "fake-new-subject", is_anonymous: true } }, "fake-new-token") },
@@ -146,7 +260,12 @@ describe("visitorSession (M52-01)", () => {
       subject: "fake-new-subject",
     });
     expect(fake.refreshSession).toHaveBeenCalledTimes(1);
-    expect(fake.signInAnonymously).toHaveBeenCalledTimes(1);
+    expect(fake.getTurnstileToken).toHaveBeenCalledTimes(1);
+    expect(fake.signInAnonymously).toHaveBeenCalledWith({
+      options: {
+        captchaToken: "fake-replacement-turnstile-token",
+      },
+    });
   });
 
   it("replaces the session when refresh throws", async () => {
@@ -198,6 +317,33 @@ describe("visitorSession (M52-01)", () => {
     await expect(getVisitorAccess()).resolves.toEqual({ reason: "client_error", status: "unavailable" });
     fake.getSession.mockResolvedValue({ data: { session: null }, error: { message: "fake" } });
     await expect(getVisitorAccess()).resolves.toEqual({ reason: "client_error", status: "unavailable" });
+  });
+
+  it("never logs the captcha token, site key, visitor token or subject", async () => {
+    vi.stubEnv("VITE_TURNSTILE_SITE_KEY", "fake-turnstile-site-key");
+    const spies = (["log", "info", "warn", "error", "debug"] as const).map((m) =>
+      vi.spyOn(console, m).mockImplementation(() => undefined),
+    );
+
+    // Verified challenge and successful sign-in.
+    fake.getTurnstileToken.mockResolvedValue({ status: "verified", token: "fake-captcha-token" });
+    await getVisitorAccess();
+
+    // Failed challenge, rejected helper, and sign-in rejecting with the token.
+    resetVisitorSessionForTests();
+    fake.getTurnstileToken.mockResolvedValue({ status: "failed" });
+    await getVisitorAccess();
+    resetVisitorSessionForTests();
+    fake.getTurnstileToken.mockRejectedValue(new Error("fake-captcha-token fake-turnstile-site-key"));
+    await getVisitorAccess();
+    resetVisitorSessionForTests();
+    fake.getTurnstileToken.mockResolvedValue({ status: "verified", token: "fake-captcha-token" });
+    fake.signInAnonymously.mockRejectedValue(new Error("fake-captcha-token fake-visitor-subject"));
+    await getVisitorAccess();
+
+    for (const spy of spies) {
+      expect(spy).not.toHaveBeenCalled();
+    }
   });
 
   it("never logs the token or subject on success or failure paths", async () => {

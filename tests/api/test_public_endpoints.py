@@ -14,8 +14,10 @@ or directly:
 
 import asyncio
 import concurrent.futures
+import importlib.util
 import json
 import os
+import re
 import sys
 import tempfile
 import threading
@@ -150,6 +152,102 @@ def _run_asgi_request_chunks(application, path: str, chunks: list[bytes], header
         message.get("body", b"") for message in response_messages if message["type"] == "http.response.body"
     )
     return start["status"], body, request_index
+
+
+def _run_asgi_get(application, path: str) -> tuple[int, bytes]:
+    """Drive a complete GET request without adding an httpx dependency."""
+    response_messages = []
+    request_sent = False
+
+    async def receive():
+        nonlocal request_sent
+        if not request_sent:
+            request_sent = True
+            return {"type": "http.request", "body": b"", "more_body": False}
+        return {"type": "http.disconnect"}
+
+    async def send(message):
+        response_messages.append(message)
+
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0", "spec_version": "2.3"},
+        "http_version": "1.1",
+        "method": "GET",
+        "scheme": "http",
+        "path": path,
+        "raw_path": path.encode("ascii"),
+        "query_string": b"",
+        "root_path": "",
+        "headers": [],
+        "client": ("test-client", 50000),
+        "server": ("test-server", 80),
+    }
+    asyncio.run(application(scope, receive, send))
+    start = next(message for message in response_messages if message["type"] == "http.response.start")
+    body = b"".join(
+        message.get("body", b"") for message in response_messages if message["type"] == "http.response.body"
+    )
+    return start["status"], body
+
+
+def _load_api_main_with_docs_setting(monkeypatch, value: str | None):
+    """Load a fresh application instance so import-time configuration is real."""
+    if value is None:
+        monkeypatch.delenv("ATLAS_API_DOCS_ENABLED", raising=False)
+        suffix = "absent"
+    else:
+        monkeypatch.setenv("ATLAS_API_DOCS_ENABLED", value)
+        suffix = re.sub(r"[^a-z0-9]+", "_", value.lower()).strip("_") or "blank"
+
+    module_name = f"_atlas_api_docs_{suffix}"
+    spec = importlib.util.spec_from_file_location(module_name, API_ROOT / "main.py")
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.modules.pop(module_name, None)
+    return module
+
+
+@pytest.mark.parametrize("setting", [None, "true"])
+def test_fastapi_docs_enabled_by_default_and_explicit_true(monkeypatch, setting):
+    module = _load_api_main_with_docs_setting(monkeypatch, setting)
+
+    assert module.app.docs_url == "/docs"
+    assert module.app.redoc_url == "/redoc"
+    assert module.app.openapi_url == "/openapi.json"
+    for path in ("/docs", "/redoc", "/openapi.json"):
+        status, _body = _run_asgi_get(module.app, path)
+        assert status == 200, path
+
+
+@pytest.mark.parametrize("setting", ["false", "invalid", "1", ""])
+def test_fastapi_docs_disabled_for_false_and_invalid_explicit_values(monkeypatch, setting):
+    module = _load_api_main_with_docs_setting(monkeypatch, setting)
+
+    assert module.app.docs_url is None
+    assert module.app.redoc_url is None
+    assert module.app.openapi_url is None
+    for path in ("/docs", "/redoc", "/openapi.json"):
+        status, _body = _run_asgi_get(module.app, path)
+        assert status == 404, path
+
+
+def test_fastapi_docs_disable_preserves_health_and_public_routes(monkeypatch):
+    module = _load_api_main_with_docs_setting(monkeypatch, "false")
+    module.list_datasets = lambda: []
+    module.reconcile_runtime_model_cache = lambda _dataset_slugs: None
+
+    health_status, health_body = _run_asgi_get(module.app, "/health")
+    datasets_status, datasets_body = _run_asgi_get(module.app, "/datasets")
+
+    assert health_status == 200
+    assert json.loads(health_body) == {"status": "ok"}
+    assert datasets_status == 200
+    assert json.loads(datasets_body) == {"datasets": []}
 
 
 def _payload_echo_application():

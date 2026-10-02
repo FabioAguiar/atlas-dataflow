@@ -13,6 +13,8 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parent.parent
 BASE = REPO_ROOT / "docker-compose.yml"
 PROD = REPO_ROOT / "docker-compose.prod.yml"
+TRAEFIK = REPO_ROOT / "docker-compose.traefik.yml"
+PUBLIC_NGINX = REPO_ROOT / "web" / "nginx.conf"
 OVERRIDE = REPO_ROOT / "docker-compose.self-hosted-network.yml"
 ENV_EXAMPLES = (REPO_ROOT / ".env.example", REPO_ROOT / "api" / ".env.example")
 
@@ -83,6 +85,91 @@ def test_web_to_api_default_networking_is_preserved():
 def test_private_compose_passes_jwks_private_http_opt_in_default_off():
     env = _load(BASE)["services"]["api"]["environment"]
     assert env["ATLAS_SUPABASE_JWKS_ALLOW_PRIVATE_HTTP"] == "${ATLAS_SUPABASE_JWKS_ALLOW_PRIVATE_HTTP:-false}"
+
+
+def test_public_prod_disables_fastapi_docs_without_exposing_the_flag_to_web():
+    data = _load(PROD)
+    assert data["services"]["api"]["environment"]["ATLAS_API_DOCS_ENABLED"] == (
+        "${ATLAS_API_DOCS_ENABLED:-false}"
+    )
+    web_args = data["services"]["web"]["build"]["args"]
+    assert "ATLAS_API_DOCS_ENABLED" not in web_args
+    assert "VITE_ATLAS_API_DOCS_ENABLED" not in web_args
+
+
+def test_public_nginx_denies_docs_and_keeps_admin_and_api_boundaries():
+    text = PUBLIC_NGINX.read_text(encoding="utf-8")
+    denied_locations = (
+        ("=", "/api/docs"),
+        ("^~", "/api/docs/"),
+        ("=", "/api/redoc"),
+        ("^~", "/api/redoc/"),
+        ("=", "/api/openapi.json"),
+        ("=", "/api/admin"),
+        ("^~", "/api/admin/"),
+        ("=", "/admin"),
+        ("^~", "/admin/"),
+    )
+    for modifier, path in denied_locations:
+        pattern = rf"location\s+{re.escape(modifier)}\s+{re.escape(path)}\s*\{{\s*return\s+404;\s*\}}"
+        assert re.search(pattern, text), path
+    assert re.search(
+        r"location\s+/api/\s*\{[^}]*proxy_pass\s+http://api:8000/;",
+        text,
+        flags=re.DOTALL,
+    )
+
+
+def test_public_nginx_owns_the_required_security_header_policy():
+    text = PUBLIC_NGINX.read_text(encoding="utf-8")
+    assert re.search(r"\bserver_tokens\s+off;", text)
+    for header in (
+        "X-Content-Type-Options",
+        "Referrer-Policy",
+        "Permissions-Policy",
+        "X-Frame-Options",
+        "Content-Security-Policy",
+    ):
+        assert re.search(rf"add_header\s+{header}\s+.+\s+always;", text), header
+
+    csp_match = re.search(r'add_header\s+Content-Security-Policy\s+"([^"]+)"\s+always;', text)
+    assert csp_match is not None
+    csp = csp_match.group(1)
+    for directive in (
+        "default-src",
+        "base-uri",
+        "object-src 'none'",
+        "frame-ancestors 'none'",
+        "script-src",
+        "style-src",
+        "img-src",
+        "connect-src",
+        "frame-src",
+        "form-action",
+    ):
+        assert directive in csp
+    assert "unsafe-eval" not in csp
+    assert "script-src 'self' 'unsafe-inline'" not in csp
+    assert "style-src 'self' 'unsafe-inline'" in csp
+    assert "https://challenges.cloudflare.com" in csp
+    assert "https://raw.githubusercontent.com" in csp
+    assert "connect-src 'self' https: wss:" in csp
+    assert not re.search(r"(?:default|script|connect|frame)-src\s+\*", csp)
+
+
+def test_traefik_applies_atlas_hsts_only_to_the_https_router():
+    labels = _load(TRAEFIK)["services"]["web"]["labels"]
+    middleware = "atlas-dataflow-hsts"
+    assert labels[f"traefik.http.middlewares.{middleware}.headers.stsSeconds"] == "31536000"
+    assert labels["traefik.http.routers.atlas-dataflow-https.middlewares"] == middleware
+    assert labels["traefik.http.routers.atlas-dataflow-http.middlewares"] == "atlas-dataflow-redirect-https"
+    assert not any(
+        key in labels
+        for key in (
+            f"traefik.http.middlewares.{middleware}.headers.stsIncludeSubdomains",
+            f"traefik.http.middlewares.{middleware}.headers.stsPreload",
+        )
+    )
 
 
 def test_privileged_values_never_become_web_build_args():

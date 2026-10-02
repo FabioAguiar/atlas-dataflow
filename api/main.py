@@ -517,6 +517,16 @@ def _remove_predict_views_for_dataset(dataset_slug: str, repo_root: Path) -> dic
 
 _ADMIN_ENABLED_VALUES = {"1", "true", "yes", "on"}
 
+_API_DOCS_ENABLED_ENV = "ATLAS_API_DOCS_ENABLED"
+
+
+def _api_docs_enabled() -> bool:
+    """Keep local docs by default and fail closed on invalid explicit values."""
+    value = os.environ.get(_API_DOCS_ENABLED_ENV)
+    if value is None:
+        return True
+    return value.strip().lower() == "true"
+
 
 def _admin_runtime_enabled() -> bool:
     value = os.environ.get("ATLAS_ADMIN_ENABLED")
@@ -729,7 +739,12 @@ class InferenceGatewayCredentialMiddleware:
         await self.app(scope, receive, send)
 
 
-app = FastAPI()
+_docs_enabled = _api_docs_enabled()
+app = FastAPI(
+    docs_url="/docs" if _docs_enabled else None,
+    redoc_url="/redoc" if _docs_enabled else None,
+    openapi_url="/openapi.json" if _docs_enabled else None,
+)
 # Starlette runs the last-added middleware outermost. Effective order:
 # CORS -> gateway credential gate -> payload size limit -> routing.
 app.add_middleware(PayloadSizeLimitMiddleware, max_size=_PAYLOAD_SIZE_LIMIT)

@@ -72,3 +72,8 @@ pipeline/prepared/
 # Generated Dataset Documentation image uploads are local runtime data, not
 # repository source.
 /media/documentation/
+
+
+#Others
+HTTP
+permitido

@@ -19,6 +19,9 @@ services:
       traefik.http.middlewares.atlas-dataflow-redirect-https.redirectscheme.scheme: "https"
       traefik.http.middlewares.atlas-dataflow-redirect-https.redirectscheme.permanent: "true"
 
+      # Atlas-only HSTS policy. Keep includeSubDomains and preload disabled.
+      traefik.http.middlewares.atlas-dataflow-hsts.headers.stsSeconds: "31536000"
+
       traefik.http.routers.atlas-dataflow-http.entrypoints: "http"
       traefik.http.routers.atlas-dataflow-http.rule: "Host(`atlas-dataflow.fabioaguiar.dev`)"
       traefik.http.routers.atlas-dataflow-http.middlewares: "atlas-dataflow-redirect-https"
@@ -29,6 +32,7 @@ services:
       traefik.http.routers.atlas-dataflow-https.rule: "Host(`atlas-dataflow.fabioaguiar.dev`)"
       traefik.http.routers.atlas-dataflow-https.tls: "true"
       traefik.http.routers.atlas-dataflow-https.tls.certresolver: "letsencrypt"
+      traefik.http.routers.atlas-dataflow-https.middlewares: "atlas-dataflow-hsts"
       traefik.http.routers.atlas-dataflow-https.service: "atlas-dataflow-web"
 
       # Internal container port only.

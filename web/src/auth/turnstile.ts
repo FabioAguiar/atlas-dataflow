@@ -4,9 +4,8 @@
 // module import or page load. A challenge is requested only when the visitor
 // session layer needs to create a new anonymous Supabase identity.
 //
-// An empty VITE_TURNSTILE_SITE_KEY keeps Turnstile disabled. This supports a
-// staged rollout where the frontend can be deployed before CAPTCHA enforcement
-// is enabled in the self-hosted Supabase Auth stack.
+// An empty VITE_TURNSTILE_SITE_KEY keeps Turnstile disabled only for local and
+// non-production rollout. Production fails closed when the key is missing.
 
 const TURNSTILE_SCRIPT_URL =
   "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
@@ -173,7 +172,7 @@ export async function getTurnstileToken(): Promise<TurnstileTokenResult> {
   const siteKey = readSiteKey();
 
   if (!siteKey) {
-    return { status: "disabled" };
+    return { status: import.meta.env.PROD ? "failed" : "disabled" };
   }
 
   if (typeof window === "undefined" || typeof document === "undefined") {

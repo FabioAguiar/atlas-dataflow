@@ -97,6 +97,17 @@ def test_public_prod_disables_fastapi_docs_without_exposing_the_flag_to_web():
     assert "VITE_ATLAS_API_DOCS_ENABLED" not in web_args
 
 
+def test_public_prod_requires_the_publishable_turnstile_site_key():
+    web_args = _load(PROD)["services"]["web"]["build"]["args"]
+    interpolation = web_args["VITE_TURNSTILE_SITE_KEY"]
+
+    assert interpolation == (
+        "${VITE_TURNSTILE_SITE_KEY:?Set VITE_TURNSTILE_SITE_KEY for the "
+        "production public web build}"
+    )
+    assert "${VITE_TURNSTILE_SITE_KEY:-" not in interpolation
+
+
 def test_public_nginx_denies_docs_and_keeps_admin_and_api_boundaries():
     text = PUBLIC_NGINX.read_text(encoding="utf-8")
     denied_locations = (
@@ -181,6 +192,7 @@ def test_privileged_values_never_become_web_build_args():
             "VITE_ENABLE_ADMIN",
             "VITE_SUPABASE_URL",
             "VITE_SUPABASE_PUBLISHABLE_KEY",
+            "VITE_TURNSTILE_SITE_KEY",
         }
         for value in args.values():
             assert not any(token in str(value) for token in PRIVILEGED)

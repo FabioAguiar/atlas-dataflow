@@ -91,14 +91,40 @@ describe("turnstile", () => {
     vi.useRealTimers();
   });
 
-  describe("disabled rollout", () => {
-    it("stays disabled without a site key and loads no script", async () => {
+  describe("missing configuration", () => {
+    it("fails closed in production without a site key and touches neither DOM nor API", async () => {
+      vi.stubEnv("PROD", true);
+      const api = fakeApi();
+      installApi(api);
+
+      await expect(getTurnstileToken()).resolves.toEqual({ status: "failed" });
+      expect(api.render).not.toHaveBeenCalled();
+      expect(managedScripts()).toHaveLength(0);
+      expect(containerCount()).toBe(0);
+    });
+
+    it("fails closed in production with a whitespace-only site key and touches neither DOM nor API", async () => {
+      vi.stubEnv("PROD", true);
+      vi.stubEnv("VITE_TURNSTILE_SITE_KEY", "   \t  ");
+      const api = fakeApi();
+      installApi(api);
+
+      await expect(getTurnstileToken()).resolves.toEqual({ status: "failed" });
+      expect(api.render).not.toHaveBeenCalled();
+      expect(managedScripts()).toHaveLength(0);
+      expect(containerCount()).toBe(0);
+    });
+
+    it("stays disabled outside production without a site key and loads no script", async () => {
+      vi.stubEnv("PROD", false);
+
       await expect(getTurnstileToken()).resolves.toEqual({ status: "disabled" });
       expect(managedScripts()).toHaveLength(0);
       expect(containerCount()).toBe(0);
     });
 
-    it("treats a whitespace-only site key as disabled and touches neither DOM nor API", async () => {
+    it("stays disabled outside production with a whitespace-only site key and touches neither DOM nor API", async () => {
+      vi.stubEnv("PROD", false);
       vi.stubEnv("VITE_TURNSTILE_SITE_KEY", "   \t  ");
       const api = fakeApi();
       installApi(api);

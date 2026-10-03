@@ -1,13 +1,20 @@
 """M53 corrective: static contracts for the self-hosted Atlas/Supabase wiring.
 
 Offline and stdlib/yaml only. Locks the optional shared-network override, the
-env-example classification, and the absence of privileged values from the web
-build. Live Coolify/Supabase behavior is explicitly out of scope here.
+env-example classification, the absence of privileged values from the web
+build, and (S0294) the narrowed public CSP connect-src contract rendered at
+image build time from the public VITE_SUPABASE_URL input. These are static
+source/configuration contracts: live Coolify/Supabase behavior, live HTTP
+headers and live Traefik routing are explicitly out of scope here.
 """
 
+import os
 import re
+import shutil
+import subprocess
 from pathlib import Path
 
+import pytest
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -15,6 +22,7 @@ BASE = REPO_ROOT / "docker-compose.yml"
 PROD = REPO_ROOT / "docker-compose.prod.yml"
 TRAEFIK = REPO_ROOT / "docker-compose.traefik.yml"
 PUBLIC_NGINX = REPO_ROOT / "web" / "nginx.conf"
+WEB_DOCKERFILE = REPO_ROOT / "web" / "Dockerfile"
 OVERRIDE = REPO_ROOT / "docker-compose.self-hosted-network.yml"
 ENV_EXAMPLES = (REPO_ROOT / ".env.example", REPO_ROOT / "api" / ".env.example")
 
@@ -164,8 +172,173 @@ def test_public_nginx_owns_the_required_security_header_policy():
     assert "style-src 'self' 'unsafe-inline'" in csp
     assert "https://challenges.cloudflare.com" in csp
     assert "https://raw.githubusercontent.com" in csp
-    assert "connect-src 'self' https: wss:" in csp
     assert not re.search(r"(?:default|script|connect|frame)-src\s+\*", csp)
+
+
+# --- S0294: narrowed public CSP connect-src contract -------------------------
+
+SUPABASE_MARKER = "__ATLAS_SUPABASE_CONNECT_SRC__"
+TURNSTILE_ORIGIN = "https://challenges.cloudflare.com"
+SCHEME_WIDE_OR_WILDCARD = re.compile(r"^(?:[a-z][a-z0-9+.-]*:|\*.*|.*://\*.*)$", re.IGNORECASE)
+
+
+def _csp(text: str) -> str:
+    match = re.search(r'add_header\s+Content-Security-Policy\s+"([^"]+)"\s+always;', text)
+    assert match is not None
+    return match.group(1)
+
+
+def _directives(csp: str) -> dict[str, list[str]]:
+    directives: dict[str, list[str]] = {}
+    for part in csp.split(";"):
+        tokens = part.split()
+        if tokens:
+            assert tokens[0] not in directives, f"duplicate CSP directive {tokens[0]}"
+            directives[tokens[0]] = tokens[1:]
+    return directives
+
+
+def _assert_bounded_connect_src(sources: list[str]) -> None:
+    for source in sources:
+        assert not SCHEME_WIDE_OR_WILDCARD.match(source), f"scheme-wide connect-src {source!r}"
+        # No WebSocket requirement exists in the public frontend, so no
+        # ws:/wss: source of any shape is part of the contract.
+        assert not source.lower().startswith(("ws:", "wss:")), source
+
+
+def _dockerfile_csp_renderer() -> str:
+    """Return the node renderer script exactly as Docker joins the RUN lines."""
+    joined = WEB_DOCKERFILE.read_text(encoding="utf-8").replace("\\\n", "")
+    match = re.search(r"RUN node -e '([^']*)'\s*\n", joined)
+    assert match is not None, "web/Dockerfile has no CSP renderer"
+    return match.group(1)
+
+
+def _render(tmp_path: Path, supabase_url: str) -> subprocess.CompletedProcess:
+    shutil.copyfile(PUBLIC_NGINX, tmp_path / "nginx.conf.template")
+    env = {key: value for key, value in os.environ.items() if not key.startswith("VITE_")}
+    env["VITE_SUPABASE_URL"] = supabase_url
+    return subprocess.run(
+        ["node", "-e", _dockerfile_csp_renderer()],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+
+
+def _rendered_connect_src(tmp_path: Path, supabase_url: str) -> list[str]:
+    result = _render(tmp_path, supabase_url)
+    assert result.returncode == 0, result.stderr
+    rendered = (tmp_path / "nginx.default.conf").read_text(encoding="utf-8")
+    assert SUPABASE_MARKER not in rendered
+    return _directives(_csp(rendered))["connect-src"]
+
+
+needs_node = pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
+
+
+def test_public_csp_connect_src_is_bounded_to_explicit_origins():
+    directives = _directives(_csp(PUBLIC_NGINX.read_text(encoding="utf-8")))
+    connect_src = directives["connect-src"]
+
+    # The marker is the only build-time insertion point and it lives inside
+    # connect-src, appended to the last explicit source.
+    assert PUBLIC_NGINX.read_text(encoding="utf-8").count(SUPABASE_MARKER) == 1
+    assert connect_src[-1].endswith(SUPABASE_MARKER)
+    template_sources = [source.replace(SUPABASE_MARKER, "") for source in connect_src]
+    assert template_sources == ["'self'", TURNSTILE_ORIGIN]
+    _assert_bounded_connect_src(template_sources)
+    for name, sources in directives.items():
+        if name != "connect-src":
+            assert not any(SUPABASE_MARKER in source for source in sources), name
+
+
+def test_public_csp_keeps_turnstile_and_strict_non_connect_directives():
+    directives = _directives(_csp(PUBLIC_NGINX.read_text(encoding="utf-8")))
+    assert directives["default-src"] == ["'self'"]
+    assert directives["base-uri"] == ["'self'"]
+    assert directives["object-src"] == ["'none'"]
+    assert directives["frame-ancestors"] == ["'none'"]
+    assert directives["form-action"] == ["'self'"]
+    assert directives["script-src"] == ["'self'", TURNSTILE_ORIGIN]
+    assert directives["frame-src"] == [TURNSTILE_ORIGIN]
+    assert TURNSTILE_ORIGIN in directives["connect-src"][1]
+
+
+def test_bounded_connect_src_guard_rejects_scheme_wide_sources():
+    for broad in (["'self'", "https:"], ["'self'", "wss:"], ["*"], ["https://*.supabase.co"], ["ws:"]):
+        with pytest.raises(AssertionError):
+            _assert_bounded_connect_src(broad)
+    with pytest.raises(AssertionError):
+        _assert_bounded_connect_src(["'self'", "wss://example.supabase.co"])
+    _assert_bounded_connect_src(["'self'", TURNSTILE_ORIGIN, "https://example.supabase.co"])
+
+
+def test_web_image_serves_the_rendered_config_from_the_public_supabase_input():
+    text = WEB_DOCKERFILE.read_text(encoding="utf-8")
+    build_stage, _, serve_stage = text.partition("FROM nginx:alpine AS serve")
+    assert serve_stage, "web/Dockerfile has no nginx serve stage"
+    assert "COPY nginx.conf ./nginx.conf.template" in build_stage
+    assert re.search(
+        r"^COPY\s+--from=build\s+/app/nginx\.default\.conf\s+/etc/nginx/conf\.d/default\.conf$",
+        serve_stage,
+        flags=re.MULTILINE,
+    )
+    assert not re.search(r"^COPY\s+nginx\.conf\s", serve_stage, flags=re.MULTILINE)
+
+    renderer = _dockerfile_csp_renderer()
+    assert "process.env.VITE_SUPABASE_URL" in renderer
+    assert "url.origin" in renderer
+    assert SUPABASE_MARKER in renderer
+    # The renderer reads no other environment input (no second config source).
+    assert re.findall(r"process\.env\.(\w+)", renderer) == ["VITE_SUPABASE_URL"]
+    assert not any(token in renderer for token in PRIVILEGED)
+
+
+@needs_node
+def test_rendered_csp_without_supabase_url_stays_same_origin_and_turnstile(tmp_path):
+    assert _rendered_connect_src(tmp_path, "") == ["'self'", TURNSTILE_ORIGIN]
+
+
+@needs_node
+@pytest.mark.parametrize(
+    ("supabase_url", "expected_origin"),
+    (
+        ("https://example-ref.supabase.co", "https://example-ref.supabase.co"),
+        ("  https://Example-Ref.Supabase.co/  ", "https://example-ref.supabase.co"),
+        ("https://auth.example.test:8443/base/path?x=1#y", "https://auth.example.test:8443"),
+        ("http://localhost:54321", "http://localhost:54321"),
+    ),
+)
+def test_rendered_csp_adds_only_the_exact_supabase_origin(tmp_path, supabase_url, expected_origin):
+    connect_src = _rendered_connect_src(tmp_path, supabase_url)
+    assert connect_src == ["'self'", TURNSTILE_ORIGIN, expected_origin]
+    _assert_bounded_connect_src(connect_src)
+
+
+@needs_node
+@pytest.mark.parametrize(
+    "supabase_url",
+    (
+        "not a url",
+        "example-ref.supabase.co",
+        "ftp://example-ref.supabase.co",
+        "wss://example-ref.supabase.co",
+        "javascript:alert(1)",
+        "https://user:password@example-ref.supabase.co",
+        "https://example;ref.supabase.co",
+        "https://example\"ref.supabase.co",
+        "https://*.supabase.co",
+    ),
+)
+def test_unusable_supabase_url_fails_the_build_instead_of_broadening_csp(tmp_path, supabase_url):
+    result = _render(tmp_path, supabase_url)
+    assert result.returncode != 0
+    assert "VITE_SUPABASE_URL rejected for CSP" in result.stderr
+    assert not (tmp_path / "nginx.default.conf").exists()
 
 
 def test_traefik_applies_atlas_hsts_only_to_the_https_router():

@@ -1,8 +1,10 @@
-"""Project Spec S0291: public/private API image and deployment invariant gate.
+"""Project Spec S0291/S0294: repository-local API build provenance gate.
 
-The private (``docker-compose.yml``) and public (``docker-compose.prod.yml``)
-Compose modes must run the API from one canonical, repository-owned image
-build and share one minimum container security envelope.
+The two Compose modes owned by this repository -- the repository-root
+Admin-capable/local mode (``docker-compose.yml``) and the public mode
+(``docker-compose.prod.yml``) -- must build the API from one canonical,
+repository-owned image build and share one minimum container security
+envelope.
 
 Offline, deterministic and read-only: both Compose files are parsed
 structurally with ``yaml.safe_load``; no Docker daemon, network, running
@@ -10,13 +12,18 @@ deployment or secret-bearing environment file is involved.
 
 Intentionally NOT asserted equal across the two modes: environment
 variables, volume mounts, health checks, Admin enablement and the web
-service configuration. Those differ by design between the private and
-public deployments.
+service configuration. Those differ by design between the two modes.
 
-This gate locks source/build provenance only. It does not, and cannot,
-prove that the running public and private API containers share the same
-Docker image ID; that remains a separate read-only operational observation
-against the actual running environment.
+What this gate does NOT prove:
+
+- The repository-root ``docker-compose.yml`` is not the real PROD PRIVATE
+  ADMIN Compose stack, and this gate does not model that stack. The real
+  PROD PRIVATE ADMIN topology and public/private deployment parity belong to
+  the separate infrastructure/deployment contract.
+- It locks source/build provenance only. It does not, and cannot, prove
+  that the running public and private production API containers share the
+  same Docker image ID; live image-ID parity requires a separate read-only
+  runtime validation against the actual running environment.
 """
 
 import posixpath
@@ -26,11 +33,11 @@ import pytest
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-PRIVATE_COMPOSE_PATH = REPO_ROOT / "docker-compose.yml"
+LOCAL_ADMIN_COMPOSE_PATH = REPO_ROOT / "docker-compose.yml"
 PUBLIC_COMPOSE_PATH = REPO_ROOT / "docker-compose.prod.yml"
 
 _COMPOSE_MODES = {
-    "private": PRIVATE_COMPOSE_PATH,
+    "repository_local_admin": LOCAL_ADMIN_COMPOSE_PATH,
     "public": PUBLIC_COMPOSE_PATH,
 }
 
@@ -74,10 +81,11 @@ def test_compose_mode_defines_an_api_service(mode):
     assert isinstance(_api_service(_COMPOSE_MODES[mode]), dict)
 
 
-def test_public_and_private_api_build_definitions_are_identical(api_services):
-    private_build = _normalize_build(api_services["private"].get("build"))
+def test_repository_local_admin_and_public_api_build_definitions_are_identical(api_services):
+    """Shared source/build provenance only; not live image-ID parity."""
+    local_admin_build = _normalize_build(api_services["repository_local_admin"].get("build"))
     public_build = _normalize_build(api_services["public"].get("build"))
-    assert private_build == public_build
+    assert local_admin_build == public_build
 
 
 def test_shared_api_build_is_repository_root_with_api_dockerfile(api_services):

@@ -1,13 +1,16 @@
-# Production Traefik routing definition.
+# Production Traefik routing definition for the public web service.
 #
-# IMPORTANT:
-# - Routers are intentionally disabled until production DNS resolves correctly.
-# - The service must also be attached to the external `coolify` network through
-#   docker-compose.coolify-network.yml.
+# Current state:
+# - Routing is enabled (traefik.enable: "true"): the HTTP router redirects to
+#   HTTPS and the HTTPS router serves the internal web container port 80.
+# - The web service must also be attached to the external `coolify` network
+#   through docker-compose.coolify-network.yml.
 # - No host port is published by this override.
+# - The Atlas-only HSTS middleware is attached to the HTTPS router only, with
+#   includeSubDomains and preload intentionally disabled.
 #
-# Activation requires an explicit later change:
-#   traefik.enable: "false" -> "true"
+# These labels are source configuration only; they do not prove that the live
+# Traefik router, DNS or certificate is healthy.
 
 services:
   web:

@@ -1,6 +1,6 @@
 # Atlas DataFlow — Current Architecture Overview
 
-> Snapshot documental baseado no estado auditado em 31 de agosto de 2026. Este documento descreve o comportamento implementado; decisões normativas e histórico de evolução permanecem em `docs/architecture.md`, `docs/vision.md` e `docs/milestones.md`.
+> Visão geral fundamentada no estado atual do repositório. O cursor operacional autoritativo é `docs/project-status/milestone-state.json`; quando este resumo divergir dele, vale o arquivo de estado. Este documento descreve o comportamento implementado; decisões normativas e histórico de evolução permanecem em `docs/architecture.md`, `docs/vision.md` e `docs/milestones.md`.
 
 ## 1. Propósito e fronteira
 
@@ -10,8 +10,9 @@ O projeto deliberadamente possui uma interface com qualidade de produto, porém 
 
 ## 2. Estado atual
 
-- Milestone operacional ativo: `M49 — First-Version Release Readiness and Evidence Gate`.
-- Último milestone concluído: `M48 — Design Acceptance Gap Reduction Pass`.
+- Milestone operacional ativo: `M53 — Security Validation and Public Readiness`.
+- Último milestone concluído: `M52 — Governed Public Inference Gateway and Usage Control`.
+- M53 é um milestone de validação orientado a evidência: não adiciona capability de produto e ainda não possui resultado de readiness registrado (ver seção 9).
 - Capabilities com perfil `current_supported`:
   - `binary-predictive-classification.v1`;
   - `multiclass-predictive-classification.v1`;
@@ -206,20 +207,31 @@ Uma migração ampla para `schemas/` ou `state/` dentro de cada área pode ser c
 
 Nunca criar um diretório global `json/`: ele misturaria schemas, configuração, evidência, estado mutável e pacotes de release que possuem lifecycle e responsáveis diferentes.
 
-## 9. Estado de documentação e readiness observado
+## 9. Segurança e fronteira de readiness (M53)
 
-Antes da abertura pública, revisar pelo menos:
+### 9.1 Controles mantidos pelo repositório
 
-1. substituir o README operacional antigo pelo README público;
-2. preencher as URLs reais do repositório em `web/src/pages/HomePage.tsx` e `web/src/layouts/PublicShell.tsx`, que ainda usam `<owner>/<atlas-repo>`;
-3. atualizar afirmações históricas em `docs/architecture.md` que dizem que apenas binary classification está operacional;
-4. reconciliar o texto de `HelpPage.tsx`, que ainda descreve a promoção do Dashboard como futura/desabilitada, com o endpoint e a UI atuais;
-5. definir deployment público real com domínio e certificado válidos, pois o Caddyfile atual usa `tls internal`;
-6. executar as suítes Python e frontend em ambientes com dependências instaladas;
-7. capturar e publicar os screenshots enumerados em `docs/readme-screenshot-plan.md`;
-8. verificar que nenhum admin route ou admin API esteja acessível no build público.
+Os milestones M50–M52 e as specs de hardening subsequentes deixaram no repositório os seguintes controles. Eles descrevem o que está implementado e versionado, não o resultado de uma validação ao vivo:
 
-Esses itens são de documentação e release readiness; não alteram a arquitetura central confirmada.
+- **Fronteira privado/público** — o modo privado (`docker-compose.yml`) habilita o Admin e exige a identidade do operador provisionado; o modo público (`docker-compose.prod.yml`) desabilita o Admin no backend e no build web, e a superfície Admin não é exposta publicamente (seção 7).
+- **Identidade e gateway (Supabase)** — o Supabase é dono da identidade do operador Admin, da identidade anônima do visitante, do estado de cota de inferência e do boundary do gateway (`inference-gateway`); o Atlas aceita inferência pública apenas pela credencial do gateway (seção 3.6). Operação: `docs/operations/inference-gateway-operations.md` e `docs/operations/admin-operator-provisioning.md`.
+- **Contenção do runtime** — limite de payload, limitador de concorrência e hardening de contêiner (usuário não-root, filesystem read-only, `no-new-privileges`, `cap_drop: ALL`) permanecem abaixo do gateway.
+- **Proveniência da imagem da API** — `tests/test_api_deployment_image_invariants.py` verifica estaticamente que as definições pública e privada da API compartilham o mesmo build e o mesmo envelope de segurança. Isso é uma invariante das definições de deployment, não prova de que as imagens em execução sejam idênticas.
+- **Recuperação de desastre** — `docs/operations/disaster-recovery.md` define o contrato de recuperação (classes de ativos, cenários de perda, ordem de restauração e evidência reduzida). A existência do runbook não comprova que backup ou restore tenham sido executados.
+
+### 9.2 Fronteira de evidência
+
+A readiness do M53 é derivada exclusivamente de evidência registrada, conforme o contrato do milestone em `docs/milestones.md`. O resultado agregado só pode ser `ready`, `ready_with_documented_reservations` ou `blocked`, e nenhum desses valores foi registrado até o momento. Este documento não declara o M53 concluído nem o Atlas pronto para exposição pública.
+
+Itens que permanecem pendentes de evidência ao vivo e não devem ser lidos como concluídos:
+
+1. limites de CPU, memória e PID — nenhum valor está definido no repositório; a medição e o mecanismo de enforcement estão pendentes (`docs/operations/inference-gateway-operations.md`);
+2. backup e restore — o contrato existe, mas nenhum exercício de restauração está registrado como evidência (`docs/operations/disaster-recovery.md`);
+3. identidade das imagens em produção — a igualdade de proveniência é estática; a identidade das imagens efetivamente implantadas não está evidenciada;
+4. suítes de auth, gateway/cota, runtime, payload, infraestrutura e regressão exigidas pelo M53 — devem ser executadas e registradas antes de qualquer resultado de readiness;
+5. deployment público com domínio e certificado válidos — o `Caddyfile` versionado usa `tls internal`.
+
+O checklist histórico de abertura pública da primeira versão (M49) foi substituído por esta fronteira; seus resultados permanecem em `docs/operations/first-version-readiness.md`.
 
 ## 10. Referências
 
@@ -227,6 +239,9 @@ Esses itens são de documentação e release readiness; não alteram a arquitetu
 - `docs/vision.md` — propósito e não objetivos;
 - `docs/milestones.md` — evolução planejada;
 - `docs/project-status/milestone-state.json` — cursor operacional;
+- `docs/operations/inference-gateway-operations.md` — gateway, cota e limites pendentes;
+- `docs/operations/admin-operator-provisioning.md` — provisionamento do operador Admin;
+- `docs/operations/disaster-recovery.md` — contrato de recuperação de desastre;
 - `docs/operations/dataset-onboarding-path.md` — narrativa de onboarding;
 - `docs/operations/release-flow.md` — checklist de release;
 - `pipeline/capabilities/` — capabilities atualmente contratadas;

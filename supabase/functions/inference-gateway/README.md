@@ -2,9 +2,10 @@
 
 Supabase Edge Function that sits between the public web client and Atlas
 `POST /datasets/{dataset_slug}/inference`. It verifies an anonymous visitor JWT,
-atomically reserves one quota unit through `public.reserve_inference_usage`
-(M52-03), and only then forwards the request to Atlas with the dedicated
-gateway credential header. When the limit is reached it answers `429` with an
+atomically reserves one quota unit through
+`public.reserve_inference_usage(p_subject_id)` (M52-03, globalized by S0300),
+and only then forwards the request to Atlas with the dedicated gateway
+credential header. When the limit is reached it answers `429` with an
 integer `Retry-After` and never calls Atlas.
 
 Files:
@@ -91,6 +92,17 @@ confirming the signing-key mode is an operator check.
 ## Quota and failure semantics
 
 - The subject is the verified `sub`; no client IP is ever read.
+- The budget is global per subject (S0300): 10 accepted reservations per
+  verified anonymous subject per fixed 10-minute UTC window,
+  across all datasets. The handler's `reserve(subjectId)` dependency receives the subject
+  only; the dataset slug selects the Atlas route and appears in the log line,
+  but never reaches the reservation, so changing datasets does not reset the
+  budget. Another anonymous subject still gets its own budget; cross-identity
+  containment is reserved for S0305.
+- The canonical RPC is `reserve_inference_usage(p_subject_id)`. The
+  two-argument `reserve_inference_usage(p_subject_id, p_dataset_slug)` remains
+  in the database for compatibility only (migration-first rollout and function
+  rollback) and reserves from the same global subject budget.
 - The reservation runs with the `service_role` key, never the visitor token. An
   RPC error, exception or malformed result returns `503
   GATEWAY_RESERVATION_UNAVAILABLE` and is never treated as allowed.

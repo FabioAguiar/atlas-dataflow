@@ -16,6 +16,7 @@ const ORIGIN = "https://atlas.example.test";
 const ATLAS_TOKEN = "atlas-token-placeholder-value";
 const BASE_URL = "https://atlas-origin.example.test/api";
 const SUBJECT = "visitor-subject-1";
+const OTHER_SUBJECT = "visitor-subject-2";
 const SLUG = "telco-churn";
 const VALID_BODY = JSON.stringify({ features: { tenure: 12 } });
 const LIMIT = 10;
@@ -34,14 +35,14 @@ const OUTCOMES = [
 interface Harness {
   deps: GatewayDeps;
   calls: string[];
-  reserveArgs: string[][];
+  reserveArgs: unknown[][];
   forwarded: { url: string; init: RequestInit }[];
   logs: string[];
 }
 
 interface Options {
   config?: Partial<GatewayConfig>;
-  reserve?: (subjectId: string, datasetSlug: string) => Promise<unknown>;
+  reserve?: (subjectId: string) => Promise<unknown>;
   forward?: (url: string, init: RequestInit) => Promise<Response>;
 }
 
@@ -56,7 +57,7 @@ function goodConfig(): GatewayConfig {
 
 function harness(options: Options = {}): Harness {
   const calls: string[] = [];
-  const reserveArgs: string[][] = [];
+  const reserveArgs: unknown[][] = [];
   const forwarded: { url: string; init: RequestInit }[] = [];
   const logs: string[] = [];
   const counts = new Map<string, number>();
@@ -64,6 +65,7 @@ function harness(options: Options = {}): Harness {
   const fakeVerify = async (token: string): Promise<Record<string, unknown>> => {
     calls.push("verify");
     if (token === "valid-anonymous") return { sub: SUBJECT, is_anonymous: true, role: "authenticated" };
+    if (token === "other-anonymous") return { sub: OTHER_SUBJECT, is_anonymous: true, role: "authenticated" };
     if (token === "admin-like") return { sub: "admin-1", is_anonymous: false, role: "authenticated" };
     if (token === "marker-missing") return { sub: "no-marker-1", role: "authenticated" };
     if (token === "blank-sub") return { sub: "   ", is_anonymous: true };
@@ -72,15 +74,13 @@ function harness(options: Options = {}): Harness {
     throw new Error("invalid token detail that must never be echoed");
   };
 
-  const fakeReserve = async (subjectId: string, datasetSlug: string): Promise<unknown> => {
-    calls.push("reserve");
-    reserveArgs.push([subjectId, datasetSlug]);
-    const key = `${subjectId}|${datasetSlug}`;
-    const next = (counts.get(key) ?? 0) + 1;
+  // Mirrors the S0300 database contract: one budget keyed only by subject.
+  const fakeReserve = async (subjectId: string): Promise<unknown> => {
+    const next = (counts.get(subjectId) ?? 0) + 1;
     if (next > LIMIT) {
       return [{ allowed: false, request_count: LIMIT, retry_after_seconds: RETRY_AFTER }];
     }
-    counts.set(key, next);
+    counts.set(subjectId, next);
     return [{ allowed: true, request_count: next, retry_after_seconds: RETRY_AFTER }];
   };
 
@@ -100,13 +100,13 @@ function harness(options: Options = {}): Harness {
   const deps: GatewayDeps = {
     config: { ...goodConfig(), ...(options.config ?? {}) },
     verifyJwt: fakeVerify,
-    reserve: async (subjectId, datasetSlug) => {
-      if (options.reserve) {
-        calls.push("reserve");
-        reserveArgs.push([subjectId, datasetSlug]);
-        return options.reserve(subjectId, datasetSlug);
-      }
-      return fakeReserve(subjectId, datasetSlug);
+    // Records every argument actually received so tests can prove the
+    // dataset slug never reaches the reservation.
+    reserve: async (...args: unknown[]) => {
+      calls.push("reserve");
+      reserveArgs.push(args);
+      const subjectId = args[0] as string;
+      return options.reserve ? options.reserve(subjectId) : fakeReserve(subjectId);
     },
     forward: async (url, init) => {
       if (options.forward) {
@@ -150,7 +150,7 @@ test("under-quota request is forwarded with the gateway credential and Atlas res
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), { prediction: "no", probability: 0.12 });
   assert.deepEqual(h.calls, ["verify", "reserve", "forward"]);
-  assert.deepEqual(h.reserveArgs, [[SUBJECT, SLUG]]);
+  assert.deepEqual(h.reserveArgs, [[SUBJECT]]);
 
   const { url, init } = h.forwarded[0];
   assert.equal(url, `${BASE_URL}/datasets/${SLUG}/inference`);
@@ -197,12 +197,71 @@ test("burst of concurrent requests forwards at most the limit", async () => {
   assert.equal(h.forwarded.length, LIMIT);
 });
 
-test("quota is keyed per verified subject and dataset slug", async () => {
+test("one global budget per subject: a different dataset does not open a fresh bucket", async () => {
   const h = harness();
-  for (let i = 0; i < LIMIT; i += 1) await handleRequest(post("valid-anonymous"), h.deps);
-  const otherDataset = await handleRequest(post("valid-anonymous", VALID_BODY, "other-dataset"), h.deps);
-  assert.equal(otherDataset.status, 200);
-  assert.deepEqual(h.reserveArgs[h.reserveArgs.length - 1], [SUBJECT, "other-dataset"]);
+  for (let i = 0; i < LIMIT - 1; i += 1) {
+    assert.equal((await handleRequest(post("valid-anonymous", VALID_BODY, "dataset-a"), h.deps)).status, 200);
+  }
+  assert.equal((await handleRequest(post("valid-anonymous", VALID_BODY, "dataset-b"), h.deps)).status, 200);
+  const limited = await handleRequest(post("valid-anonymous", VALID_BODY, "dataset-c", { origin: ORIGIN }), h.deps);
+
+  assert.equal(limited.status, 429);
+  assert.equal(limited.headers.get("retry-after"), String(RETRY_AFTER));
+  assert.deepEqual(await limited.json(), {
+    error: { code: "GATEWAY_QUOTA_EXCEEDED", message: "Request limit reached. Try again later." },
+  });
+  assert.equal(h.forwarded.length, LIMIT);
+  assert.equal(h.forwarded.filter((f) => f.url === `${BASE_URL}/datasets/dataset-a/inference`).length, LIMIT - 1);
+  assert.deepEqual(h.forwarded[LIMIT - 1].url, `${BASE_URL}/datasets/dataset-b/inference`);
+  assert.equal(h.forwarded.some((f) => f.url.includes("dataset-c")), false);
+
+  // The slug stays reduced-observability context for every outcome.
+  const entries = h.logs.map((line) => JSON.parse(line) as Record<string, string>);
+  assert.deepEqual(entries[entries.length - 1], {
+    event: "inference_gateway",
+    dataset_slug: "dataset-c",
+    outcome: "rate_limited",
+  });
+  assert.deepEqual(entries[LIMIT - 1], { event: "inference_gateway", dataset_slug: "dataset-b", outcome: "accepted" });
+});
+
+test("the reservation receives the verified subject only, never the dataset slug", async () => {
+  const h = harness();
+  for (const slug of ["dataset-a", "dataset-b", SLUG]) {
+    await handleRequest(post("valid-anonymous", VALID_BODY, slug), h.deps);
+  }
+  assert.deepEqual(h.reserveArgs, [[SUBJECT], [SUBJECT], [SUBJECT]]);
+  for (const args of h.reserveArgs) assert.equal(args.length, 1);
+});
+
+test("concurrent burst across five dataset slugs forwards exactly the global limit", async () => {
+  const h = harness();
+  const slugs = ["dataset-a", "dataset-b", "dataset-c", "dataset-d", "dataset-e"];
+  const requested = Array.from({ length: 15 }, (_, i) => slugs[i % slugs.length]);
+  const responses = await Promise.all(
+    requested.map((slug) => handleRequest(post("valid-anonymous", VALID_BODY, slug), h.deps)),
+  );
+  const statuses = responses.map((r) => r.status);
+  assert.equal(statuses.filter((s) => s === 200).length, LIMIT);
+  assert.equal(statuses.filter((s) => s === 429).length, 5);
+  assert.equal(h.forwarded.length, LIMIT);
+  assert.equal(h.reserveArgs.length, 15);
+  // Each accepted request is forwarded to its own dataset route only.
+  const forwardedSlugs = h.forwarded.map((f) => /\/datasets\/([^/]+)\/inference$/.exec(f.url)?.[1]);
+  const acceptedSlugs = requested.filter((_, i) => statuses[i] === 200);
+  assert.deepEqual([...forwardedSlugs].sort(), [...acceptedSlugs].sort());
+});
+
+test("another verified subject keeps an independent budget", async () => {
+  const h = harness();
+  for (let i = 0; i < LIMIT; i += 1) await handleRequest(post("valid-anonymous", VALID_BODY, `dataset-${i}`), h.deps);
+  assert.equal((await handleRequest(post("valid-anonymous", VALID_BODY, "dataset-x"), h.deps)).status, 429);
+  for (let i = 0; i < LIMIT; i += 1) {
+    assert.equal((await handleRequest(post("other-anonymous", VALID_BODY, "dataset-x"), h.deps)).status, 200);
+  }
+  assert.equal((await handleRequest(post("other-anonymous", VALID_BODY, SLUG), h.deps)).status, 429);
+  assert.deepEqual(h.reserveArgs[h.reserveArgs.length - 1], [OTHER_SUBJECT]);
+  assert.equal(h.logs.some((line) => line.includes(SUBJECT) || line.includes(OTHER_SUBJECT)), false);
 });
 
 test("missing, malformed and invalid tokens yield a generic 401 before reservation", async () => {
@@ -480,7 +539,7 @@ test("the subject comes only from the verified sub, never from request headers",
     h.deps,
   );
   assert.equal(response.status, 200);
-  assert.deepEqual(h.reserveArgs, [[SUBJECT, SLUG]]);
+  assert.deepEqual(h.reserveArgs, [[SUBJECT]]);
   const sent = h.forwarded[0].init.headers as Headers;
   assert.equal(sent.get("x-forwarded-for"), null);
   assert.equal(sent.get("x-subject-id"), null);

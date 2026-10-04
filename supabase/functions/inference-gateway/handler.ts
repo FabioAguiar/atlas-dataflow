@@ -10,7 +10,10 @@
 //   route/method/slug -> config -> JWT -> anonymous check -> cheap
 //   pre-reservation validation -> atomic reservation -> forward.
 // The gateway never computes the quota window or limit and has no
-// decrement/restore path: a consumed unit stays consumed.
+// decrement/restore path: a consumed unit stays consumed. The quota is one
+// global budget per verified subject (S0300): the dataset slug selects the
+// Atlas route and appears in the reduced log, but never reaches the
+// reservation.
 
 export const FUNCTION_NAME = "inference-gateway";
 export const SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -46,9 +49,10 @@ export interface GatewayDeps {
   config: GatewayConfig;
   // Resolves to the verified JWT claims or rejects for any invalid token.
   verifyJwt: (token: string) => Promise<Record<string, unknown>>;
-  // Resolves to the raw RPC data of public.reserve_inference_usage; rejects on
-  // any RPC error. The handler validates the shape itself.
-  reserve: (subjectId: string, datasetSlug: string) => Promise<unknown>;
+  // Resolves to the raw RPC data of the subject-only
+  // public.reserve_inference_usage(p_subject_id); rejects on any RPC error.
+  // The handler validates the shape itself.
+  reserve: (subjectId: string) => Promise<unknown>;
   forward: (url: string, init: RequestInit) => Promise<Response>;
   // Receives exactly one JSON line per handled (non-preflight) request.
   log: (line: string) => void;
@@ -387,10 +391,11 @@ export async function handleRequest(request: Request, deps: GatewayDeps): Promis
   if (body === null) return finish(errorResponse("PAYLOAD_TOO_LARGE", cors), "rejected_invalid");
   if (!isJson(body)) return finish(errorResponse("INVALID_REQUEST", cors), "rejected_invalid");
 
-  // 6. atomic reservation; any failure or malformed result fails closed
+  // 6. atomic global subject reservation (no dataset dimension); any failure
+  //    or malformed result fails closed
   let reservation: Reservation | null;
   try {
-    reservation = parseReservation(await deps.reserve(subject, slug));
+    reservation = parseReservation(await deps.reserve(subject));
   } catch {
     reservation = null;
   }

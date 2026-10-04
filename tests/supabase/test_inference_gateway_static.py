@@ -6,6 +6,7 @@ native type stripping, else deno) is installed and skips with an explicit
 reason otherwise.
 """
 
+import hashlib
 import re
 import shutil
 import subprocess
@@ -22,6 +23,8 @@ README = FUNCTION_DIR / "README.md"
 CONFIG = REPO_ROOT / "supabase" / "config.toml"
 MIGRATIONS_DIR = REPO_ROOT / "supabase" / "migrations"
 MIGRATION = MIGRATIONS_DIR / "20260920000000_create_inference_usage.sql"
+GLOBAL_MIGRATION = MIGRATIONS_DIR / "20261004000000_globalize_inference_usage_quota.sql"
+BASE_MIGRATION_SHA256 = "9a58d172762ac3ef387e672f7f7da4a6dbf97c08381655b170b0e5b9e19f9cd3"
 
 IP_HEADER_NAMES = [
     "x-forwarded-for",
@@ -112,6 +115,7 @@ def test_verification_uses_jwks_and_service_role_reservation_only():
     assert 'audience: "authenticated"' in index
     assert "algorithms:" in index
     assert '"reserve_inference_usage"' in index
+    assert index.count("reservationClient.rpc(") == 1
     assert "SUPABASE_SERVICE_ROLE_KEY" in index
     assert "persistSession: false" in index and "autoRefreshToken: false" in index
 
@@ -161,20 +165,40 @@ def test_readme_documents_secrets_with_placeholders_only():
     assert not re.search(r"eyJ[A-Za-z0-9_-]{10,}\.", readme)
 
 
-def test_supabase_migrations_are_untouched():
-    assert sorted(p.name for p in MIGRATIONS_DIR.iterdir()) == [MIGRATION.name]
+def test_gateway_reserves_a_global_subject_budget_without_the_dataset_slug():
+    handler = _strip_comments(_text(HANDLER))
+    index = _strip_comments(_text(ENTRYPOINT))
+    assert "reserve: (subjectId: string) => Promise<unknown>;" in handler
+    assert "deps.reserve(subject)" in handler
+    assert re.findall(r"deps\.reserve\(([^)]*)\)", handler) == ["subject"]
+    rpc = re.search(r'reservationClient\.rpc\("reserve_inference_usage", \{(.*?)\}\)', index, re.DOTALL)
+    assert rpc, "reservation RPC call not found"
+    assert re.findall(r"(\w+):", rpc.group(1)) == ["p_subject_id"]
+    assert "p_dataset_slug" not in index
+    assert "reserve: async (subjectId: string) =>" in index
+    # The slug still selects the Atlas route and stays in the reduced log.
+    assert "/datasets/${slug}/inference" in handler
+    assert "entry.dataset_slug = datasetSlug" in handler
+
+
+def test_supabase_migrations_keep_the_base_and_add_only_the_global_upgrade():
+    assert sorted(p.name for p in MIGRATIONS_DIR.iterdir()) == [MIGRATION.name, GLOBAL_MIGRATION.name]
+    assert hashlib.sha256(MIGRATION.read_bytes()).hexdigest() == BASE_MIGRATION_SHA256
     assert "public.reserve_inference_usage(" in _text(MIGRATION)
+    assert "CREATE OR REPLACE FUNCTION public.reserve_inference_usage(\n    p_subject_id text\n)" in _text(
+        GLOBAL_MIGRATION
+    )
     if shutil.which("git") is None:
         return
     result = subprocess.run(
-        ["git", "diff", "--quiet", "HEAD", "--", "supabase/migrations"],
+        ["git", "diff", "--quiet", "HEAD", "--", str(MIGRATION.relative_to(REPO_ROOT))],
         cwd=REPO_ROOT,
         capture_output=True,
         timeout=60,
     )
     if result.returncode not in (0, 1):
         return  # not a git checkout or HEAD unavailable; static checks above still ran
-    assert result.returncode == 0, "supabase/migrations differs from HEAD"
+    assert result.returncode == 0, "the historical base migration differs from HEAD"
 
 
 def _node_supports_type_stripping(node: str) -> bool:

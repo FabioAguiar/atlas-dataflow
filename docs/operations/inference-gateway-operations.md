@@ -8,14 +8,32 @@ Public inference requests reach Atlas through the Supabase Edge Function `infere
 
 | Setting | Value | Source of truth |
 | --- | --- | --- |
-| Window | fixed 10-minute UTC window | `public.reserve_inference_usage` in `supabase/migrations/20260920000000_create_inference_usage.sql` |
-| Limit | 10 requests per subject per dataset per window | same migration |
-| Retention | 7 days | `public.purge_inference_usage(p_retention)` default |
+| Window | fixed 10-minute UTC window | `public.reserve_inference_usage_at` in `supabase/migrations/20261004000000_globalize_inference_usage_quota.sql` |
+| Limit | 10 requests per subject per window across all datasets | same migration (S0300) |
+| Retention | 7 days | `public.purge_inference_usage(p_retention)` default in `supabase/migrations/20260920000000_create_inference_usage.sql` |
 
+- Current policy (S0300): 10 accepted inference reservations per verified anonymous subject per fixed 10-minute window, across all datasets. Changing datasets does not reset the budget: 9 requests on one dataset plus 1 on another exhaust it for every dataset until the next window.
+- The subject is the verified Anonymous Auth `sub`, not a person. Changing to another anonymous subject still creates another subject budget; S0300 does not claim person-level identity or solve anonymous-identity churn. Cross-identity containment is an explicit reservation owned by S0305.
+- The dataset slug remains routing context (it selects the Atlas `/datasets/<slug>/inference` route) and reduced-observability context (the gateway log line); it is no longer part of the quota key and is not stored.
 - Both window and limit are hard-coded in the migration; the gateway never computes them and only relays `Retry-After` (1 to 600 seconds) from the reservation.
-- A consumed unit is never restored, including when Atlas rejects the payload or is unreachable.
-- Purge scheduling: the migration schedules `purge-inference-usage` daily through `pg_cron` only when that extension is already installed. Without `pg_cron`, the operator must invoke `public.purge_inference_usage()` on a schedule using `service_role`, otherwise usage storage is unbounded.
-- The usage table holds only subject id, dataset slug, window start, and request count.
+- A consumed unit is never restored or refunded, including when Atlas rejects the payload or is unreachable.
+- Purge scheduling: the base migration schedules `purge-inference-usage` daily through `pg_cron` only when that extension is already installed. Without `pg_cron`, the operator must invoke `public.purge_inference_usage()` on a schedule using `service_role`, otherwise usage storage is unbounded.
+- The usage table holds only subject id, window start, and request count.
+
+History: M52 shipped the quota as 10 requests per subject per dataset per window (`20260920000000_create_inference_usage.sql`, kept unchanged). S0300 replaced that with the global subject budget through a forward migration.
+
+## Global budget upgrade (S0300)
+
+`supabase/migrations/20261004000000_globalize_inference_usage_quota.sql` upgrades the key from `(subject_id, dataset_slug, window_start)` to `(subject_id, window_start)`:
+
+- It runs under an `ACCESS EXCLUSIVE` table lock in one transaction (Supabase CLI, or `psql --single-transaction`); applied statement by statement it stops at the first `LOCK TABLE` without changing anything.
+- Existing rows are collapsed per subject and window to the sum of their per-dataset counts, clamped at 10. Consumed usage is never reduced and nothing is reset; a subject already over 10 in total stays blocked until the next window.
+- `public.reserve_inference_usage(p_subject_id)` is the canonical gateway RPC.
+- `public.reserve_inference_usage(p_subject_id, p_dataset_slug)` is **compatibility only**: it validates the slug (1 to 128 characters) and then reserves from the same global subject budget. It never stores or keys on the slug, so it cannot restore a per-dataset budget.
+- `service_role` may execute both wrappers and the purge function only; it has no direct table access and no access to the controllable-clock seam `public.reserve_inference_usage_at(text, timestamptz)`. `anon` and `authenticated` have no table or function access, and RLS stays enabled without policies.
+- A reservation already waiting on the lock while the migration commits returns an RPC error, which the gateway turns into `503` (fail closed); it is never counted against the old key.
+
+Rollout order: apply the migration first (the deployed pre-S0300 gateway keeps working through the compatibility signature, already with global semantics), then deploy the updated `inference-gateway`. Rolling the function back to the pre-S0300 version stays database-compatible for the same reason. If PostgREST does not pick up the new overload automatically, reload its schema cache before deploying the function. There is no database down-migration.
 
 ## Environments and network model
 
@@ -67,7 +85,7 @@ The platform injects `SUPABASE_URL` and the service-role key into the function; 
 
 1. Ensure the Atlas-specific Supabase project/stack exposes **asymmetric signing keys** (ES256/RS256/EdDSA). A legacy HS256-only stack rejects every token (fail closed); there is no HS256 fallback.
 2. Enable Anonymous Auth. Provision the Admin operator first (see [admin-operator-provisioning](admin-operator-provisioning.md)), then disable email signup.
-3. Apply the migration `supabase/migrations/20260920000000_create_inference_usage.sql` and confirm purge scheduling (see above): `pg_cron` where installed, otherwise an external scheduler calling `public.purge_inference_usage()` with `service_role`.
+3. Apply the migrations `supabase/migrations/20260920000000_create_inference_usage.sql` and then `supabase/migrations/20261004000000_globalize_inference_usage_quota.sql` (see the S0300 upgrade above) and confirm purge scheduling (see above): `pg_cron` where installed, otherwise an external scheduler calling `public.purge_inference_usage()` with `service_role`.
 4. Provision the function secrets listed above.
 5. Deploy the `inference-gateway` function.
 6. Set `ATLAS_INFERENCE_GATEWAY_TOKEN` for the Atlas `api` service, attach it to the shared network (self-hosted) and recreate it.

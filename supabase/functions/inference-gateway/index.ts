@@ -49,11 +49,12 @@ Deno.serve((request: Request) =>
       });
       return payload as Record<string, unknown>;
     },
-    reserve: async (subjectId: string, datasetSlug: string) => {
+    // Canonical subject-only RPC (S0300): one budget per subject across all
+    // datasets. The two-argument signature exists only for rollback.
+    reserve: async (subjectId: string) => {
       if (reservationClient === null) throw new Error("reservation unavailable");
       const { data, error } = await reservationClient.rpc("reserve_inference_usage", {
         p_subject_id: subjectId,
-        p_dataset_slug: datasetSlug,
       });
       if (error) throw new Error("reservation failed");
       return data;

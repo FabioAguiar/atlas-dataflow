@@ -606,5 +606,38 @@ def test_nottingham_publisher_run_materialization_is_visible_in_admin_listing(tm
     assert (candidate_dir / "release-candidate.json").is_file()
 
 
-def test_no_real_nottem_candidate_directory_created_under_real_repository_tree():
-    assert not (REPO_ROOT / "releases" / "candidates" / DATASET_SLUG).exists()
+def _real_tree_snapshot(root: Path) -> dict[str, str]:
+    """Relative path -> sha256 of every file under ``root`` (empty if absent)."""
+    if not root.exists():
+        return {}
+    return {
+        str(path.relative_to(root)): _sha256_file(path)
+        for path in sorted(root.rglob("*"))
+        if path.is_file()
+    }
+
+
+def test_publisher_run_flow_never_mutates_the_real_repository_tree(tmp_path, monkeypatch):
+    """The real checkout may legitimately contain governed nottem candidates,
+    Publisher Runs and releases produced by the real notebook workflow, so
+    their existence is not asserted away. Instead the fixture-only flow above
+    is re-run here and the real candidate/run/release/registry state must be
+    byte-for-byte identical before and after it, with the fixture's release
+    identity never appearing in the real tree."""
+    watched_roots = {
+        "candidates": REPO_ROOT / "releases" / "candidates" / DATASET_SLUG,
+        "runs": REPO_ROOT / "publisher" / "runs",
+        "fixture_release": REPO_ROOT / "releases" / RELEASE_ID,
+        "fixture_candidate": REPO_ROOT / "releases" / "candidates" / DATASET_SLUG / RELEASE_ID,
+    }
+    registry = REPO_ROOT / "registry" / "datasets.json"
+    before = {name: _real_tree_snapshot(root) for name, root in watched_roots.items()}
+    registry_before = _sha256_file(registry) if registry.is_file() else None
+
+    test_nottingham_publisher_run_materialization_is_visible_in_admin_listing(tmp_path, monkeypatch)
+
+    after = {name: _real_tree_snapshot(root) for name, root in watched_roots.items()}
+    assert after == before
+    assert (_sha256_file(registry) if registry.is_file() else None) == registry_before
+    assert not watched_roots["fixture_release"].exists()
+    assert not watched_roots["fixture_candidate"].exists()

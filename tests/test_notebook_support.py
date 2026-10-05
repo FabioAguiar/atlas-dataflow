@@ -2,6 +2,7 @@
 and the guarantee that the four real notebooks use it instead of
 copy-pasted helper definitions."""
 
+import ast
 import hashlib
 import json
 import sys
@@ -96,9 +97,26 @@ def test_notebook_uses_shared_helpers_instead_of_local_copies(slug):
     assert f'dataset_slug = "{slug}"' in code
 
 
+# Some governed notebooks carry a deliberately committed execution record
+# (e.g. "record post-refactor notebook execution artifacts"), so "static" means
+# the committed record is safe to read without executing anything -- not that
+# every notebook is unexecuted.
+_SAFE_OUTPUT_TYPES = {"execute_result", "display_data", "stream"}
+_SAFE_OUTPUT_MIME_TYPES = {"text/plain", "text/html"}
+_LOCAL_PATH_MARKERS = ("/home/", "/Users/", "/workspace/", "/root/", "C:\\")
+
+
 @pytest.mark.parametrize("slug", NOTEBOOK_SLUGS)
 def test_notebook_is_static(slug):
-    for cell in _notebook(slug)["cells"]:
-        if cell["cell_type"] == "code":
-            assert cell["outputs"] == []
-            assert cell["execution_count"] is None
+    for index, cell in enumerate(_notebook(slug)["cells"]):
+        if cell["cell_type"] != "code":
+            continue
+        ast.parse("".join(cell["source"]))
+        assert isinstance(cell["outputs"], list), index
+        if cell["execution_count"] is None:
+            assert cell["outputs"] == [], f"cell {index}: outputs without an execution record"
+        for output in cell["outputs"]:
+            assert output["output_type"] in _SAFE_OUTPUT_TYPES, f"cell {index}: {output['output_type']}"
+            assert set(output.get("data", {})) <= _SAFE_OUTPUT_MIME_TYPES, f"cell {index}: binary output"
+            rendered = json.dumps(output)
+            assert not any(marker in rendered for marker in _LOCAL_PATH_MARKERS), f"cell {index}: local path"

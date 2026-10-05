@@ -631,10 +631,34 @@ def test_notebook_requires_the_native_orchestration_calls():
     assert "materialize_external_fitted_model" not in code
 
 
+# The governed notebooks may carry a deliberately committed execution record
+# (e.g. "record post-refactor notebook execution artifacts"); static safety is
+# therefore about what that record may contain, never about executing it.
+_SAFE_OUTPUT_TYPES = {"execute_result", "display_data", "stream"}
+_SAFE_OUTPUT_MIME_TYPES = {"text/plain", "text/html"}
+_LOCAL_PATH_MARKERS = ("/home/", "/Users/", "/workspace/", "/root/", "C:\\")
+
+
+def _assert_recorded_outputs_are_static_safe(notebook: dict) -> None:
+    for index, cell in enumerate(notebook["cells"]):
+        if cell["cell_type"] != "code":
+            continue
+        ast.parse("".join(cell["source"]))
+        outputs = cell["outputs"]
+        assert isinstance(outputs, list), index
+        if cell.get("execution_count") is None:
+            assert outputs == [], f"cell {index}: outputs without an execution record"
+        for output in outputs:
+            assert output["output_type"] in _SAFE_OUTPUT_TYPES, f"cell {index}: {output['output_type']}"
+            assert set(output.get("data", {})) <= _SAFE_OUTPUT_MIME_TYPES, f"cell {index}: binary output"
+            rendered = json.dumps(output)
+            assert not any(marker in rendered for marker in _LOCAL_PATH_MARKERS), f"cell {index}: local path"
+
+
 def test_notebook_tests_are_static_and_need_no_external_files_or_model_bytes():
-    notebook = _notebook()
-    assert all(cell.get("execution_count") is None for cell in notebook["cells"] if cell["cell_type"] == "code")
-    assert all(cell.get("outputs") == [] for cell in notebook["cells"] if cell["cell_type"] == "code")
+    # Reads only the notebook JSON: never executes it, never opens the external
+    # study checkout, a dataset or model bytes.
+    _assert_recorded_outputs_are_static_safe(_notebook())
 
 
 def test_notebook_never_requires_real_telco_checkout_or_model_bytes_to_be_parsed():

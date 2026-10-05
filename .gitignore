@@ -4,10 +4,10 @@
 .env.*
 !.env.example
 
-# Python
+# Python (bytecode caches and virtualenvs)
 __pycache__/
 *.py[cod]
-*.pyo
+*$py.class
 .venv/
 venv/
 
@@ -22,11 +22,6 @@ build/
 *.swo
 .idea/
 .vscode/
-
-# Python cache
-__pycache__/
-*.py[cod]
-*$py.class
 
 # Pytest/cache
 .pytest_cache/
@@ -72,8 +67,3 @@ pipeline/prepared/
 # Generated Dataset Documentation image uploads are local runtime data, not
 # repository source.
 /media/documentation/
-
-
-#Others
-HTTP
-permitido

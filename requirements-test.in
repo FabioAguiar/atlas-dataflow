@@ -1,0 +1,32 @@
+# Canonical Python test-environment input (Project Spec S0301).
+#
+# The test environment is compiled from repository-owned metadata only; this
+# file adds no requirement of its own so that no dependency range has two
+# sources of truth:
+#
+#   api/pyproject.toml                         API/runtime dependencies
+#                                              (fastapi, PyJWT[crypto],
+#                                              pandas/scikit-learn/joblib pins)
+#   pyproject.toml [scientific-forecasting]    statsmodels for the offline
+#                                              scientific reproduction tests
+#   pyproject.toml [test]                      direct test-only tools
+#                                              (pytest, httpx, PyYAML, psycopg)
+#
+# Regenerate the exact lock with pip-tools under Python 3.12, from the
+# repository root, with exactly this command:
+#
+#   pip-compile --allow-unsafe --strip-extras \
+#     --extra=scientific-forecasting --extra=test \
+#     --output-file=requirements-test.lock.txt \
+#     api/pyproject.toml pyproject.toml requirements-test.in
+#
+# (pip-compile 7.x echoes its default "--no-index" in the lock header; there it
+# only means that no index URL is written into the lock.)
+#
+# Install it into a fresh Python 3.12 virtual environment with:
+#
+#   python -m pip install --require-virtualenv -r requirements-test.lock.txt
+#   python -m pip check
+#
+# Never add credentials, private index URLs or local absolute paths here or in
+# the lock (tests/test_test_environment_contract.py enforces this).

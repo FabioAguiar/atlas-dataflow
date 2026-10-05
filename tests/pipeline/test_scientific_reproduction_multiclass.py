@@ -886,10 +886,19 @@ def test_v1_telco_reports_still_validate_and_telco_contract_stays_v1():
     telco = json.loads(TELCO_CONTRACT.read_text(encoding="utf-8"))
     assert telco["schema_version"] == "scientific-study-contract.v1"
     assert ssc.validate_contract_schema(telco) == []
+    # The Telco run history is write-once evidence: the first runs were
+    # recorded with report v1 and later runs with the engine's current binary/
+    # multiclass report v2. Historical v1 reports must keep validating against
+    # the v1 schema, and every later Telco report must be a governed binary
+    # report version that validates against its own declared schema.
+    governed_binary_report_versions = {sr.REPORT_SCHEMA_VERSION_V1, sr.REPORT_SCHEMA_VERSION}
+    seen_versions = set()
     for path in sorted((REPO_ROOT / "pipeline/scientific-reproduction-runs/telco-customer-churn").glob("*/reproduction-report.json")):
         report = json.loads(path.read_text(encoding="utf-8"))
-        assert report["schema_version"] == "scientific-reproduction-report.v1"
-        assert sr.validate_report_schema(report) == []
+        assert report["schema_version"] in governed_binary_report_versions, path
+        assert sr.validate_report_schema(report) == [], path
+        seen_versions.add(report["schema_version"])
+    assert sr.REPORT_SCHEMA_VERSION_V1 in seen_versions
 
 
 def test_environment_classification_for_dry_bean_reference():

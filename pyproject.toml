@@ -17,6 +17,20 @@ dependencies = []
 # reproduction runtime is classified against the contract's core packages, so
 # this range only admits the minor line the pinned contract is compatible with.
 scientific-forecasting = ["statsmodels>=0.15,<0.16"]
+# Direct test-only tools of the repository test suite. Application/API runtime
+# dependencies are NOT repeated here: they stay owned by api/pyproject.toml and
+# the scientific-forecasting extra above. The canonical, exactly pinned test
+# environment is compiled from all three by requirements-test.in into
+# requirements-test.lock.txt (see docs/operations/application-release-gate.md).
+test = [
+  "pytest>=8.3,<10",
+  # fastapi.testclient transport
+  "httpx>=0.27,<1",
+  "PyYAML>=6.0,<7",
+  # live Postgres reservation tests (tests/supabase); they still skip unless a
+  # database is provided, but psycopg itself must be importable
+  "psycopg[binary]>=3.2,<4",
+]
 
 [tool.setuptools]
 include-package-data = false

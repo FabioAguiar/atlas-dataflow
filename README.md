@@ -240,14 +240,16 @@ docker compose down
 
 ## Validação
 
-Com as dependências de desenvolvimento instaladas:
+O gate canônico de release da aplicação roda em um checkout Git real, como usuário não-root, com Python 3.12 e Node.js 22. O ambiente Python de teste é instalado somente a partir do lock versionado:
 
 ```bash
-python -m pytest -q
-npm --prefix web ci
-npm --prefix web test
-npm --prefix web run build
+python3.12 -m venv .venv
+.venv/bin/python -m pip install --require-virtualenv -r requirements-test.lock.txt
+. .venv/bin/activate
+scripts/validate-application-release-gate.sh
 ```
+
+O wrapper executa `pip check`, pytest completo, `npm ci`, os gates de `npm audit`, Vitest completo, build de produção, a varredura de artefatos de build indevidos e a higiene do repositório, parando na primeira falha. O mesmo gate roda no CI (`.github/workflows/application-ci.yml`, check agregado `application-release-gate`) junto com Gitleaks e ShellCheck. Detalhes, skips intencionais e o estado da proteção de branch: [docs/operations/application-release-gate.md](docs/operations/application-release-gate.md).
 
 As validações cobrem contratos, capability profiles, treinamento, bundles, runtime, API, publisher, registry, superfícies públicas e fluxos administrativos.
 

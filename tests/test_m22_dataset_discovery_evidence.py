@@ -1555,6 +1555,9 @@ def _build_forecasting_history_input_policy_intent(**overrides):
     kwargs = dict(
         review_status="approved",
         minimum_observation_count=1,
+        # Issue M50-04: mandatory explicit governed upper bound (the nottem
+        # integration declares 240); never defaulted by the builder.
+        maximum_observation_count=240,
         required_anchor=_forecasting_required_anchor(),
         forecast_origin_source="last_validated_history_index",
         review_notes="Reviewed history-input policy.",
@@ -1568,12 +1571,14 @@ def test_forecasting_history_input_policy_intent_approved_shape():
     assert intent["schema_version"] == UNIVARIATE_FORECASTING_HISTORY_INPUT_POLICY_INTENT_CONTRACT_VERSION
     assert intent["review_status"] == "approved"
     assert intent["minimum_observation_count"] == 1
+    assert intent["maximum_observation_count"] == 240
     assert intent["required_anchor"] == _forecasting_required_anchor()
     assert intent["forecast_origin_source"] == "last_validated_history_index"
     assert set(intent.keys()) == {
         "schema_version",
         "review_status",
         "minimum_observation_count",
+        "maximum_observation_count",
         "required_anchor",
         "forecast_origin_source",
         "review_notes",
@@ -1620,6 +1625,40 @@ def test_forecasting_history_input_policy_intent_rejects_bool_minimum_observatio
 def test_forecasting_history_input_policy_intent_accepts_larger_minimum_observation_count():
     intent = _build_forecasting_history_input_policy_intent(minimum_observation_count=24)
     assert intent["minimum_observation_count"] == 24
+    assert intent["maximum_observation_count"] == 240
+
+
+def test_forecasting_history_input_policy_intent_requires_explicit_maximum_observation_count():
+    kwargs = dict(
+        review_status="approved",
+        minimum_observation_count=1,
+        required_anchor=_forecasting_required_anchor(),
+        forecast_origin_source="last_validated_history_index",
+    )
+    with pytest.raises(TypeError):
+        build_univariate_forecasting_history_input_policy_intent(**kwargs)
+
+
+@pytest.mark.parametrize("maximum_observation_count", [0, -1, 1.5, True, "240", None])
+def test_forecasting_history_input_policy_intent_rejects_invalid_maximum_observation_count(
+    maximum_observation_count,
+):
+    with pytest.raises(ValueError):
+        _build_forecasting_history_input_policy_intent(maximum_observation_count=maximum_observation_count)
+
+
+def test_forecasting_history_input_policy_intent_rejects_maximum_below_minimum_observation_count():
+    with pytest.raises(ValueError):
+        _build_forecasting_history_input_policy_intent(
+            minimum_observation_count=24, maximum_observation_count=23
+        )
+
+
+def test_forecasting_history_input_policy_intent_accepts_maximum_equal_to_minimum_observation_count():
+    intent = _build_forecasting_history_input_policy_intent(
+        minimum_observation_count=24, maximum_observation_count=24
+    )
+    assert intent["minimum_observation_count"] == intent["maximum_observation_count"] == 24
 
 
 def test_forecasting_history_input_policy_intent_rejects_not_required_anchor_presence():

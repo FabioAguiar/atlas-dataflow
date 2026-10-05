@@ -909,13 +909,27 @@ def test_prepared_dataset_metadata_content_sha256_match_resolves(
     assert reference == f"pipeline/prepared/{DATASET_SLUG}/prepared-data.csv"
 
 
+def _inference_bundle_v1_runtime_model_family_enum(schema: dict) -> list[str]:
+    """The tabular runtime model-family enum of the governed inference-bundle schema.
+
+    Since Project Spec S0245 the schema is a closed contract_version union
+    (``oneOf`` of ``$defs/inference_bundle_v1`` and the forecasting-only
+    ``$defs/inference_bundle_v2``), so the tabular families live in the v1
+    branch rather than at the schema root.
+    """
+    branches = [entry["$ref"] for entry in schema["oneOf"]]
+    assert "#/$defs/inference_bundle_v1" in branches
+    v1 = schema["$defs"]["inference_bundle_v1"]
+    return v1["properties"]["runtime_execution"]["properties"]["model_family"]["enum"]
+
+
 @pytest.mark.parametrize(
     "model_family",
     ["logistic_regression", "gradient_boosting", "random_forest", "hist_gradient_boosting"],
 )
 def test_inference_bundle_model_family_enums_preserve_supported_values(model_family: str) -> None:
     schema = json.loads(INFERENCE_BUNDLE_SCHEMA_PATH.read_text(encoding="utf-8"))
-    runtime_enum = schema["properties"]["runtime_execution"]["properties"]["model_family"]["enum"]
+    runtime_enum = _inference_bundle_v1_runtime_model_family_enum(schema)
     descriptor_enum = schema["$defs"]["binary_result_semantics"]["properties"]["model_descriptor"][
         "properties"
     ]["model_family"]["enum"]
@@ -928,7 +942,7 @@ def test_inference_bundle_model_family_enums_reject_unsupported_value() -> None:
     schema = json.loads(INFERENCE_BUNDLE_SCHEMA_PATH.read_text(encoding="utf-8"))
     unsupported = "unsupported_model_family"
 
-    assert unsupported not in schema["properties"]["runtime_execution"]["properties"]["model_family"]["enum"]
+    assert unsupported not in _inference_bundle_v1_runtime_model_family_enum(schema)
     assert unsupported not in schema["$defs"]["binary_result_semantics"]["properties"]["model_descriptor"][
         "properties"
     ]["model_family"]["enum"]

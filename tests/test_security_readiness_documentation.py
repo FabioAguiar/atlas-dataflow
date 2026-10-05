@@ -102,6 +102,33 @@ def _unconditional_claims(text: str) -> list[tuple[str, str]]:
     return hits
 
 
+# Pre-S0299 current-state claims superseded by the infrastructure-governed
+# resource-limit contract, executable image-parity invariants and the
+# infrastructure-owned production proxy/TLS topology (normalized text).
+_STALE_PRE_S0299_CLAIMS = {
+    "resource_limits_undefined": re.compile(
+        r"(?:cpu|memoria|memory|pid)[^.;\n]*(?:nenhum valor (?:esta )?definido|undefined|indefinid[oa]s?)"
+        r"|\bno (?:cpu|memory|pid)\b[^.;\n]*\bdefined\b"
+    ),
+    "image_parity_unevidenced": re.compile(
+        r"(?:identidade|igualdade|paridade|identity|equality|parity)[^.;\n]*imagens?[^.;\n]*"
+        r"(?:nao (?:esta )?evidenciad[oa]|unevidenced|not evidenced)"
+    ),
+    "local_caddy_as_production": re.compile(
+        r"caddyfile versionado usa tls intern|caddyfile[^.;\n]*(?:is|e) the (?:current )?(?:public )?production"
+    ),
+}
+
+
+def _stale_pre_s0299_claims(text: str) -> list[tuple[str, str]]:
+    hits = []
+    for sentence in _SENTENCE_SPLIT.split(_normalize(text)):
+        for name, pattern in _STALE_PRE_S0299_CLAIMS.items():
+            if pattern.search(sentence):
+                hits.append((name, sentence.strip()[:160]))
+    return hits
+
+
 def _stale_or_missing_cursor(text: str) -> list[str]:
     problems = []
     active = _milestones_on_labeled_lines(text, _ACTIVE_LABEL)
@@ -185,9 +212,29 @@ def test_overview_keeps_supabase_identity_and_gateway_ownership(normalized: str)
     assert re.search(r"identidade (?:exata )?do operador|operator identity", normalized)
 
 
-def test_overview_keeps_resource_limits_unresolved(normalized: str) -> None:
+def test_overview_describes_resource_limits_as_infrastructure_governed(normalized: str) -> None:
     assert re.search(r"\bcpu\b", normalized)
-    assert re.search(r"pendente|pending", normalized)
+    assert re.search(r"cpu[^\n]*infraestrutura|cpu[^\n]*infrastructure", normalized)
+    assert re.search(r"verificave(?:l|is) em runtime|runtime[- ]verifiable", normalized)
+
+
+def test_overview_describes_image_parity_as_executable_invariants(normalized: str) -> None:
+    assert re.search(r"invariantes? executave(?:l|is)|executable invariants?", normalized)
+    assert re.search(r"evidencia de runtime|runtime evidence", normalized)
+
+
+def test_overview_assigns_production_tls_proxy_topology_to_infrastructure(normalized: str) -> None:
+    assert re.search(r"(?:tls|proxy)[^\n]*repositorio de infraestrutura|infrastructure repository", normalized)
+    assert re.search(r"caddyfile[^\n]*(?:modelo local|local model)", normalized)
+
+
+def test_overview_preserves_s0300_global_subject_quota(normalized: str) -> None:
+    assert "s0300" in normalized
+    assert re.search(r"cota global por sujeito|global (?:per[- ]subject )?quota", normalized)
+
+
+def test_overview_has_no_stale_pre_s0299_current_state_claim(overview: str) -> None:
+    assert _stale_pre_s0299_claims(overview) == []
 
 
 def test_overview_has_no_unconditional_readiness_claim(overview: str) -> None:
@@ -204,6 +251,19 @@ def test_gate_rejects_stale_active_milestone_variant(overview: str) -> None:
     )
     assert stale != overview
     assert _stale_or_missing_cursor(stale)
+
+
+@pytest.mark.parametrize(
+    "stale",
+    [
+        "Limites de CPU, memória e PID — nenhum valor está definido no repositório.",
+        "No CPU, memory or PID limit value is defined by this repository.",
+        "A identidade das imagens efetivamente implantadas não está evidenciada.",
+        "O `Caddyfile` versionado usa `tls internal`.",
+    ],
+)
+def test_gate_rejects_stale_pre_s0299_claim_variant(overview: str, stale: str) -> None:
+    assert _stale_pre_s0299_claims(overview + "\n\n" + stale + "\n")
 
 
 def test_gate_rejects_missing_cursor_variant() -> None:

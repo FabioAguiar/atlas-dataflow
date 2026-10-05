@@ -1,0 +1,94 @@
+# Atlas DataFlow application CI (Project Spec S0301).
+#
+# Read-only validation of the application repository. The aggregate check
+# "application-release-gate" is the stable name intended for a later GitHub
+# branch-protection rule; configuring that rule is a separate, evidenced step.
+# This workflow never deploys, never touches production, Supabase, backups or
+# restores, and uses no repository secrets.
+name: application-ci
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: application-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  secret-scan:
+    name: secret-scan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      GITLEAKS_VERSION: "8.30.1"
+      GITLEAKS_SHA256: "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
+    steps:
+      - name: Check out full history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install pinned Gitleaks
+        run: |
+          set -euo pipefail
+          archive="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -fsSL --proto '=https' --tlsv1.2 -o "${RUNNER_TEMP}/${archive}" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${archive}"
+          printf '%s  %s\n' "${GITLEAKS_SHA256}" "${RUNNER_TEMP}/${archive}" | sha256sum --check --strict
+          mkdir -p "${RUNNER_TEMP}/gitleaks"
+          tar -xzf "${RUNNER_TEMP}/${archive}" -C "${RUNNER_TEMP}/gitleaks" gitleaks
+          echo "${RUNNER_TEMP}/gitleaks" >> "${GITHUB_PATH}"
+      - name: Scan the full Git history (redacted)
+        run: gitleaks git --redact --no-banner --exit-code 1 --log-level warn .
+
+  shell-lint:
+    name: shell-lint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: ShellCheck tracked shell scripts
+        run: |
+          set -euo pipefail
+          command -v shellcheck >/dev/null || { echo "shellcheck is not available" >&2; exit 1; }
+          shellcheck --version
+          git ls-files -z -- '*.sh' | xargs -0 --no-run-if-empty shellcheck --severity=style
+
+  application-release-gate:
+    name: application-release-gate
+    needs:
+      - secret-scan
+      - shell-lint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Python 3.12
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Set up Node.js 22
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+      - name: Install the committed Python test lock into a fresh virtual environment
+        run: |
+          set -euo pipefail
+          python -m venv "${RUNNER_TEMP}/atlas-test-venv"
+          "${RUNNER_TEMP}/atlas-test-venv/bin/python" -m pip install --require-virtualenv -r requirements-test.lock.txt
+          echo "${RUNNER_TEMP}/atlas-test-venv/bin" >> "${GITHUB_PATH}"
+      - name: Run the repository-owned application release gate
+        run: scripts/validate-application-release-gate.sh

@@ -348,7 +348,10 @@ def test_schema_does_not_remove_or_expand_external_fitted_model_vocabulary():
     assert "training-metrics.external-fitted-model.v2" not in metrics_enum
 
 
-def test_schema_reserves_analytical_visualizations_v3_vocabulary_only():
+def test_schema_admits_analytical_visualizations_v3_within_the_governed_vocabulary():
+    # The continuous-regression v3 vocabulary (S0227) is still admitted; the
+    # governed enum has since evolved additively with the forecasting v4/v6/v7
+    # versions (S0247/S0270/S0274), while the native binary v5 stays outside it.
     schema = json.loads(RELEASE_CANDIDATE_INPUT_SCHEMA_PATH.read_text())
     visualizations_prop = schema["properties"]["artifact_inputs"]["properties"]["visualizations"][
         "allOf"
@@ -357,7 +360,11 @@ def test_schema_reserves_analytical_visualizations_v3_vocabulary_only():
         "analytical-visualizations.v1",
         "analytical-visualizations.v2",
         "analytical-visualizations.v3",
+        "analytical-visualizations.v4",
+        "analytical-visualizations.v6",
+        "analytical-visualizations.v7",
     ]
+    assert "analytical-visualizations.v5" not in visualizations_prop["enum"]
 
 
 # ===========================================================================

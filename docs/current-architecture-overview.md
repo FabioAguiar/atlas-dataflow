@@ -182,7 +182,7 @@ O Dataset Detail possui `Overview`, `Inference` e `Documentation` quando a relea
 
 ### Público
 
-`docker-compose.prod.yml` desabilita admin no backend e no build web. O stack expõe serviços apenas para composição com uma camada de proxy/rede externa. HTTPS, domínio público e certificados válidos devem ser fornecidos pelo ambiente de deployment; o `Caddyfile` versionado usa TLS interno e não representa uma configuração pronta para internet.
+`docker-compose.prod.yml` desabilita admin no backend e no build web. O stack expõe serviços apenas para composição com uma camada de proxy/rede externa. A topologia pública de produção — proxy reverso, TLS, domínio e certificados — pertence ao repositório de infraestrutura (`atlas-dataflow-infra`), não a este repositório. O `Caddyfile` versionado aqui é apenas um modelo local de desenvolvimento e não descreve a topologia pública atual.
 
 Não existe login público no admin; o acesso privado exige a identidade do operador provisionado (sessão Supabase verificada pelo backend). Portanto, habilitar o admin e expô-lo diretamente à internet é uma configuração inválida para a primeira versão.
 
@@ -216,7 +216,9 @@ Os milestones M50–M52 e as specs de hardening subsequentes deixaram no reposit
 - **Fronteira privado/público** — o modo privado (`docker-compose.yml`) habilita o Admin e exige a identidade do operador provisionado; o modo público (`docker-compose.prod.yml`) desabilita o Admin no backend e no build web, e a superfície Admin não é exposta publicamente (seção 7).
 - **Identidade e gateway (Supabase)** — o Supabase é dono da identidade do operador Admin, da identidade anônima do visitante, do estado de cota de inferência e do boundary do gateway (`inference-gateway`); o Atlas aceita inferência pública apenas pela credencial do gateway (seção 3.6). Operação: `docs/operations/inference-gateway-operations.md` e `docs/operations/admin-operator-provisioning.md`.
 - **Contenção do runtime** — limite de payload, limitador de concorrência e hardening de contêiner (usuário não-root, filesystem read-only, `no-new-privileges`, `cap_drop: ALL`) permanecem abaixo do gateway.
-- **Proveniência da imagem da API** — `tests/test_api_deployment_image_invariants.py` verifica estaticamente que as definições pública e privada da API compartilham o mesmo build e o mesmo envelope de segurança. Isso é uma invariante das definições de deployment, não prova de que as imagens em execução sejam idênticas.
+- **Paridade de imagem da API** — `tests/test_api_deployment_image_invariants.py` verifica que as definições pública e privada da API compartilham o mesmo build e o mesmo envelope de segurança, e o deploy canônico do repositório de infraestrutura publica as duas a partir de tags de imagem escopadas por release. São invariantes executáveis; a paridade das imagens efetivamente em execução continua sujeita a evidência de runtime.
+- **Limites de recursos** — os limites de CPU, memória e PID são governados pelo contrato de limites de recursos do repositório de infraestrutura (S0299), aplicado pelos overlays de deployment e pelo preflight do deploy, e são verificáveis em runtime. Este repositório não redefine esses valores.
+- **Gate de release da aplicação** — `scripts/validate-application-release-gate.sh` e o workflow `.github/workflows/application-ci.yml` (check agregado `application-release-gate`) executam pytest completo no ambiente Python travado, Vitest completo, build de produção do frontend, gates de `npm audit`, higiene do repositório, varredura de segredos e validação de shell (`docs/operations/application-release-gate.md`). Um gate verde do repositório não é proteção de branch configurada no GitHub nem readiness de produção; a proteção de branch permanece pendente de evidência.
 - **Recuperação de desastre** — `docs/operations/disaster-recovery.md` define o contrato de recuperação (classes de ativos, cenários de perda, ordem de restauração e evidência reduzida). A existência do runbook não comprova que backup ou restore tenham sido executados.
 
 ### 9.2 Fronteira de evidência
@@ -225,11 +227,11 @@ A readiness do M53 é derivada exclusivamente de evidência registrada, conforme
 
 Itens que permanecem pendentes de evidência ao vivo e não devem ser lidos como concluídos:
 
-1. limites de CPU, memória e PID — nenhum valor está definido no repositório; a medição e o mecanismo de enforcement estão pendentes (`docs/operations/inference-gateway-operations.md`);
+1. limites de CPU, memória e PID — governados pelo repositório de infraestrutura; o enforcement nos contêineres efetivamente em execução ainda precisa ser registrado como evidência ao vivo;
 2. backup e restore — o contrato existe, mas nenhum exercício de restauração está registrado como evidência (`docs/operations/disaster-recovery.md`);
-3. identidade das imagens em produção — a igualdade de proveniência é estática; a identidade das imagens efetivamente implantadas não está evidenciada;
+3. paridade das imagens pública e privada em produção — coberta por invariantes executáveis, mas a observação das imagens efetivamente implantadas ainda precisa ser registrada como evidência de runtime;
 4. suítes de auth, gateway/cota, runtime, payload, infraestrutura e regressão exigidas pelo M53 — devem ser executadas e registradas antes de qualquer resultado de readiness;
-5. deployment público com domínio e certificado válidos — o `Caddyfile` versionado usa `tls internal`.
+5. deployment público com domínio e certificado válidos — a topologia de proxy/TLS é do repositório de infraestrutura; certificado e domínio em produção ainda precisam ser registrados como evidência ao vivo.
 
 O checklist histórico de abertura pública da primeira versão (M49) foi substituído por esta fronteira; seus resultados permanecem em `docs/operations/first-version-readiness.md`.
 
@@ -239,7 +241,8 @@ O checklist histórico de abertura pública da primeira versão (M49) foi substi
 - `docs/vision.md` — propósito e não objetivos;
 - `docs/milestones.md` — evolução planejada;
 - `docs/project-status/milestone-state.json` — cursor operacional;
-- `docs/operations/inference-gateway-operations.md` — gateway, cota e limites pendentes;
+- `docs/operations/inference-gateway-operations.md` — gateway e cota;
+- `docs/operations/application-release-gate.md` — gate de release e CI da aplicação;
 - `docs/operations/admin-operator-provisioning.md` — provisionamento do operador Admin;
 - `docs/operations/disaster-recovery.md` — contrato de recuperação de desastre;
 - `docs/operations/dataset-onboarding-path.md` — narrativa de onboarding;

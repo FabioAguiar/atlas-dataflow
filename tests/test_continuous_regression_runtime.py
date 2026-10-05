@@ -13,6 +13,7 @@ dataset-study-* repository dependency.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -196,8 +197,19 @@ def _execute(
     payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     release_root = tmp_path / "release-s0226"
+    model_path = release_root / "models" / "model.json"
+    _write_json(model_path, {"placeholder": True})
+    # Since the release-aware hash-verified model cache, the runtime refuses a
+    # bundle whose model_artifact carries no valid sha256. Bind this synthetic
+    # placeholder's own bytes so execution reaches the regression semantics
+    # under test (a fixture-only hash; no governed artifact is involved).
+    model_artifact = declaration.get("model_artifact")
+    if isinstance(model_artifact, dict) and "sha256" not in model_artifact:
+        declaration = {
+            **declaration,
+            "model_artifact": {**model_artifact, "sha256": hashlib.sha256(model_path.read_bytes()).hexdigest()},
+        }
     _write_json(release_root / "predictions" / "bundle.json", declaration)
-    _write_json(release_root / "models" / "model.json", {"placeholder": True})
 
     def _load_declaration(path: Path) -> dict[str, Any]:
         return json.loads(path.read_text(encoding="utf-8"))

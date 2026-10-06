@@ -47,6 +47,39 @@ step() {
   printf '\n==> [%02d] %s\n' "${step_number}" "$*"
 }
 
+# --- builder platform normalization (exercised in isolation by
+# tests/test_production_supply_chain_contract.py) ---
+# Reads `docker buildx inspect` output on stdin and prints the canonical,
+# comma-separated platform list of every "Platforms:" line. Buildx marks
+# preferred platforms with a trailing "*" (e.g. "linux/arm64*"); that
+# presentation marker is dropped. Tokens that are not well-formed
+# os/arch[/variant] platforms after normalization are discarded, so they can
+# never satisfy a required platform.
+canonical_builder_platforms() {
+  local line token
+  local -a canonical=() tokens=()
+  while IFS= read -r line; do
+    [[ "${line}" =~ ^Platforms:[[:space:]]*(.*)$ ]] || continue
+    IFS=',' read -r -a tokens <<<"${BASH_REMATCH[1]}"
+    for token in "${tokens[@]}"; do
+      token="${token//[[:space:]]/}"
+      token="${token%\*}"
+      [[ "${token}" =~ ^[a-z0-9]+/[a-z0-9_]+(/[a-z0-9]+)?$ ]] && canonical+=("${token}")
+    done
+  done
+  (IFS=,; printf '%s' "${canonical[*]}")
+}
+
+# Succeeds when the canonical list ($1) contains the exact required platform
+# ($2) or one of its explicit variants ("linux/arm64/v8" -> "linux/arm64").
+builder_has_platform() {
+  case ",$1," in
+    *",$2,"*|*",$2/"*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+# --- end builder platform normalization ---
+
 cleanup() {
   if [[ -n "${created_builder}" ]]; then
     if ! docker buildx rm "${created_builder}" >/dev/null 2>&1; then
@@ -404,15 +437,19 @@ else
     --driver-opt "image=${BUILDKIT_IMAGE}" >/dev/null
   export BUILDX_BUILDER="${created_builder}"
 fi
-builder_platforms="$(docker buildx inspect --bootstrap "${BUILDX_BUILDER}" | sed -n 's/^Platforms:[[:space:]]*//p' | tr -d ' ')"
+builder_inspect="$(docker buildx inspect --bootstrap "${BUILDX_BUILDER}")" \
+  || fail "cannot inspect the Buildx builder ${BUILDX_BUILDER}"
+builder_platforms="$(canonical_builder_platforms <<<"${builder_inspect}")"
 printf 'builder %s platforms: %s\n' "${BUILDX_BUILDER}" "${builder_platforms}"
+[[ -n "${builder_platforms}" ]] || fail "the builder reported no parseable platforms"
 available=()
 missing=()
 for platform in "${REQUIRED_PLATFORMS[@]}"; do
-  case ",${builder_platforms}," in
-    *",${platform},"*|*",${platform}/"*) available+=("${platform}") ;;
-    *) missing+=("${platform}") ;;
-  esac
+  if builder_has_platform "${builder_platforms}" "${platform}"; then
+    available+=("${platform}")
+  else
+    missing+=("${platform}")
+  fi
 done
 if [[ "${#missing[@]}" -gt 0 && "${skip_unavailable}" -ne 1 ]]; then
   fail "the builder cannot build required platform(s): ${missing[*]} (install QEMU/binfmt or use a capable builder)"

@@ -25,6 +25,11 @@ PUBLIC_NGINX = REPO_ROOT / "web" / "nginx.conf"
 WEB_DOCKERFILE = REPO_ROOT / "web" / "Dockerfile"
 OVERRIDE = REPO_ROOT / "docker-compose.self-hosted-network.yml"
 ENV_EXAMPLES = (REPO_ROOT / ".env.example", REPO_ROOT / "api" / ".env.example")
+# The public nginx serve stage, pinned to an immutable SHA-256 index digest (S0302).
+PINNED_NGINX_SERVE_FROM = re.compile(
+    r"^(?i:FROM)[ \t]+nginx:alpine@sha256:[0-9a-f]{64}[ \t]+(?i:AS)[ \t]+serve[ \t]*$",
+    flags=re.MULTILINE,
+)
 
 PRIVILEGED = (
     "ATLAS_INFERENCE_GATEWAY_TOKEN",
@@ -277,10 +282,37 @@ def test_bounded_connect_src_guard_rejects_scheme_wide_sources():
     _assert_bounded_connect_src(["'self'", TURNSTILE_ORIGIN, "https://example.supabase.co"])
 
 
+def _split_at_pinned_nginx_serve_stage(text: str) -> tuple[str, str]:
+    """Split web/Dockerfile at its nginx serve stage, which must stay digest-pinned (S0302)."""
+    matches = list(PINNED_NGINX_SERVE_FROM.finditer(text))
+    assert len(matches) == 1, "web/Dockerfile needs exactly one sha256-pinned nginx:alpine serve stage"
+    return text[: matches[0].start()], text[matches[0].end() :]
+
+
+def test_nginx_serve_stage_discovery_requires_an_immutable_sha256_digest():
+    digest = "0" * 63 + "a"
+    build, serve = _split_at_pinned_nginx_serve_stage(
+        f"FROM node AS build\nRUN true\nFROM  nginx:alpine@sha256:{digest}  as  serve\nCOPY x y\n"
+    )
+    assert build.endswith("RUN true\n") and serve == "\nCOPY x y\n"
+    for unpinned in (
+        "FROM nginx:alpine AS serve",
+        "FROM nginx:alpine@sha256:abc AS serve",
+        f"FROM nginx:alpine@sha256:{digest.upper()} AS serve",
+        f"FROM nginx:alpine@sha256:{digest}0 AS serve",
+        f"FROM nginx:alpine@sha512:{digest} AS serve",
+        f"FROM nginx:alpine@sha256:{digest}-evil AS serve",
+        f"FROM nginx:alpine@sha256:{digest} AS server",
+        f"FROM nginx:latest@sha256:{digest} AS serve",
+    ):
+        with pytest.raises(AssertionError):
+            _split_at_pinned_nginx_serve_stage(f"FROM node AS build\n{unpinned}\nCOPY x y\n")
+
+
 def test_web_image_serves_the_rendered_config_from_the_public_supabase_input():
     text = WEB_DOCKERFILE.read_text(encoding="utf-8")
-    build_stage, _, serve_stage = text.partition("FROM nginx:alpine AS serve")
-    assert serve_stage, "web/Dockerfile has no nginx serve stage"
+    build_stage, serve_stage = _split_at_pinned_nginx_serve_stage(text)
+    assert serve_stage.strip(), "web/Dockerfile has no nginx serve stage"
     assert "COPY nginx.conf ./nginx.conf.template" in build_stage
     assert re.search(
         r"^COPY\s+--from=build\s+/app/nginx\.default\.conf\s+/etc/nginx/conf\.d/default\.conf$",

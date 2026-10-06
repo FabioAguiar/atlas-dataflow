@@ -1,0 +1,67 @@
+# Atlas DataFlow production supply-chain CI (Project Spec S0302).
+#
+# Read-only validation of the production image build: pinned bases, hash-locked
+# API dependencies, the npm ci frontend path, a same-source no-cache
+# reproducibility probe, linux/amd64 + linux/arm64 builds and BuildKit
+# SBOM/provenance attestations bound to the built images. The aggregate check
+# "production-supply-chain-gate" is the stable name intended for a later
+# GitHub branch-protection rule, next to (not instead of) the S0301
+# "application-release-gate". Images are written as OCI archives on the
+# runner only: no registry login, no push, no deployment, no production,
+# Supabase, backup or restore access, and no repository secrets. Attestations
+# are unsigned BuildKit metadata, not a signed guarantee.
+name: production-supply-chain-ci
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-supply-chain-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  production-supply-chain-gate:
+    name: production-supply-chain-gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Python 3.12
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install the committed Python test lock into a fresh virtual environment
+        run: |
+          set -euo pipefail
+          python -m venv "${RUNNER_TEMP}/atlas-test-venv"
+          "${RUNNER_TEMP}/atlas-test-venv/bin/python" -m pip install --require-virtualenv -r requirements-test.lock.txt
+      - name: Static S0302 supply-chain contract (before any image build)
+        run: |
+          set -euo pipefail
+          PYTHONDONTWRITEBYTECODE=1 "${RUNNER_TEMP}/atlas-test-venv/bin/python" -m pytest -q -p no:cacheprovider tests/test_production_supply_chain_contract.py
+      - name: Set up QEMU for linux/arm64
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+        with:
+          image: tonistiigi/binfmt:qemu-v10.2.3@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
+          platforms: arm64
+      - name: Set up Docker Buildx (pinned BuildKit)
+        id: buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          driver: docker-container
+          driver-opts: image=moby/buildkit:v0.33.1@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea
+          platforms: linux/amd64,linux/arm64
+      - name: Run the repository-owned production supply-chain gate
+        env:
+          BUILDX_BUILDER: ${{ steps.buildx.outputs.name }}
+        run: PYTHON="${RUNNER_TEMP}/atlas-test-venv/bin/python" scripts/validate-production-supply-chain.sh

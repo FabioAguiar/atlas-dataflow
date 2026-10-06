@@ -28,7 +28,7 @@ python3.12 -m venv .venv
 .venv/bin/python -m pip check
 ```
 
-Regenerate the lock only through the pip-tools command recorded in `requirements-test.in`, under Python 3.12, from the repository root. Never install extra packages ad hoc to make the suite pass, and never add credentials, private indexes or local absolute paths to these files; `tests/test_test_environment_contract.py` enforces this. Cryptographic hashes are not required yet (production supply-chain reproducibility is a later spec).
+Regenerate the lock only through the pip-tools command recorded in `requirements-test.in`, under Python 3.12, from the repository root. Never install extra packages ad hoc to make the suite pass, and never add credentials, private indexes or local absolute paths to these files; `tests/test_test_environment_contract.py` enforces this. This test lock carries no hashes; it is never installed into a production image. The production API image installs the separate hash-locked `api/requirements-production.lock.txt` instead (S0302, see [production-build-provenance.md](production-build-provenance.md)).
 
 ## Running the gate locally
 
@@ -69,6 +69,10 @@ It never deploys, never touches production, Supabase, backups or secrets, never 
 | `application-release-gate` | Python 3.12 + Node.js 22, fresh virtual environment from `requirements-test.lock.txt`, then `scripts/validate-application-release-gate.sh` |
 
 No log or report artifact is uploaded; Gitleaks findings are printed redacted.
+
+## Relation to the production supply-chain gate
+
+`application-release-gate` (this document, S0301) and `production-supply-chain-gate` (`.github/workflows/production-supply-chain-ci.yml`, S0302) are separate mandatory repository checks with different responsibilities. This gate proves the application is correct (tests, builds, audits, hygiene); the supply-chain gate proves the production images are built from digest-pinned bases and hash-locked dependencies, are reproducible from the same commit, build for linux/amd64 and linux/arm64, and carry SBOM/provenance attestations. Neither replaces the other. The production build contract is documented in [production-build-provenance.md](production-build-provenance.md).
 
 ## Intentional skips
 

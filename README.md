@@ -251,6 +251,8 @@ scripts/validate-application-release-gate.sh
 
 O wrapper executa `pip check`, pytest completo, `npm ci`, os gates de `npm audit`, Vitest completo, build de produção, a varredura de artefatos de build indevidos e a higiene do repositório, parando na primeira falha. O mesmo gate roda no CI (`.github/workflows/application-ci.yml`, check agregado `application-release-gate`) junto com Gitleaks e ShellCheck. Detalhes, skips intencionais e o estado da proteção de branch: [docs/operations/application-release-gate.md](docs/operations/application-release-gate.md).
 
+As imagens de produção (API e web) têm um gate separado de supply chain, `production-supply-chain-gate` (`scripts/validate-production-supply-chain.sh`, `.github/workflows/production-supply-chain-ci.yml`), e um único builder canônico, `scripts/build-production-images.sh`. Bases fixadas por digest, lock de produção com hashes, reprodutibilidade, arquiteturas e SBOM/proveniência: [docs/operations/production-build-provenance.md](docs/operations/production-build-provenance.md).
+
 As validações cobrem contratos, capability profiles, treinamento, bundles, runtime, API, publisher, registry, superfícies públicas e fluxos administrativos.
 
 ## Publicação de um estudo
@@ -287,7 +289,8 @@ Depois dessa consolidação, o projeto pode avançar gradualmente para multilabe
 - [`docs/vision.md`](docs/vision.md) — visão e fronteiras do projeto;
 - [`docs/milestones.md`](docs/milestones.md) — evolução por milestones;
 - [`docs/operations/dataset-onboarding-path.md`](docs/operations/dataset-onboarding-path.md) — caminho operacional de onboarding;
-- [`docs/operations/release-flow.md`](docs/operations/release-flow.md) — checklist de validação de releases.
+- [`docs/operations/release-flow.md`](docs/operations/release-flow.md) — checklist de validação de releases;
+- [`docs/operations/production-build-provenance.md`](docs/operations/production-build-provenance.md) — build canônico das imagens de produção e proveniência de supply chain.
 
 ## Limites de interpretação
 

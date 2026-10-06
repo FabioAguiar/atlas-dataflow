@@ -4,8 +4,10 @@ Repository files are parsed as text/YAML/JSON only. No network, Docker,
 registry, PyPI, npm, GitHub, production or Supabase access happens here;
 digest resolution, builds, reproducibility and attestations are exercised by
 ``scripts/validate-production-supply-chain.sh`` and its CI workflow. The only
-subprocess (S0306) runs the validator's pure Buildx platform normalization
-functions under bash against synthetic ``docker buildx inspect`` output.
+subprocesses (S0306, S0307) run the validator's and the build script's pure
+Buildx platform normalization functions, and the build script's discovery
+section with a stubbed ``docker`` function, under bash against synthetic
+``docker buildx inspect`` output.
 """
 
 from __future__ import annotations
@@ -321,29 +323,50 @@ def test_validator_covers_every_mandatory_stage_and_fails_closed() -> None:
     assert "synthetic-ci.supabase.invalid" in code
 
 
-# --- Buildx platform discovery (S0306) ---------------------------------------
+# --- Buildx platform discovery (S0306, S0307) --------------------------------
 
 PLATFORM_BLOCK = re.compile(
     r"^# --- builder platform normalization .*?^# --- end builder platform normalization ---$",
     re.S | re.M,
 )
 GITHUB_RUNNER_PLATFORMS = "linux/amd64*, linux/arm64*, linux/amd64/v2, linux/amd64/v3, linux/386"
+# Both scripts carry the same canonical block (S0307 chose duplication over a
+# shared library); every behavioural case runs against each copy.
+PLATFORM_SCRIPTS = (VALIDATOR, BUILD_SCRIPT)
+# Directories that never hold versioned repository shell scripts.
+UNVERSIONED_DIRS = {".git", ".n8n", "node_modules", "dist", "build", "__pycache__", ".venv", "venv", "volumes", "logs"}
 
 
-def _platform_block() -> str:
-    match = PLATFORM_BLOCK.search(VALIDATOR.read_text(encoding="utf-8"))
-    assert match, "the validator lost its isolated builder platform normalization block"
+def _platform_block(script: Path = VALIDATOR) -> str:
+    match = PLATFORM_BLOCK.search(script.read_text(encoding="utf-8"))
+    assert match, f"{script.name} lost its isolated builder platform normalization block"
     return match.group(0)
 
 
-def _discover(inspect_output: str) -> tuple[str, dict[str, bool]]:
-    """Run the validator's own normalization functions on synthetic inspect output (no Docker)."""
+def _bash() -> str:
     bash = shutil.which("bash")
     if bash is None:
-        pytest.skip("bash is required to execute the validator's platform functions")
+        pytest.skip("bash is required to execute the platform normalization functions")
+    return bash
+
+
+def _run_bash(script_text: str, stdin: str = "") -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [_bash(), "-c", script_text],
+        input=stdin,
+        capture_output=True,
+        text=True,
+        check=False,
+        env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "LC_ALL": "C"},
+        timeout=30,
+    )
+
+
+def _discover(inspect_output: str, script: Path = VALIDATOR) -> tuple[str, dict[str, bool]]:
+    """Run a script's own normalization functions on synthetic inspect output (no Docker)."""
     driver = (
         "set -euo pipefail\n"
-        f"{_platform_block()}\n"
+        f"{_platform_block(script)}\n"
         'platforms="$(canonical_builder_platforms)"\n'
         "printf '%s\\n' \"${platforms}\"\n"
         f"for platform in {' '.join(REQUIRED_PLATFORMS)}; do\n"
@@ -351,15 +374,8 @@ def _discover(inspect_output: str) -> tuple[str, dict[str, bool]]:
         'else echo "${platform} no"; fi\n'
         "done\n"
     )
-    result = subprocess.run(
-        [bash, "-c", driver],
-        input=inspect_output,
-        capture_output=True,
-        text=True,
-        check=True,
-        env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "LC_ALL": "C"},
-        timeout=30,
-    )
+    result = _run_bash(driver, inspect_output)
+    assert result.returncode == 0, result.stderr
     canonical, *verdicts = result.stdout.splitlines()
     return canonical, {line.split()[0]: line.split()[1] == "yes" for line in verdicts}
 
@@ -378,6 +394,43 @@ def _inspect(platforms_line: str) -> str:
     )
 
 
+def _versioned_shell_scripts() -> list[Path]:
+    scripts = []
+    for root, dirs, files in os.walk(REPO_ROOT):
+        dirs[:] = sorted(d for d in dirs if d not in UNVERSIONED_DIRS)
+        scripts.extend(Path(root) / name for name in sorted(files) if name.endswith(".sh"))
+    return scripts
+
+
+@pytest.fixture(params=PLATFORM_SCRIPTS, ids=lambda p: p.name)
+def platform_script(request: pytest.FixtureRequest) -> Path:
+    return request.param
+
+
+def test_build_and_validator_normalization_blocks_are_identical() -> None:
+    validator_block = _platform_block(VALIDATOR)
+    build_block = _platform_block(BUILD_SCRIPT)
+    assert build_block == validator_block, "the build script's platform normalization drifted from the validator's"
+    for helper in ("canonical_builder_platforms() {", "builder_has_platform() {"):
+        assert validator_block.count(helper) == 1, helper
+    for script in PLATFORM_SCRIPTS:
+        text = script.read_text(encoding="utf-8")
+        assert text.count("# --- builder platform normalization ") == 1, script.name
+        assert text.count("# --- end builder platform normalization ---") == 1, script.name
+
+
+def test_no_versioned_shell_script_keeps_a_raw_platforms_parser() -> None:
+    scripts = _versioned_shell_scripts()
+    assert BUILD_SCRIPT in scripts and VALIDATOR in scripts
+    offenders = []
+    for script in scripts:
+        text = script.read_text(encoding="utf-8", errors="replace")
+        outside = _code_text(PLATFORM_BLOCK.sub("", text))
+        if "Platforms:" in outside or 'case ",${builder_platforms},"' in outside:
+            offenders.append(str(script.relative_to(REPO_ROOT)))
+    assert offenders == [], f"Buildx platforms parsed outside the canonical normalization block: {offenders}"
+
+
 def test_validator_platform_discovery_goes_through_the_normalization_functions() -> None:
     code = _code(VALIDATOR)
     assert "readonly REQUIRED_PLATFORMS=(linux/amd64 linux/arm64)" in code
@@ -392,20 +445,106 @@ def test_validator_platform_discovery_goes_through_the_normalization_functions()
     assert "sed -n 's/^Platforms:" not in discovery
 
 
-def test_buildx_preferred_platform_markers_are_normalized_to_required_platforms() -> None:
-    canonical, available = _discover(_inspect(GITHUB_RUNNER_PLATFORMS))
+BUILD_DISCOVERY_START = "# The selected builder is inspected once"
+BUILD_DISCOVERY_END = "# Web build inputs:"
+
+
+def _build_discovery() -> str:
+    text = BUILD_SCRIPT.read_text(encoding="utf-8")
+    return text[text.index(BUILD_DISCOVERY_START):text.index(BUILD_DISCOVERY_END)]
+
+
+def test_build_script_platform_discovery_goes_through_the_normalization_functions() -> None:
+    code = _code(BUILD_SCRIPT)
+    # The allowed production platforms and the probe restriction are unchanged.
+    assert "    linux/amd64|linux/arm64) ;;" in code
+    assert 'fail "probe mode builds exactly one platform"' in code
+    discovery = _code_text(_build_discovery())
+    assert discovery.count("docker buildx inspect") == 1, "the builder must be inspected exactly once"
+    assert 'builder_inspect="$(docker buildx inspect --bootstrap 2>/dev/null)"' in discovery
+    assert 'canonical_builder_platforms <<<"${builder_inspect}"' in discovery
+    assert 'builder_has_platform "${builder_platforms}" "${platform}"' in discovery
+    assert 'fail "the selected Buildx builder reported no parseable platforms"' in discovery
+    assert "Platforms:" not in discovery
+    assert code.count("docker buildx inspect") == 1
+    assert '--builder "${builder_name}"' in code
+
+
+def _run_build_discovery(inspect_output: str | None, platforms: str) -> subprocess.CompletedProcess[str]:
+    """Execute the build script's real discovery section with a stubbed ``docker`` (no daemon)."""
+    stub = (
+        "docker() { [[ \"$*\" == 'buildx inspect --bootstrap' ]] || exit 99; "
+        + ("cat; }\n" if inspect_output is not None else "return 1; }\n")
+    )
+    driver = (
+        "set -euo pipefail\n"
+        "fail() { printf 'build-production-images: %s\\n' \"$*\" >&2; exit 1; }\n"
+        f"{stub}"
+        f"{_platform_block(BUILD_SCRIPT)}\n"
+        f"IFS=',' read -r -a platform_list <<<'{platforms}'\n"
+        f"{_build_discovery()}\n"
+        "printf 'name=%s platforms=%s\\n' \"${builder_name}\" \"${builder_platforms}\"\n"
+    )
+    return _run_bash(driver, inspect_output or "")
+
+
+def test_build_script_accepts_the_github_runner_decorated_platform_list() -> None:
+    result = _run_build_discovery(_inspect(GITHUB_RUNNER_PLATFORMS), "linux/amd64,linux/arm64")
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == (
+        "name=atlas-supply-chain platforms=linux/amd64,linux/arm64,linux/amd64/v2,linux/amd64/v3,linux/386"
+    )
+
+
+@pytest.mark.parametrize(
+    ("inspect_output", "platforms", "message"),
+    [
+        (_inspect("linux/amd64*, linux/amd64/v2, linux/386"), "linux/amd64,linux/arm64", "cannot build linux/arm64"),
+        (_inspect("linux/arm64*, linux/arm64/v8, linux/386"), "linux/amd64,linux/arm64", "cannot build linux/amd64"),
+        (_inspect("linux/arm64evil, linux/amd640, xlinux/amd64"), "linux/amd64", "cannot build linux/amd64"),
+        (_inspect("linux/arm64evil, linux/amd640, xlinux/amd64"), "linux/arm64", "cannot build linux/arm64"),
+        (_inspect("linux/arm64**, linux/amd64**"), "linux/arm64", "reported no parseable platforms"),
+        (_inspect(""), "linux/amd64", "reported no parseable platforms"),
+        ("Name: atlas\nDriver: docker-container\n", "linux/amd64", "reported no parseable platforms"),
+        ("", "linux/amd64", "cannot inspect the selected Buildx builder"),
+        (None, "linux/amd64", "cannot inspect the selected Buildx builder"),
+        (_inspect("linux/amd64*").replace("docker-container", "docker"), "linux/amd64", "uses the docker driver"),
+    ],
+    ids=[
+        "missing-arm64",
+        "missing-amd64",
+        "lookalikes-amd64",
+        "lookalikes-arm64",
+        "double-star",
+        "empty-platforms",
+        "no-platforms-line",
+        "empty-inspect",
+        "unreadable-inspect",
+        "docker-driver",
+    ],
+)
+def test_build_script_platform_discovery_fails_closed(inspect_output: str | None, platforms: str, message: str) -> None:
+    result = _run_build_discovery(inspect_output, platforms)
+    assert result.returncode == 1
+    assert message in result.stderr
+
+
+def test_buildx_preferred_platform_markers_are_normalized_to_required_platforms(platform_script: Path) -> None:
+    canonical, available = _discover(_inspect(GITHUB_RUNNER_PLATFORMS), platform_script)
     assert canonical == "linux/amd64,linux/arm64,linux/amd64/v2,linux/amd64/v3,linux/386"
     assert available == {"linux/amd64": True, "linux/arm64": True}
 
 
-def test_genuinely_missing_arm64_is_still_rejected_despite_decorated_tokens() -> None:
-    canonical, available = _discover(_inspect("linux/amd64*, linux/amd64/v2, linux/386"))
+def test_genuinely_missing_arm64_is_still_rejected_despite_decorated_tokens(platform_script: Path) -> None:
+    canonical, available = _discover(_inspect("linux/amd64*, linux/amd64/v2, linux/386"), platform_script)
     assert canonical == "linux/amd64,linux/amd64/v2,linux/386"
     assert available == {"linux/amd64": True, "linux/arm64": False}
 
 
-def test_genuinely_missing_amd64_is_still_rejected() -> None:
-    _, available = _discover(_inspect("linux/arm64*, linux/arm/v7, linux/arm/v6"))
+def test_genuinely_missing_amd64_is_still_rejected(platform_script: Path) -> None:
+    _, available = _discover(_inspect("linux/arm64*, linux/arm/v7, linux/arm/v6"), platform_script)
+    assert available == {"linux/amd64": False, "linux/arm64": True}
+    _, available = _discover(_inspect("linux/arm64*, linux/arm64/v8, linux/386"), platform_script)
     assert available == {"linux/amd64": False, "linux/arm64": True}
 
 
@@ -420,11 +559,14 @@ def test_genuinely_missing_amd64_is_still_rejected() -> None:
         # Look-alikes, doubled markers and stray characters never match exactly.
         ("linux/arm64evil, linux/amd640, xlinux/amd64", {"linux/amd64": False, "linux/arm64": False}),
         ("linux/arm64**, *linux/amd64, linux/amd64*/v2", {"linux/amd64": False, "linux/arm64": False}),
+        ("linux/arm64**, linux/amd64**", {"linux/amd64": False, "linux/arm64": False}),
         ("linux/arm64 linux/amd64", {"linux/amd64": False, "linux/arm64": False}),
     ],
 )
-def test_platform_matching_stays_exact_and_fail_closed(platforms_line: str, expected: dict[str, bool]) -> None:
-    _, available = _discover(_inspect(platforms_line))
+def test_platform_matching_stays_exact_and_fail_closed(
+    platform_script: Path, platforms_line: str, expected: dict[str, bool]
+) -> None:
+    _, available = _discover(_inspect(platforms_line), platform_script)
     assert available == expected
 
 
@@ -433,15 +575,15 @@ def test_platform_matching_stays_exact_and_fail_closed(platforms_line: str, expe
     ["", "Name: atlas\nDriver: docker-container\n", _inspect(""), _inspect("*, ,"), _inspect("not-a-platform")],
     ids=["empty", "no-platforms-line", "empty-platforms", "only-markers", "unparseable"],
 )
-def test_empty_or_unparseable_platform_discovery_yields_no_platform(inspect_output: str) -> None:
-    canonical, available = _discover(inspect_output)
+def test_empty_or_unparseable_platform_discovery_yields_no_platform(platform_script: Path, inspect_output: str) -> None:
+    canonical, available = _discover(inspect_output, platform_script)
     assert canonical == ""
     assert available == {"linux/amd64": False, "linux/arm64": False}
 
 
-def test_platform_lines_of_every_builder_node_are_combined() -> None:
+def test_platform_lines_of_every_builder_node_are_combined(platform_script: Path) -> None:
     output = _inspect("linux/amd64*, linux/386") + _inspect("linux/arm64*, linux/arm/v7")
-    canonical, available = _discover(output)
+    canonical, available = _discover(output, platform_script)
     assert canonical == "linux/amd64,linux/386,linux/arm64,linux/arm/v7"
     assert available == {"linux/amd64": True, "linux/arm64": True}
 

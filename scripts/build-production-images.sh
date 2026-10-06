@@ -49,6 +49,39 @@ usage() {
   exit 2
 }
 
+# --- builder platform normalization (exercised in isolation by
+# tests/test_production_supply_chain_contract.py) ---
+# Reads `docker buildx inspect` output on stdin and prints the canonical,
+# comma-separated platform list of every "Platforms:" line. Buildx marks
+# preferred platforms with a trailing "*" (e.g. "linux/arm64*"); that
+# presentation marker is dropped. Tokens that are not well-formed
+# os/arch[/variant] platforms after normalization are discarded, so they can
+# never satisfy a required platform.
+canonical_builder_platforms() {
+  local line token
+  local -a canonical=() tokens=()
+  while IFS= read -r line; do
+    [[ "${line}" =~ ^Platforms:[[:space:]]*(.*)$ ]] || continue
+    IFS=',' read -r -a tokens <<<"${BASH_REMATCH[1]}"
+    for token in "${tokens[@]}"; do
+      token="${token//[[:space:]]/}"
+      token="${token%\*}"
+      [[ "${token}" =~ ^[a-z0-9]+/[a-z0-9_]+(/[a-z0-9]+)?$ ]] && canonical+=("${token}")
+    done
+  done
+  (IFS=,; printf '%s' "${canonical[*]}")
+}
+
+# Succeeds when the canonical list ($1) contains the exact required platform
+# ($2) or one of its explicit variants ("linux/arm64/v8" -> "linux/arm64").
+builder_has_platform() {
+  case ",$1," in
+    *",$2,"*|*",$2/"*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+# --- end builder platform normalization ---
+
 mode=""
 output_dir=""
 component="all"
@@ -120,17 +153,22 @@ if [[ "${mode}" == "probe" && "${#platform_list[@]}" -ne 1 ]]; then
   fail "probe mode builds exactly one platform"
 fi
 
-builder_driver="$(docker buildx inspect 2>/dev/null | sed -n 's/^Driver:[[:space:]]*//p' | head -n 1)"
+# The selected builder is inspected once; driver, name and platforms all come
+# from that single observation.
+builder_inspect="$(docker buildx inspect --bootstrap 2>/dev/null)" \
+  || fail "cannot inspect the selected Buildx builder"
+builder_driver="$(sed -n 's/^Driver:[[:space:]]*//p' <<<"${builder_inspect}" | head -n 1)"
 [[ -n "${builder_driver}" ]] || fail "cannot inspect the selected Buildx builder"
 if [[ "${builder_driver}" == "docker" ]]; then
   fail "the selected Buildx builder uses the docker driver; select a docker-container builder (BUILDX_BUILDER)"
 fi
-builder_platforms="$(docker buildx inspect --bootstrap 2>/dev/null | sed -n 's/^Platforms:[[:space:]]*//p' | tr -d ' ')"
+builder_name="$(sed -n 's/^Name:[[:space:]]*//p' <<<"${builder_inspect}" | head -n 1)"
+[[ -n "${builder_name}" ]] || fail "cannot determine the selected Buildx builder name"
+builder_platforms="$(canonical_builder_platforms <<<"${builder_inspect}")"
+[[ -n "${builder_platforms}" ]] || fail "the selected Buildx builder reported no parseable platforms"
 for platform in "${platform_list[@]}"; do
-  case ",${builder_platforms}," in
-    *",${platform},"*|*",${platform}/"*) ;;
-    *) fail "the selected Buildx builder cannot build ${platform}" ;;
-  esac
+  builder_has_platform "${builder_platforms}" "${platform}" \
+    || fail "the selected Buildx builder cannot build ${platform}"
 done
 
 # Web build inputs: allowlisted public names only; reject secret-looking values.
@@ -176,7 +214,7 @@ git -C "${source_dir}" remote set-url origin "${SOURCE_URL}"
 
 platform_label="$(printf '%s' "${platforms}" | tr '/,' '-_')"
 common_args=(
-  --builder "$(docker buildx inspect 2>/dev/null | sed -n 's/^Name:[[:space:]]*//p' | head -n 1)"
+  --builder "${builder_name}"
   --platform "${platforms}"
   --build-arg "SOURCE_DATE_EPOCH=${source_date_epoch}"
   --build-arg "ATLAS_SOURCE_REVISION=${revision}"

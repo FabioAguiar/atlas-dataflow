@@ -2,8 +2,9 @@
 
 Offline and stdlib/yaml only. Locks the optional shared-network override, the
 env-example classification, the absence of privileged values from the web
-build, and (S0294) the narrowed public CSP connect-src contract rendered at
-image build time from the public VITE_SUPABASE_URL input. These are static
+build, (S0294) the narrowed public CSP connect-src contract rendered at
+image build time from the public VITE_SUPABASE_URL input, and (S0316) the exact
+Cloudflare Web Analytics beacon/ingestion origins of the public CSP. These are static
 source/configuration contracts: live Coolify/Supabase behavior, live HTTP
 headers and live Traefik routing are explicitly out of scope here.
 """
@@ -184,6 +185,9 @@ def test_public_nginx_owns_the_required_security_header_policy():
 
 SUPABASE_MARKER = "__ATLAS_SUPABASE_CONNECT_SRC__"
 TURNSTILE_ORIGIN = "https://challenges.cloudflare.com"
+# S0316: exact Cloudflare Web Analytics origins, public CSP only.
+WEB_ANALYTICS_SCRIPT_ORIGIN = "https://static.cloudflareinsights.com"
+WEB_ANALYTICS_CONNECT_ORIGIN = "https://cloudflareinsights.com"
 SCHEME_WIDE_OR_WILDCARD = re.compile(r"^(?:[a-z][a-z0-9+.-]*:|\*.*|.*://\*.*)$", re.IGNORECASE)
 
 
@@ -254,7 +258,7 @@ def test_public_csp_connect_src_is_bounded_to_explicit_origins():
     assert PUBLIC_NGINX.read_text(encoding="utf-8").count(SUPABASE_MARKER) == 1
     assert connect_src[-1].endswith(SUPABASE_MARKER)
     template_sources = [source.replace(SUPABASE_MARKER, "") for source in connect_src]
-    assert template_sources == ["'self'", TURNSTILE_ORIGIN]
+    assert template_sources == ["'self'", TURNSTILE_ORIGIN, WEB_ANALYTICS_CONNECT_ORIGIN]
     _assert_bounded_connect_src(template_sources)
     for name, sources in directives.items():
         if name != "connect-src":
@@ -268,9 +272,23 @@ def test_public_csp_keeps_turnstile_and_strict_non_connect_directives():
     assert directives["object-src"] == ["'none'"]
     assert directives["frame-ancestors"] == ["'none'"]
     assert directives["form-action"] == ["'self'"]
-    assert directives["script-src"] == ["'self'", TURNSTILE_ORIGIN]
+    assert directives["script-src"] == ["'self'", TURNSTILE_ORIGIN, WEB_ANALYTICS_SCRIPT_ORIGIN]
+    assert directives["style-src"] == ["'self'", "'unsafe-inline'"]
+    assert directives["img-src"] == ["'self'", "data:", "blob:", "https://raw.githubusercontent.com"]
     assert directives["frame-src"] == [TURNSTILE_ORIGIN]
-    assert TURNSTILE_ORIGIN in directives["connect-src"][1]
+    assert directives["connect-src"][1] == TURNSTILE_ORIGIN
+    assert set(directives) == {
+        "default-src",
+        "base-uri",
+        "object-src",
+        "frame-ancestors",
+        "script-src",
+        "style-src",
+        "img-src",
+        "connect-src",
+        "frame-src",
+        "form-action",
+    }
 
 
 def test_bounded_connect_src_guard_rejects_scheme_wide_sources():
@@ -332,7 +350,7 @@ def test_web_image_serves_the_rendered_config_from_the_public_supabase_input():
 
 @needs_node
 def test_rendered_csp_without_supabase_url_stays_same_origin_and_turnstile(tmp_path):
-    assert _rendered_connect_src(tmp_path, "") == ["'self'", TURNSTILE_ORIGIN]
+    assert _rendered_connect_src(tmp_path, "") == ["'self'", TURNSTILE_ORIGIN, WEB_ANALYTICS_CONNECT_ORIGIN]
 
 
 @needs_node
@@ -347,8 +365,21 @@ def test_rendered_csp_without_supabase_url_stays_same_origin_and_turnstile(tmp_p
 )
 def test_rendered_csp_adds_only_the_exact_supabase_origin(tmp_path, supabase_url, expected_origin):
     connect_src = _rendered_connect_src(tmp_path, supabase_url)
-    assert connect_src == ["'self'", TURNSTILE_ORIGIN, expected_origin]
+    assert connect_src == ["'self'", TURNSTILE_ORIGIN, WEB_ANALYTICS_CONNECT_ORIGIN, expected_origin]
     _assert_bounded_connect_src(connect_src)
+
+
+@needs_node
+@pytest.mark.parametrize("supabase_url", ("", "https://example-ref.supabase.co"))
+def test_rendered_csp_keeps_exact_web_analytics_script_source(tmp_path, supabase_url):
+    result = _render(tmp_path, supabase_url)
+    assert result.returncode == 0, result.stderr
+    directives = _directives(_csp((tmp_path / "nginx.default.conf").read_text(encoding="utf-8")))
+    assert directives["script-src"] == ["'self'", TURNSTILE_ORIGIN, WEB_ANALYTICS_SCRIPT_ORIGIN]
+    assert directives["frame-src"] == [TURNSTILE_ORIGIN]
+    for name, sources in directives.items():
+        if name not in ("script-src", "connect-src"):
+            assert not any("cloudflareinsights" in source for source in sources), name
 
 
 @needs_node

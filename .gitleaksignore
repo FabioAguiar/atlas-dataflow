@@ -1,0 +1,7 @@
+# Gitleaks false positives, pinned to exact commit/file/rule/line fingerprints.
+#
+# S0316 (dc445ec): the Cloudflare Web Analytics site token of the public Atlas
+# frontend is a public measurement identifier embedded in every public page,
+# not a credential (spec S0316 section 2). It trips generic-api-key only.
+dc445ec777f16cf001611a8564a122b4d3015bec:web/src/analytics/cloudflareWebAnalytics.ts:generic-api-key:14
+dc445ec777f16cf001611a8564a122b4d3015bec:web/src/analytics/cloudflareWebAnalytics.test.ts:generic-api-key:60

@@ -13,6 +13,9 @@ dependencies = [
     # M51-01: local Supabase access-token verification (JWKS-backed
     # ES256/RS256 signature and claim validation for the Admin operator).
     "PyJWT[crypto]>=2.8.0,<3",
+    # S0317: bounded Prometheus inference telemetry served from a dedicated
+    # collector registry by the private, disabled-by-default exporter route.
+    "prometheus-client>=0.26.0,<1",
     # Atlas-wide serving policy: the runtime pins the exact library versions
     # of the controlled Atlas training environment, so every release's
     # serialized model loads under the same joblib serializer version its

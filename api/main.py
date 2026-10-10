@@ -14,7 +14,7 @@ from pathlib import Path
 import uvicorn
 from fastapi import Body, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from starlette.concurrency import run_in_threadpool
 from starlette.requests import ClientDisconnect
 
@@ -60,6 +60,13 @@ from runtime.inference import (  # noqa: E402
     reconcile_runtime_model_cache,
 )
 from inference_result_dispatch import validate_inference_result  # noqa: E402
+from inference_observability import (  # noqa: E402
+    SURFACE_ADMIN,
+    SURFACE_PUBLIC,
+    exposition_authorized,
+    observe_inference_handler,
+    render_exposition,
+)
 from public_contract_loader import (  # noqa: E402
     PublicContractUnavailableError,
     load_public_contract,
@@ -768,6 +775,29 @@ def health() -> dict:
     return {"status": "ok"}
 
 
+# Project Spec S0317: the private Prometheus exposition of the dedicated
+# inference telemetry registry (never the dataset /metrics route). Disabled by
+# default and bearer-authenticated (inference_observability.exposition_authorized);
+# every other method, the trailing-slash variant and every failed check get the
+# same bounded 404 an unmatched route produces. Public web/nginx.conf also
+# denies /api/_internal before its generic /api/ proxy.
+_INTERNAL_METRICS_PATH = "/_internal/observability/metrics"
+_ALL_HTTP_METHODS = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+
+
+@app.api_route(_INTERNAL_METRICS_PATH, methods=_ALL_HTTP_METHODS, include_in_schema=False)
+def get_internal_observability_metrics(request: Request):
+    if request.method != "GET" or not exposition_authorized(request.scope.get("headers", [])):
+        return _admin_route_not_found_response()
+    body, media_type = render_exposition()
+    return Response(content=body, media_type=media_type, headers={"Cache-Control": "no-store"})
+
+
+@app.api_route(_INTERNAL_METRICS_PATH + "/", methods=_ALL_HTTP_METHODS, include_in_schema=False)
+def internal_observability_metrics_slash_variant():
+    return _admin_route_not_found_response()
+
+
 @app.get("/datasets")
 def list_datasets_endpoint():
     try:
@@ -1208,6 +1238,13 @@ def validate_dataset_inference_payload(
     dataset_slug: str,
     payload=Body(...),
 ):
+    # Project Spec S0317: observational only -- the handler's response is
+    # returned unchanged; requests rejected before this handler are not counted.
+    with observe_inference_handler(SURFACE_PUBLIC) as observation:
+        return observation.complete(_handle_public_inference(dataset_slug, payload, observation))
+
+
+def _handle_public_inference(dataset_slug: str, payload, observation):
     # Project Spec S0117: access classification must run before payload
     # type/schema validation, contract loading, bundle loading, model
     # loading, or prediction -- a malformed body must never leak whether a
@@ -1216,6 +1253,7 @@ def validate_dataset_inference_payload(
     resolved = _resolve_public_dataset_detail_access(dataset_slug)
     if isinstance(resolved, JSONResponse):
         return resolved
+    observation.bind_dataset(resolved.dataset_slug)
 
     # Project Spec S0271: the release-bound public prediction capability is
     # consulted after dataset readiness but before payload type/schema
@@ -1257,6 +1295,12 @@ def post_admin_dataset_inference(
     if not _admin_request_authorized(request):
         return _admin_route_not_found_response()
 
+    # Project Spec S0317: only authorized Admin invocations are observed.
+    with observe_inference_handler(SURFACE_ADMIN) as observation:
+        return observation.complete(_handle_admin_inference(dataset_slug, payload, observation))
+
+
+def _handle_admin_inference(dataset_slug: str, payload, observation):
     try:
         resolved = resolve_dataset(dataset_slug)
     except DatasetUnavailableError:
@@ -1265,6 +1309,7 @@ def post_admin_dataset_inference(
         return public_error_response(RELEASE_UNAVAILABLE)
     except RegistryInvalidError:
         return public_error_response(REGISTRY_UNAVAILABLE)
+    observation.bind_dataset(resolved.dataset_slug)
 
     return _execute_governed_inference(
         resolved.dataset_slug,

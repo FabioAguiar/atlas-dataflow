@@ -4,7 +4,8 @@ Offline and stdlib/yaml only. Locks the optional shared-network override, the
 env-example classification, the absence of privileged values from the web
 build, (S0294) the narrowed public CSP connect-src contract rendered at
 image build time from the public VITE_SUPABASE_URL input, and (S0316) the exact
-Cloudflare Web Analytics beacon/ingestion origins of the public CSP. These are static
+Cloudflare Web Analytics beacon/ingestion origins of the public CSP, and (S0317)
+the public deny of the private /api/_internal telemetry family. These are static
 source/configuration contracts: live Coolify/Supabase behavior, live HTTP
 headers and live Traefik routing are explicitly out of scope here.
 """
@@ -143,6 +144,75 @@ def test_public_nginx_denies_docs_and_keeps_admin_and_api_boundaries():
         text,
         flags=re.DOTALL,
     )
+
+
+_NGINX_LOCATION = re.compile(r"location\s+(?:(=|\^~|~\*|~)\s+)?(\S+)\s*\{(.*?)\n\s*\}", flags=re.DOTALL)
+
+
+def _public_nginx_locations() -> list[tuple[str, str, str]]:
+    text = PUBLIC_NGINX.read_text(encoding="utf-8")
+    return [(modifier or "", path, body) for modifier, path, body in _NGINX_LOCATION.findall(text)]
+
+
+def _nginx_selected_location(uri: str) -> tuple[str, str, str]:
+    """Nginx location selection for a normalized URI: exact match first, then
+    the longest prefix; a ``^~`` longest prefix skips regex locations, which
+    otherwise win in file order over the plain longest prefix."""
+    locations = _public_nginx_locations()
+    for location in locations:
+        if location[0] == "=" and location[1] == uri:
+            return location
+    prefixes = [loc for loc in locations if loc[0] in ("", "^~") and uri.startswith(loc[1])]
+    longest = max(prefixes, key=lambda loc: len(loc[1]))
+    if longest[0] == "^~":
+        return longest
+    for location in locations:
+        if location[0] in ("~", "~*"):
+            flags = re.IGNORECASE if location[0] == "~*" else 0
+            if re.search(location[1], uri, flags=flags):
+                return location
+    return longest
+
+
+def test_public_nginx_denies_the_private_internal_api_family_strictly():
+    """S0317: /api/_internal (exact and every subpath) is answered 404 by
+    nginx itself, with no proxy directive, before the generic /api/ proxy."""
+    text = PUBLIC_NGINX.read_text(encoding="utf-8")
+    for modifier, path in (("=", "/api/_internal"), ("^~", "/api/_internal/")):
+        pattern = rf"location\s+{re.escape(modifier)}\s+{re.escape(path)}\s*\{{\s*return\s+404;\s*\}}"
+        assert len(re.findall(pattern, text)) == 1, path
+    generic_proxy = text.index("location /api/ {")
+    assert text.index("location = /api/_internal {") < generic_proxy
+    assert text.index("location ^~ /api/_internal/ {") < generic_proxy
+    # No regex location exists that could ever outrank the ^~ deny.
+    assert not [loc for loc in _public_nginx_locations() if loc[0] in ("~", "~*")]
+
+
+@pytest.mark.parametrize(
+    "uri",
+    (
+        "/api/_internal",
+        "/api/_internal/",
+        "/api/_internal/observability",
+        "/api/_internal/observability/metrics",
+        "/api/_internal/observability/metrics/",
+        "/api/_internal/anything/else",
+    ),
+)
+def test_generic_api_proxy_cannot_publish_the_internal_exporter(uri):
+    # nginx matches locations on the decoded, slash-merged, dot-normalized
+    # URI, so encoded or // variants normalize onto these same paths.
+    modifier, path, body = _nginx_selected_location(uri)
+    assert re.fullmatch(r"\s*return\s+404;\s*", body), (uri, modifier, path)
+    assert "proxy_pass" not in body
+    assert path.startswith("/api/_internal")
+
+
+@pytest.mark.parametrize("uri", ("/api/datasets", "/api/datasets/x/inference", "/api/health", "/api/internal"))
+def test_public_api_proxy_still_serves_the_ordinary_public_routes(uri):
+    modifier, path, body = _nginx_selected_location(uri)
+    assert (modifier, path) == ("", "/api/")
+    assert "proxy_pass http://api:8000/;" in body
 
 
 def test_public_nginx_owns_the_required_security_header_policy():

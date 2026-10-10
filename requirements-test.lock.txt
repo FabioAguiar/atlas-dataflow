@@ -85,6 +85,8 @@ patsy==1.0.3
     # via statsmodels
 pluggy==1.6.0
     # via pytest
+prometheus-client==0.26.0
+    # via atlas-dataflow-api (api/pyproject.toml)
 psycopg==3.3.6
     # via atlas-dataflow (pyproject.toml)
 psycopg-binary==3.3.6

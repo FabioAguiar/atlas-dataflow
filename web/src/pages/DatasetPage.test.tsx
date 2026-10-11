@@ -552,8 +552,14 @@ describe("DatasetPage synthetic-slug rendering", () => {
     const { container } = renderDatasetPage();
     await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
 
+    // The theme preset arrives with the context payload, which can resolve
+    // after the title heading; wait for it rather than racing the fetch.
     await waitFor(() => {
       expect(container.querySelectorAll(".dataset-detail-page-canvas")).toHaveLength(1);
+      expect(container.querySelector(".dataset-detail-page-canvas")).toHaveAttribute(
+        "data-theme-preset",
+        "crimson-night",
+      );
     });
     expect(container.querySelectorAll(".dataset-detail-surface")).toHaveLength(1);
 
@@ -2535,7 +2541,7 @@ describe("DatasetPage public Documentation tab (Project Spec S0196)", () => {
     expect(await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 })).toBeInTheDocument();
     openDocumentationTab();
 
-    expect(screen.getByRole("heading", { name: "Dataset documentation" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Dataset documentation" })).toBeInTheDocument();
     expect(screen.getByText("Curated public notes.")).toBeInTheDocument();
     const table = screen.getByRole("table");
     expect(table.querySelector("thead")).toBeInTheDocument();
@@ -2601,7 +2607,7 @@ describe("DatasetPage public Documentation tab (Project Spec S0196)", () => {
       expect(await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 })).toBeInTheDocument();
       openDocumentationTab();
 
-      const img = screen.getByRole("img", { name: "Overview chart" });
+      const img = await screen.findByRole("img", { name: "Overview chart" });
       expect(img).toHaveAttribute("src", safeSrc);
     });
 
@@ -2618,7 +2624,7 @@ describe("DatasetPage public Documentation tab (Project Spec S0196)", () => {
       expect(await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 })).toBeInTheDocument();
       openDocumentationTab();
 
-      expect(screen.getByRole("heading", { name: "Docs" })).toBeInTheDocument();
+      expect(await screen.findByRole("heading", { name: "Docs" })).toBeInTheDocument();
       expect(screen.queryByRole("img", { name: "alt" })).not.toBeInTheDocument();
     });
 
@@ -2635,7 +2641,7 @@ describe("DatasetPage public Documentation tab (Project Spec S0196)", () => {
       expect(await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 })).toBeInTheDocument();
       openDocumentationTab();
 
-      expect(screen.getByRole("heading", { name: "Docs" })).toBeInTheDocument();
+      expect(await screen.findByRole("heading", { name: "Docs" })).toBeInTheDocument();
       expect(screen.queryByRole("img")).not.toBeInTheDocument();
     });
 
@@ -2652,7 +2658,7 @@ describe("DatasetPage public Documentation tab (Project Spec S0196)", () => {
       expect(await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 })).toBeInTheDocument();
       openDocumentationTab();
 
-      expect(screen.getByRole("heading", { name: "Docs" })).toBeInTheDocument();
+      expect(await screen.findByRole("heading", { name: "Docs" })).toBeInTheDocument();
       expect(screen.queryByRole("img", { name: "alt" })).not.toBeInTheDocument();
     });
 
@@ -2669,7 +2675,7 @@ describe("DatasetPage public Documentation tab (Project Spec S0196)", () => {
       expect(await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 })).toBeInTheDocument();
       openDocumentationTab();
 
-      expect(screen.getByRole("heading", { name: "Docs" })).toBeInTheDocument();
+      expect(await screen.findByRole("heading", { name: "Docs" })).toBeInTheDocument();
       expect(screen.getByText("Remaining paragraph text.")).toBeInTheDocument();
       expect(screen.queryByRole("img")).not.toBeInTheDocument();
     });
@@ -2687,7 +2693,7 @@ describe("DatasetPage public Documentation tab (Project Spec S0196)", () => {
       expect(await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 })).toBeInTheDocument();
       openDocumentationTab();
 
-      expect(screen.getByRole("heading", { name: "Docs" })).toBeInTheDocument();
+      expect(await screen.findByRole("heading", { name: "Docs" })).toBeInTheDocument();
       expect(screen.getByText("Body text.")).toBeInTheDocument();
       const table = screen.getByRole("table");
       expect(table.querySelector("thead")).toBeInTheDocument();
